@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Cog, Home, Map, Wind } from "lucide-react";
+import { Cog, Home, ListOrdered, Map, MapPinned } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
-  { href: "/", label: "Home", icon: Home },
-  { href: "/dashboard", label: "Dashboard", icon: Wind },
-  { href: "/map", label: "Map", icon: Map },
-  { href: "/settings", label: "Settings", icon: Cog },
+  { href: "/", label: "หน้าแรก", icon: Home },
+  { href: "/map", label: "แผนที่", icon: Map },
+  { href: "/analytics", label: "อันดับ", icon: ListOrdered },
+  { href: "/compare", label: "จังหวัด", icon: MapPinned },
+  { href: "/settings", label: "ตั้งค่า", icon: Cog },
 ];
 
 export function MobileNav() {
@@ -17,10 +18,10 @@ export function MobileNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 p-2 dark:border-slate-700 dark:bg-slate-950/95 md:hidden">
-      <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
+      <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
         {items.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href || (item.href === "/dashboard" && (pathname.startsWith("/province") || pathname === "/compare"));
+          const active = pathname === item.href;
           return (
             <Link
               key={item.href}

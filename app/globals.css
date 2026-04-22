@@ -20,3 +20,8 @@ body {
   background: rgb(var(--background));
   color: rgb(var(--foreground));
 }
+
+
+body {
+  font-family: var(--font-prompt), var(--font-sarabun), var(--font-kanit), var(--font-ibm-thai), system-ui, sans-serif;
+}

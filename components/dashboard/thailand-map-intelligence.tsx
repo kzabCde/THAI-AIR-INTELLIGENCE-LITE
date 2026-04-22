@@ -2,17 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Moon, RefreshCw, Search, SunMedium } from "lucide-react";
+import { Bell, Expand, Moon, RefreshCw, Search, SunMedium } from "lucide-react";
 import { buildThailandSnapshot } from "@/lib/engine";
 import { cache } from "@/lib/cache";
 import { storage } from "@/lib/storage";
 import type { ProvinceSnapshot } from "@/types/air";
 import { StatsCard } from "@/components/ui/stats-card";
-import { ThailandMap } from "@/components/map/thailand-map";
-import { ProvinceDrawer } from "@/components/panel/province-drawer";
+import { ThailandMap } from "@/components/ThailandMap";
+import { ProvincePanel } from "@/components/ProvincePanel";
 import { RankingBars } from "@/components/charts/intelligence-charts";
-
-const days = ["D-6", "D-5", "D-4", "D-3", "D-2", "D-1", "Today"];
+import { formatThaiDate, formatThaiShortTime, levelThai } from "@/lib/formatThai";
+import { nextTickSeconds, shouldRefresh } from "@/lib/realtime";
+import { RealtimeTicker } from "@/components/RealtimeTicker";
 
 function generateTimeline(seed: string, base: number) {
   const seedNum = seed.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
@@ -29,8 +30,10 @@ export function ThailandMapIntelligence() {
   const [compareSlug, setCompareSlug] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isDark, setIsDark] = useState(false);
-  const [dayIndex, setDayIndex] = useState(6);
-  const [playing, setPlaying] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState(new Date());
+  const [lastRefresh, setLastRefresh] = useState({ pm25: 0, weather: 0, hotspot: 0 });
+  const [pmDeltaByProvince, setPmDeltaByProvince] = useState<Record<string, number>>({});
+  const [alertText, setAlertText] = useState("");
 
   useEffect(() => {
     const dark = storage.getDarkMode();
@@ -38,33 +41,72 @@ export function ThailandMapIntelligence() {
     document.documentElement.classList.toggle("dark", dark);
 
     const cached = cache.getSnapshot();
-    if (cached.length) setRows(cached);
-    buildThailandSnapshot().then(setRows);
+    if (cached.length) {
+      setRows(cached);
+      setUpdatedAt(new Date());
+    }
+
+    const load = async () => {
+      const latest = await buildThailandSnapshot();
+      setRows(latest);
+      setUpdatedAt(new Date());
+      const now = Date.now();
+      setLastRefresh({ pm25: now, weather: now, hotspot: now });
+    };
+
+    load();
   }, []);
 
   useEffect(() => {
-    if (!playing) return;
-    const timer = window.setInterval(() => {
-      setDayIndex((prev) => (prev >= 6 ? 0 : prev + 1));
-    }, 1000);
+    const timer = window.setInterval(async () => {
+      const now = Date.now();
+      if (!shouldRefresh(lastRefresh.pm25, "pm25", now) && !shouldRefresh(lastRefresh.weather, "weather", now) && !shouldRefresh(lastRefresh.hotspot, "hotspot", now)) {
+        return;
+      }
+
+      const latest = await buildThailandSnapshot();
+      setRows((prev) => {
+        const delta = Object.fromEntries(latest.map((row) => {
+          const old = prev.find((p) => p.slug === row.slug)?.air.pm25 ?? row.air.pm25;
+          return [row.slug, +(row.air.pm25 - old).toFixed(1)];
+        }));
+        setPmDeltaByProvince(delta);
+        return latest;
+      });
+
+      setUpdatedAt(new Date());
+      setLastRefresh((prev) => ({
+        pm25: shouldRefresh(prev.pm25, "pm25", now) ? now : prev.pm25,
+        weather: shouldRefresh(prev.weather, "weather", now) ? now : prev.weather,
+        hotspot: shouldRefresh(prev.hotspot, "hotspot", now) ? now : prev.hotspot,
+      }));
+    }, 5000);
+
     return () => clearInterval(timer);
-  }, [playing]);
+  }, [lastRefresh]);
 
-  const timelineByProvince = useMemo(
-    () => Object.fromEntries(rows.map((x) => [x.slug, generateTimeline(x.slug, x.air.pm25)])),
-    [rows],
-  );
+  useEffect(() => {
+    const over100 = rows.find((r) => r.air.pm25 > 100);
+    if (!over100) return;
 
-  const rowsForDay = useMemo(
-    () =>
-      rows.map((x) => ({
-        ...x,
-        air: { ...x.air, pm25: timelineByProvince[x.slug]?.[dayIndex] ?? x.air.pm25 },
-      })),
-    [dayIndex, rows, timelineByProvince],
-  );
+    setAlertText(`⚠️ แจ้งเตือนค่าฝุ่นสูง จังหวัด${over100.province_name_th}`);
+    const audioCtx = new AudioContext();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.value = 0.015;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.2);
 
-  const ranked = useMemo(() => [...rowsForDay].sort((a, b) => b.air.pm25 - a.air.pm25), [rowsForDay]);
+    const timer = setTimeout(() => setAlertText(""), 4000);
+    return () => clearTimeout(timer);
+  }, [rows]);
+
+  const timelineByProvince = useMemo(() => Object.fromEntries(rows.map((x) => [x.slug, generateTimeline(x.slug, x.air.pm25)])), [rows]);
+  const ranked = useMemo(() => [...rows].sort((a, b) => b.air.pm25 - a.air.pm25), [rows]);
   const average = useMemo(() => (ranked.length ? ranked.reduce((sum, x) => sum + x.air.pm25, 0) / ranked.length : 0), [ranked]);
   const selected = rows.find((x) => x.slug === selectedSlug) ?? null;
   const compareWith = rows.find((x) => x.slug === compareSlug) ?? null;
@@ -72,6 +114,7 @@ export function ThailandMapIntelligence() {
   const refresh = async () => {
     const latest = await buildThailandSnapshot();
     setRows(latest);
+    setUpdatedAt(new Date());
   };
 
   const toggleTheme = () => {
@@ -86,73 +129,69 @@ export function ThailandMapIntelligence() {
 
   return (
     <section className="min-h-[90vh] space-y-4">
-      <nav className="sticky top-16 z-30 rounded-2xl border border-white/30 bg-white/70 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/70">
-        <div className="flex flex-wrap items-center gap-3">
-          <p className="mr-auto text-sm font-bold tracking-[0.14em] text-sky-700 dark:text-sky-300">THAILAND AQI INTELLIGENCE</p>
-          <label className="flex items-center gap-2 rounded-xl border border-slate-300/70 bg-white/70 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900/60">
+      <div className="sticky top-0 z-40 rounded-2xl border border-white/30 bg-white/90 p-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <p className="mr-auto text-sm font-bold text-sky-700 dark:text-sky-300">แดชบอร์ดคุณภาพอากาศประเทศไทย</p>
+          <label className="flex items-center gap-2 rounded-xl border border-slate-300/70 bg-white/80 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900/60">
             <Search size={15} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search province" className="w-36 bg-transparent outline-none" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 ค้นหาจังหวัด..." className="w-32 bg-transparent outline-none md:w-52" />
           </label>
-          <button onClick={toggleTheme} className="rounded-xl border border-slate-300 p-2 dark:border-slate-700">{isDark ? <SunMedium size={16} /> : <Moon size={16} />}</button>
-          <button onClick={refresh} className="rounded-xl border border-slate-300 p-2 dark:border-slate-700"><RefreshCw size={16} /></button>
+          <button onClick={refresh} className="rounded-xl border border-slate-300 p-2 dark:border-slate-700" title="รีเฟรชข้อมูล"><RefreshCw size={16} /></button>
+          <button onClick={toggleTheme} className="rounded-xl border border-slate-300 p-2 dark:border-slate-700" title="โหมดกลางคืน">{isDark ? <SunMedium size={16} /> : <Moon size={16} />}</button>
+          <button onClick={() => document.documentElement.requestFullscreen?.()} className="rounded-xl border border-slate-300 p-2 dark:border-slate-700" title="เต็มหน้าจอ"><Expand size={16} /></button>
         </div>
-      </nav>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          <RealtimeTicker updatedAt={updatedAt} />
+          <div className="rounded-xl border border-slate-200/60 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900/40">
+            <p>วันนี้ {formatThaiDate(new Date())} • อัปเดต {formatThaiShortTime(updatedAt)}</p>
+            <p>รอบถัดไป PM2.5 {nextTickSeconds(lastRefresh.pm25, "pm25")} วิ • อากาศ {nextTickSeconds(lastRefresh.weather, "weather")} วิ • จุดความร้อน {nextTickSeconds(lastRefresh.hotspot, "hotspot")} วิ</p>
+          </div>
+        </div>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <div className="space-y-3">
-          <ThailandMap rows={rowsForDay} dayIndex={dayIndex} search={search} selectedSlug={selectedSlug} timelineByProvince={timelineByProvince} onSelect={setSelectedSlug} />
-          <div className="rounded-2xl border border-white/30 bg-white/70 p-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold">Time Slider (ย้อนหลัง 7 วัน)</p>
-              <button onClick={() => setPlaying((p) => !p)} className="rounded-lg bg-sky-600 px-2 py-1 text-xs text-white">{playing ? "Pause" : "Auto Play"}</button>
-            </div>
-            <input type="range" min={0} max={6} value={dayIndex} onChange={(e) => setDayIndex(Number(e.target.value))} className="w-full" />
-            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Showing: {days[dayIndex]}</p>
+          <div className="sticky top-24 z-20 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs dark:border-sky-800 dark:bg-sky-950/30 md:hidden">
+            PM ไทยเฉลี่ย {average.toFixed(1)} | จังหวัดเสี่ยงสุด {worst?.province_name_th ?? "-"} | อัปเดตล่าสุด {formatThaiShortTime(updatedAt)}
+          </div>
+          <ThailandMap rows={rows} search={search} selectedSlug={selectedSlug} pmDeltaByProvince={pmDeltaByProvince} onSelect={setSelectedSlug} />
+
+          <div className="rounded-2xl border border-white/30 bg-white/70 p-3 text-sm backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60">
+            <p className="font-semibold">ระดับสีเพื่อเข้าใจง่าย</p>
+            <p className="mt-1 text-xs">0-25 ดีมาก 🟢 | 26-50 ดี 🟡 | 51-75 ปานกลาง 🟠 | 76-100 เริ่มมีผลกระทบ 🔴 | 101-150 อันตราย 🟣 | 151+ วิกฤต ⚫</p>
           </div>
         </div>
 
         <motion.aside initial={{ opacity: 0, x: 15 }} animate={{ opacity: 1, x: 0 }} className="space-y-4 rounded-3xl border border-white/30 bg-white/70 p-4 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/65">
           <div className="grid gap-3 sm:grid-cols-2">
-            <StatsCard title="Thailand Avg PM2.5" value={`${average.toFixed(1)} μg/m³`} hint="National moving average" tone="warn" />
-            <StatsCard title="Worst Province" value={worst ? worst.province_name_en : "-"} hint={worst ? `${worst.air.pm25.toFixed(1)} μg/m³` : "No data"} tone="danger" />
-            <StatsCard title="Cleanest Province" value={cleanest ? cleanest.province_name_en : "-"} hint={cleanest ? `${cleanest.air.pm25.toFixed(1)} μg/m³` : "No data"} tone="good" />
-            <StatsCard title="Tomorrow Prediction" value={`${(average * 1.05).toFixed(1)} μg/m³`} hint="Weighted forecast" tone="neutral" />
+            <StatsCard title="ค่าเฉลี่ยประเทศไทย" value={`${average.toFixed(1)} μg/m³`} hint="สรุปภาพรวมประเทศ" tone="warn" />
+            <StatsCard title="จังหวัดเสี่ยงสุดวันนี้" value={worst ? worst.province_name_th : "-"} hint={worst ? `${worst.air.pm25.toFixed(1)} (${levelThai(worst.air.pm25).label})` : "ไม่มีข้อมูล"} tone="danger" />
+            <StatsCard title="จังหวัดดีที่สุด" value={cleanest ? cleanest.province_name_th : "-"} hint={cleanest ? `${cleanest.air.pm25.toFixed(1)} (${levelThai(cleanest.air.pm25).label})` : "ไม่มีข้อมูล"} tone="good" />
+            <StatsCard title="คาดการณ์พรุ่งนี้" value={`${(average * 1.05).toFixed(1)} μg/m³`} hint="คำนวณใหม่ทุกครั้งที่อัปเดต" tone="neutral" />
           </div>
 
           <div className="rounded-2xl border border-slate-200/60 p-3 dark:border-slate-700/60">
-            <p className="text-sm font-semibold">Top 10 Most Polluted Provinces</p>
-            <RankingBars data={ranked.slice(0, 10).map((x) => ({ name: x.province_name_en, value: +x.air.pm25.toFixed(1) }))} />
-          </div>
-
-          <div className="rounded-2xl border border-slate-200/60 p-3 dark:border-slate-700/60">
-            <p className="text-sm font-semibold">Weather Impact</p>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
-              <div className="rounded-lg bg-sky-50 p-2 dark:bg-sky-900/30">Humidity<br />{worst?.weather.humidity ?? "-"}%</div>
-              <div className="rounded-lg bg-teal-50 p-2 dark:bg-teal-900/30">Wind<br />{worst?.weather.wind ?? "-"} m/s</div>
-              <div className="rounded-lg bg-orange-50 p-2 dark:bg-orange-900/30">Temp<br />{worst?.weather.temp ?? "-"}°C</div>
-            </div>
+            <p className="text-sm font-semibold">10 จังหวัดค่าฝุ่นสูงสุด</p>
+            <RankingBars data={ranked.slice(0, 10).map((x) => ({ name: x.province_name_th, value: +x.air.pm25.toFixed(1) }))} />
           </div>
 
           <div className="rounded-2xl border border-slate-200/60 p-3 text-sm dark:border-slate-700/60">
-            <p className="font-semibold">Smart Insights AI</p>
-            <p className="mt-2 text-slate-600 dark:text-slate-300">{worst ? `${worst.province_name_en} risk rising due to hotspot increase and weak wind conditions.` : "Loading insight..."}</p>
+            <p className="font-semibold">AI วิเคราะห์ง่ายๆ</p>
+            <p className="mt-2 text-slate-600 dark:text-slate-300">{worst ? `${worst.province_name_th}มีแนวโน้ม${pmDeltaByProvince[worst.slug] > 0 ? "เพิ่มขึ้น" : "ทรงตัว"} เนื่องจากจุดความร้อน ${worst.hotspot_count} จุด และลม ${worst.weather.wind} m/s` : "กำลังโหลดการวิเคราะห์..."}</p>
           </div>
 
-          <button onClick={() => window.print()} className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Export screenshot for thesis</button>
+          <button onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}`, "_blank")} className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">แชร์ภาพค่าฝุ่นลง Facebook</button>
         </motion.aside>
       </div>
 
-      <ProvinceDrawer
-        selected={selected}
-        timeline={selected ? timelineByProvince[selected.slug] : []}
-        compareWith={compareWith}
-        onClose={() => setSelectedSlug(null)}
-        onCompare={(slug) => setCompareSlug(slug)}
-      />
+      <ProvincePanel selected={selected} timeline={selected ? timelineByProvince[selected.slug] : []} compareWith={compareWith} onClose={() => setSelectedSlug(null)} onCompare={(slug) => setCompareSlug(slug)} />
 
-      <footer className="rounded-2xl border border-white/30 bg-white/70 px-4 py-3 text-xs text-slate-600 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60 dark:text-slate-300">
-        Data sources: Open-Meteo, OpenAQ, GISTDA hotspot feed. Last updated: {new Date().toLocaleString()} · Thesis project by student.
-      </footer>
+      {alertText && (
+        <div className="fixed bottom-20 right-4 z-[60] max-w-sm rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 shadow-xl dark:border-amber-700 dark:bg-amber-950/80 dark:text-amber-100">
+          <p className="flex items-center gap-2 font-semibold"><Bell size={15} />{alertText}</p>
+        </div>
+      )}
     </section>
   );
 }
