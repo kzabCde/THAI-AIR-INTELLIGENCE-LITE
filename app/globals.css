@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 247 250 252;
+  --foreground: 15 23 42;
+  --card: 255 255 255;
+  --muted: 100 116 139;
+}
+
+.dark {
+  --background: 2 6 23;
+  --foreground: 226 232 240;
+  --card: 15 23 42;
+  --muted: 148 163 184;
+}
+
+body {
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
