@@ -1,57 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { THAI_PROVINCES } from "@/lib/constants";
-import { storage } from "@/lib/storage";
+import { Button } from "@/components/ui/button";
 
 export default function SettingsPage() {
-  const [darkMode, setDarkMode] = useState(false);
-  const [favorite, setFavorite] = useState("");
-
-  useEffect(() => {
-    setDarkMode(storage.getDarkMode());
-    setFavorite(storage.getFavorite());
-  }, []);
-
-  const toggleDark = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    storage.setDarkMode(next);
-    document.documentElement.classList.toggle("dark", next);
-  };
-
-  const saveFavorite = (slug: string) => {
-    setFavorite(slug);
-    storage.setFavorite(slug);
-  };
-
   const resetLocal = () => {
-    storage.reset();
-    setDarkMode(false);
-    setFavorite("");
-    document.documentElement.classList.remove("dark");
+    localStorage.removeItem("thai_air_history_v2");
+    localStorage.removeItem("thai_air_snapshot_v2");
+    window.location.reload();
   };
 
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-bold">Settings</h1>
-      <Card className="space-y-3">
-        <h2 className="font-semibold">Dark mode</h2>
-        <Button onClick={toggleDark}>{darkMode ? "Disable" : "Enable"} Dark Mode</Button>
+      <Card className="space-y-2">
+        <h2 className="font-semibold">Auto-refresh policy</h2>
+        <p className="text-sm">Current data refreshes every 30 minutes. Weather refreshes every 60 minutes. Historical cache rolls over 90 days.</p>
       </Card>
-
-      <Card className="space-y-3">
-        <h2 className="font-semibold">Favorite Province</h2>
-        <select value={favorite} onChange={(e) => saveFavorite(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-transparent p-2">
-          <option value="">None</option>
-          {THAI_PROVINCES.map((p) => <option key={p.slug} value={p.slug}>{p.province}</option>)}
-        </select>
-      </Card>
-
       <Card>
-        <Button className="bg-rose-600 hover:bg-rose-700" onClick={resetLocal}>Reset local data</Button>
+        <Button className="bg-rose-600 hover:bg-rose-700" onClick={resetLocal}>Reset local history cache</Button>
       </Card>
     </section>
   );

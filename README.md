@@ -1,72 +1,53 @@
-# THAI AIR INTELLIGENCE
+# Thailand Air Quality Intelligence Lite
 
-Simple, fast, and beautiful thesis demo web app for nationwide Thailand PM2.5 monitoring.
+Frontend-only **Next.js + TypeScript + Tailwind** dashboard that monitors and predicts PM2.5 for **all 77 provinces of Thailand** using free/public APIs.
 
-## 1) Dependencies (minimal and stable)
+## Features
 
-- `next` (App Router)
-- `react`, `react-dom`
-- `typescript`
-- `tailwindcss`, `postcss`, `autoprefixer`
-- `clsx`, `tailwind-merge` (utility classes)
-- `lucide-react` (icons)
-- `recharts` (charts)
+- 77-province metadata dataset (`province_name_th`, `province_name_en`, `region`, `latitude`, `longitude`, `population`, `nearby_stations`).
+- Multi-source API engine with fallback priority:
+  1. Air4Thai (soft optional)
+  2. OpenAQ
+  3. Open-Meteo Air Quality
+  4. Local fallback baseline
+- Weather integration via Open-Meteo (temperature, humidity, wind, rain).
+- Hotspot integration via NASA FIRMS (with graceful fallback estimate).
+- Local historical storage (90-day rolling) via `localStorage`.
+- Browser-side PM2.5 prediction models:
+  - Moving Average (7-day)
+  - Linear Regression trendline
+  - Weighted Smart Score
+- Risk scoring engine and alert logic.
+- Thesis pages:
+  - National dashboard
+  - Province detail
+  - Compare 2-5 provinces
+  - Analytics (MAE/RMSE + reliability)
 
-> Note: No backend server, no database, no Supabase, no Python.
+## Tech Stack
 
-## 2) File Structure
+- Next.js App Router
+- React + TypeScript strict mode
+- Tailwind CSS
+- Recharts
 
-```txt
-/app
-  /dashboard
-  /map
-  /province/[slug]
-  /compare
-  /settings
-/components
-/lib
-/types
-/public/data
-```
-
-## 3) Pages Implemented
-
-1. Landing Page (`/`)
-2. Dashboard (`/dashboard`)
-3. Map View (`/map`)
-4. Province Detail (`/province/[slug]`)
-5. Compare (`/compare`)
-6. Settings (`/settings`)
-
-## Data Sources
-
-- **Primary live source:** Open-Meteo Air Quality + Weather APIs (frontend fetch)
-- **Fallback source:** `/public/data/fallback-air.json` (clearly labeled as fallback)
-
-## Local Storage Usage
-
-- favorite province
-- dark mode
-- compare province pair
-- reset local data
-
-## Forecast Logic (frontend only)
-
-- Tomorrow estimate: `current * 1.03`
-- Day 2 and Day 3: moving-average style smoothing
-
-## Run Locally
+## Local Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+## App Structure
 
-## Thesis Demo Notes
+- `app/` pages (dashboard, map, province detail, compare, analytics)
+- `components/` charts and reusable UI
+- `lib/apis/` free API connectors
+- `lib/prediction/` prediction models
+- `lib/thailand-provinces.ts` full 77-province dataset
+- `lib/cache.ts` local snapshot + historical cache
+- `lib/scoring.ts` risk and AQI scoring
 
-- Mobile-first responsive UI
-- Clean modern cards with soft shadows
-- No backend architecture needed
-- Easy for presentation and deployment
+## Deployment
+
+Ready for Vercel deployment as a frontend-only app.

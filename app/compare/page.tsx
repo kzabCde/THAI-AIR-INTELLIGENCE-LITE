@@ -1,60 +1,74 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { HistoricalPmChart } from "@/components/dashboard/charts";
 import { Card } from "@/components/ui/card";
-import { fetchThaiAirData, toAqi } from "@/lib/air";
-import { storage } from "@/lib/storage";
-import type { ProvinceAir } from "@/types/air";
+import { cache } from "@/lib/cache";
+import { buildThailandSnapshot } from "@/lib/engine";
+import type { HistoricalPoint, ProvinceSnapshot } from "@/types/air";
 
 export default function ComparePage() {
-  const [data, setData] = useState<ProvinceAir[]>([]);
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
+  const [rows, setRows] = useState<ProvinceSnapshot[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
 
   useEffect(() => {
-    fetchThaiAirData().then((items) => {
-      setData(items);
-      const saved = storage.getCompare();
-      setA(saved[0] ?? items[0]?.slug ?? "");
-      setB(saved[1] ?? items[1]?.slug ?? "");
+    setRows(cache.getSnapshot());
+    buildThailandSnapshot().then((data) => {
+      setRows(data);
+      if (!selected.length) setSelected(data.slice(0, 2).map((x) => x.slug));
     });
   }, []);
 
-  useEffect(() => {
-    if (a && b) storage.setCompare([a, b]);
-  }, [a, b]);
+  const pick = (slug: string) => {
+    setSelected((prev) => {
+      if (prev.includes(slug)) return prev.filter((x) => x !== slug);
+      if (prev.length >= 5) return prev;
+      return [...prev, slug];
+    });
+  };
 
-  const left = useMemo(() => data.find((p) => p.slug === a), [data, a]);
-  const right = useMemo(() => data.find((p) => p.slug === b), [data, b]);
-
-  const select = (value: string, setter: (v: string) => void) => (
-    <select value={value} onChange={(e) => setter(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-transparent p-2">
-      {data.map((p) => <option key={p.slug} value={p.slug}>{p.province}</option>)}
-    </select>
-  );
+  const mergedHistory = useMemo(() => {
+    const list: Array<HistoricalPoint & { name: string }> = [];
+    selected.forEach((slug) => {
+      const row = rows.find((x) => x.slug === slug);
+      if (!row) return;
+      cache.getHistoryByProvince(slug).forEach((h) => list.push({ ...h, name: row.province_name_en }));
+    });
+    return list.slice(-120);
+  }, [rows, selected]);
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-bold">Compare Provinces</h1>
+      <h1 className="text-2xl font-bold">Compare Provinces (2-5)</h1>
+      <Card>
+        <p className="mb-2 text-sm text-slate-500">Select up to 5 provinces:</p>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {rows.map((row) => (
+            <button key={row.slug} className={`rounded-lg border p-2 text-left ${selected.includes(row.slug) ? "border-sky-500 bg-sky-50 dark:bg-sky-950" : ""}`} onClick={() => pick(row.slug)}>
+              <p className="font-medium">{row.province_name_en}</p>
+              <p className="text-xs">PM2.5 {row.air.pm25}</p>
+            </button>
+          ))}
+        </div>
+      </Card>
+
       <div className="grid gap-4 md:grid-cols-2">
-        <Card>{select(a, setA)}</Card>
-        <Card>{select(b, setB)}</Card>
+        {selected.map((slug) => {
+          const row = rows.find((x) => x.slug === slug);
+          if (!row) return null;
+          return (
+            <Card key={slug}>
+              <p className="font-semibold">{row.province_name_en}</p>
+              <p className="text-sm">PM2.5 {row.air.pm25} • Forecast {row.predicted_pm25} • Risk {row.risk_level}</p>
+            </Card>
+          );
+        })}
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {[left, right].map((item, idx) => (
-          <Card key={idx}>
-            {item ? (
-              <>
-                <h2 className="text-lg font-semibold">{item.province}</h2>
-                <p>PM2.5: <b>{item.pm25}</b> μg/m³</p>
-                <p>AQI estimate: <b>{toAqi(item.pm25)}</b></p>
-              </>
-            ) : (
-              <p>Select province</p>
-            )}
-          </Card>
-        ))}
-      </div>
+
+      <Card>
+        <h2 className="mb-2 font-semibold">Historical compare chart</h2>
+        <HistoricalPmChart history={mergedHistory} />
+      </Card>
     </section>
   );
 }
