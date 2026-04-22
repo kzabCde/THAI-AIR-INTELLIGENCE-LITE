@@ -19,6 +19,7 @@ Simple, fast, and beautiful thesis demo web app for nationwide Thailand PM2.5 mo
 ```txt
 /app
   /dashboard
+  /map
   /province/[slug]
   /compare
   /settings
@@ -32,9 +33,10 @@ Simple, fast, and beautiful thesis demo web app for nationwide Thailand PM2.5 mo
 
 1. Landing Page (`/`)
 2. Dashboard (`/dashboard`)
-3. Province Detail (`/province/[slug]`)
-4. Compare (`/compare`)
-5. Settings (`/settings`)
+3. Map View (`/map`)
+4. Province Detail (`/province/[slug]`)
+5. Compare (`/compare`)
+6. Settings (`/settings`)
 
 ## Data Sources
 

@@ -13,7 +13,7 @@ export default function LandingPage() {
         </p>
         <div className="flex justify-center gap-3">
           <Link href="/dashboard"><Button>Open Dashboard</Button></Link>
-          <Link href="/dashboard#map"><Button className="bg-slate-700 hover:bg-slate-800">View Map</Button></Link>
+          <Link href="/map"><Button className="bg-slate-700 hover:bg-slate-800">View Map</Button></Link>
         </div>
       </div>
 

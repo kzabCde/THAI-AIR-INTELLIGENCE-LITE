@@ -12,11 +12,22 @@ export default function DashboardPage() {
   const [data, setData] = useState<ProvinceAir[]>([]);
   const [query, setQuery] = useState("");
   const [favorite, setFavorite] = useState("");
+  const [compareA, setCompareA] = useState("");
+  const [compareB, setCompareB] = useState("");
 
   useEffect(() => {
-    fetchThaiAirData().then(setData);
+    fetchThaiAirData().then((items) => {
+      setData(items);
+      const saved = storage.getCompare();
+      setCompareA(saved[0] ?? items[0]?.slug ?? "");
+      setCompareB(saved[1] ?? items[1]?.slug ?? "");
+    });
     setFavorite(storage.getFavorite());
   }, []);
+
+  useEffect(() => {
+    if (compareA && compareB) storage.setCompare([compareA, compareB]);
+  }, [compareA, compareB]);
 
   const filtered = useMemo(
     () => data.filter((d) => d.province.toLowerCase().includes(query.toLowerCase())),
@@ -37,6 +48,8 @@ export default function DashboardPage() {
   }, [data]);
 
   const ranking = [...filtered].sort((a, b) => b.pm25 - a.pm25);
+  const left = data.find((d) => d.slug === compareA);
+  const right = data.find((d) => d.slug === compareB);
 
   return (
     <section className="space-y-6">
@@ -58,6 +71,35 @@ export default function DashboardPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+      </Card>
+
+      <Card className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Quick Compare</h2>
+          <Link href="/compare" className="text-sm text-sky-700 dark:text-sky-300">Open full compare →</Link>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <select value={compareA} onChange={(e) => setCompareA(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-transparent p-2 text-sm">
+            {data.map((d) => <option key={d.slug} value={d.slug}>{d.province}</option>)}
+          </select>
+          <select value={compareB} onChange={(e) => setCompareB(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-transparent p-2 text-sm">
+            {data.map((d) => <option key={d.slug} value={d.slug}>{d.province}</option>)}
+          </select>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {[left, right].map((item, idx) => (
+            <div key={idx} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              {item ? (
+                <>
+                  <p className="font-semibold">{item.province}</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">PM2.5: {item.pm25} μg/m³</p>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">Choose province</p>
+              )}
+            </div>
+          ))}
+        </div>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-3" id="map">

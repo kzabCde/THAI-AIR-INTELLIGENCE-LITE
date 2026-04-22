@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Cog, Home, Scale, Wind } from "lucide-react";
+import { Cog, Home, Map, Wind } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
   { href: "/", label: "Home", icon: Home },
   { href: "/dashboard", label: "Dashboard", icon: Wind },
-  { href: "/compare", label: "Compare", icon: Scale },
+  { href: "/map", label: "Map", icon: Map },
   { href: "/settings", label: "Settings", icon: Cog },
 ];
 
@@ -20,7 +20,7 @@ export function MobileNav() {
       <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
         {items.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href || (item.href === "/dashboard" && pathname.startsWith("/province"));
+          const active = pathname === item.href || (item.href === "/dashboard" && (pathname.startsWith("/province") || pathname === "/compare"));
           return (
             <Link
               key={item.href}

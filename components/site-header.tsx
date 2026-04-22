@@ -9,6 +9,7 @@ export function SiteHeader() {
         </Link>
         <nav className="hidden gap-4 text-sm text-slate-600 dark:text-slate-300 md:flex">
           <Link href="/dashboard">Dashboard</Link>
+          <Link href="/map">Map</Link>
           <Link href="/compare">Compare</Link>
           <Link href="/settings">Settings</Link>
         </nav>
