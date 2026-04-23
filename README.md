@@ -1,53 +1,117 @@
-# Thailand Air Quality Intelligence Lite
+# ประเทศไทย AI คุณภาพอากาศอัจฉริยะ (Thailand Air Intelligence)
 
-Frontend-only **Next.js + TypeScript + Tailwind** dashboard that monitors and predicts PM2.5 for **all 77 provinces of Thailand** using free/public APIs.
+แพลตฟอร์ม Web App ระดับ Thesis/Demo สำหรับติดตาม **PM2.5 / PM10 / AQI แบบเรียลไทม์** ครอบคลุม **77 จังหวัดของประเทศไทย** พร้อมระบบคาดการณ์และการวิเคราะห์ความเสี่ยงอัตโนมัติ.
 
-## Features
+## เทคโนโลยีหลัก
 
-- 77-province metadata dataset (`province_name_th`, `province_name_en`, `region`, `latitude`, `longitude`, `population`, `nearby_stations`).
-- Multi-source API engine with fallback priority:
-  1. Air4Thai (soft optional)
-  2. OpenAQ
-  3. Open-Meteo Air Quality
-  4. Local fallback baseline
-- Weather integration via Open-Meteo (temperature, humidity, wind, rain).
-- Hotspot integration via NASA FIRMS (with graceful fallback estimate).
-- Local historical storage (90-day rolling) via `localStorage`.
-- Browser-side PM2.5 prediction models:
-  - Moving Average (7-day)
-  - Linear Regression trendline
-  - Weighted Smart Score
-- Risk scoring engine and alert logic.
-- Thesis pages:
-  - National dashboard
-  - Province detail
-  - Compare 2-5 provinces
-  - Analytics (MAE/RMSE + reliability)
-
-## Tech Stack
-
-- Next.js App Router
-- React + TypeScript strict mode
-- Tailwind CSS
+- Next.js 15 (App Router)
+- React 19 + TypeScript (strict)
+- Tailwind CSS + Framer Motion
 - Recharts
+- SWR (stale-while-revalidate)
+- Zustand
+- date-fns
+- พร้อม Deploy บน Vercel
 
-## Local Run
+## ความสามารถหลัก
+
+- แดชบอร์ดภาษาไทยเต็มระบบ (ฟอนต์ Kanit, Prompt, Sarabun)
+- ครอบคลุมข้อมูล 77 จังหวัด (จังหวัด, ภูมิภาค, พิกัด centroid, สถานีใกล้เคียง)
+- ระบบผู้ให้บริการข้อมูลแบบ fallback:
+  1. Air4Thai/PCD (soft fail)
+  2. OpenAQ
+  3. Open-Meteo Air
+  4. Fallback sample mode
+- Realtime refresh policy:
+  - PM2.5 ทุก 1 นาที
+  - สภาพอากาศทุก 5 นาที
+  - Hotspot ทุก 10 นาที
+- Prediction Engine 3 โมเดล:
+  - Moving Average (7 วัน)
+  - Linear Regression
+  - Smart Weighted Formula
+- Risk Engine:
+  - ต่ำ / ปานกลาง / สูง / วิกฤต
+  - อธิบายเหตุผลความเสี่ยง
+- แจ้งเตือนเมื่อ PM2.5 > 100
+- ค้นหาจังหวัด, ดูอันดับ, เทียบจังหวัด, โหมดกลางวัน/กลางคืน, จังหวัดโปรด
+
+## โครงสร้างโปรเจกต์
+
+```txt
+app/
+  page.tsx
+  layout.tsx
+  api/air/route.ts
+  api/weather/route.ts
+components/
+  ThailandMap.tsx
+  ProvincePanel.tsx
+  RealtimeTicker.tsx
+  dashboard/thailand-map-intelligence.tsx
+  charts/*
+lib/
+  providers.ts
+  mergeData.ts
+  prediction.ts
+  risk.ts
+  thaiDate.ts
+  provinces.ts
+  colors.ts
+  cache.ts
+  engine.ts
+  apis/*
+  store/app-store.ts
+  hooks/use-thailand-snapshot.ts
+types/
+  air.ts
+  index.ts
+```
+
+## วิธีติดตั้ง
 
 ```bash
 npm install
+```
+
+## วิธีรันในเครื่อง
+
+```bash
 npm run dev
 ```
 
-## App Structure
+เปิดที่ `http://localhost:3000`
 
-- `app/` pages (dashboard, map, province detail, compare, analytics)
-- `components/` charts and reusable UI
-- `lib/apis/` free API connectors
-- `lib/prediction/` prediction models
-- `lib/thailand-provinces.ts` full 77-province dataset
-- `lib/cache.ts` local snapshot + historical cache
-- `lib/scoring.ts` risk and AQI scoring
+## คำสั่งที่แนะนำ
 
-## Deployment
+```bash
+npm run typecheck
+npm run lint
+npm run build
+```
 
-Ready for Vercel deployment as a frontend-only app.
+## ตั้งค่า Environment
+
+คัดลอกไฟล์ตัวอย่าง:
+
+```bash
+cp .env.example .env.local
+```
+
+## Deploy บน Vercel
+
+1. Push โค้ดขึ้น GitHub
+2. Import โปรเจกต์ใน Vercel
+3. Framework preset: **Next.js**
+4. Build Command: `npm run build`
+5. Output: `.next`
+6. Deploy
+
+## สถาปัตยกรรม (ย่อ)
+
+- **Presentation Layer:** `app/` + `components/` แสดงผลแดชบอร์ด, แผนที่, กราฟ
+- **State Layer:** Zustand สำหรับสถานะผู้ใช้ (selected province/favorite)
+- **Data Layer:** SWR + API routes (`/api/air`, `/api/weather`) + provider fallback
+- **Domain Layer:** Prediction / Risk / Merge / Score utilities ใน `lib/`
+- **Cache Layer:** localStorage สำหรับ snapshot และ history
+
