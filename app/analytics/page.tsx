@@ -13,7 +13,7 @@ function calc(actual: number[], predicted: number[]) {
 }
 
 export default function AnalyticsPage() {
-  const { data } = useThailandSnapshot();
+  const { data, error } = useThailandSnapshot();
   const rows: ProvinceSnapshot[] = data?.data ?? [];
 
   const modelScores = useMemo(() => {
@@ -33,6 +33,8 @@ export default function AnalyticsPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-bold">ศูนย์วิเคราะห์เชิงวิทยานิพนธ์ (Thesis Analytics)</h1>
+
+      {error && <p className="text-sm text-rose-600">เชื่อมต่อข้อมูลสดไม่สำเร็จ: {error}</p>}
 
       <div className="grid gap-4 md:grid-cols-3">
         {modelScores.map((m) => (

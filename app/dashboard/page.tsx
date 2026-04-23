@@ -20,7 +20,7 @@ type RankMode = keyof typeof rankModes;
 export default function DashboardPage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<RankMode>("worst");
-  const { data, isLoading } = useThailandSnapshot();
+  const { data, isLoading, error } = useThailandSnapshot();
   const rows: ProvinceSnapshot[] = data?.data ?? [];
 
   const filtered = useMemo(() => {
@@ -45,6 +45,7 @@ export default function DashboardPage() {
     <section className="space-y-5">
       <h1 className="text-2xl font-bold md:text-3xl">แดชบอร์ดคุณภาพอากาศประเทศไทย</h1>
       <RealtimeTicker updatedAt={data?.updatedAt ? new Date(data.updatedAt) : new Date()} rows={ranked} />
+      {error && <p className="text-sm text-rose-600">เชื่อมต่อข้อมูลสดไม่สำเร็จ: {error}</p>}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card><p className="text-xs text-slate-500">จังหวัดที่ครอบคลุม</p><p className="text-2xl font-bold">{rows.length}/77</p></Card>

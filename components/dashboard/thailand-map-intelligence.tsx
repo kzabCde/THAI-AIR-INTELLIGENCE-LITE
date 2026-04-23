@@ -5,7 +5,6 @@ import { useThailandSnapshot } from "@/lib/hooks/use-thailand-snapshot";
 import { useAppStore } from "@/lib/store/app-store";
 import { motion } from "framer-motion";
 import { Bell, Expand, Moon, RefreshCw, Search, SunMedium } from "lucide-react";
-import { buildThailandSnapshot } from "@/lib/engine";
 import { cache } from "@/lib/cache";
 import { storage } from "@/lib/storage";
 import type { ProvinceSnapshot } from "@/types/air";
@@ -28,7 +27,7 @@ function generateTimeline(seed: string, base: number) {
 
 export function ThailandMapIntelligence() {
   const [rows, setRows] = useState<ProvinceSnapshot[]>([]);
-  const { data: swrData, mutate: refreshFromApi } = useThailandSnapshot();
+  const { data: swrData } = useThailandSnapshot();
   const selectedSlug = useAppStore((s: { selectedProvince: string | null }) => s.selectedProvince);
   const setSelectedSlug = useAppStore((s: { setSelectedProvince: (slug: string | null) => void }) => s.setSelectedProvince);
   const favorites = useAppStore((s: { favorites: string[] }) => s.favorites);
@@ -53,14 +52,16 @@ export function ThailandMapIntelligence() {
     }
 
     const load = async () => {
-      const latest = await buildThailandSnapshot();
-      setRows(latest);
-      setUpdatedAt(new Date());
+      const response = await fetch("/api/air", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { updatedAt: string; data: ProvinceSnapshot[] };
+      setRows(payload.data);
+      setUpdatedAt(new Date(payload.updatedAt));
       const now = Date.now();
       setLastRefresh({ pm25: now, weather: now, hotspot: now });
     };
 
-    load();
+    void load();
   }, []);
 
 
@@ -76,17 +77,19 @@ export function ThailandMapIntelligence() {
         return;
       }
 
-      const latest = await buildThailandSnapshot();
+      const response = await fetch("/api/air", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { updatedAt: string; data: ProvinceSnapshot[] };
       setRows((prev) => {
-        const delta = Object.fromEntries(latest.map((row) => {
+        const delta = Object.fromEntries(payload.data.map((row) => {
           const old = prev.find((p) => p.slug === row.slug)?.air.pm25 ?? row.air.pm25;
           return [row.slug, +(row.air.pm25 - old).toFixed(1)];
         }));
         setPmDeltaByProvince(delta);
-        return latest;
+        return payload.data;
       });
 
-      setUpdatedAt(new Date());
+      setUpdatedAt(new Date(payload.updatedAt));
       setLastRefresh((prev) => ({
         pm25: shouldRefresh(prev.pm25, "pm25", now) ? now : prev.pm25,
         weather: shouldRefresh(prev.weather, "weather", now) ? now : prev.weather,
@@ -124,7 +127,11 @@ export function ThailandMapIntelligence() {
   const compareWith = rows.find((x) => x.slug === compareSlug) ?? null;
 
   const refresh = async () => {
-    await refreshFromApi();
+    const response = await fetch("/api/air", { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = (await response.json()) as { updatedAt: string; data: ProvinceSnapshot[] };
+    setRows(payload.data);
+    setUpdatedAt(new Date(payload.updatedAt));
   };
 
   const toggleTheme = () => {
