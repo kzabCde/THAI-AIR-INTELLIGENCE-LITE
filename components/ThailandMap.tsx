@@ -52,11 +52,11 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
   };
 
   const matchesSearch = (nameTh: string, nameEn: string) =>
-    !!search && (`${nameTh}${nameEn}`.toLowerCase().includes(search.toLowerCase()));
+    !!search && (`${nameTh} ${nameEn}`.toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative overflow-hidden rounded-3xl border border-white/30 bg-white/70 p-2 shadow-2xl dark:border-white/10 dark:bg-slate-950/55">
-      <div className="relative h-[62vh] w-full cursor-grab overflow-hidden rounded-2xl bg-gradient-to-br from-sky-50 to-cyan-100 active:cursor-grabbing dark:from-slate-900 dark:to-slate-950 md:h-[76vh]" onWheel={onWheel} onMouseDown={() => setDragging(true)} onMouseUp={() => setDragging(false)} onMouseMove={(event) => dragging && setPan((prev) => ({ x: prev.x + event.movementX, y: prev.y + event.movementY }))}>
+      <div className="relative h-[55vh] w-full cursor-grab overflow-hidden rounded-2xl bg-gradient-to-br from-sky-50 to-cyan-100 active:cursor-grabbing dark:from-slate-900 dark:to-slate-950 md:h-[76vh]" onWheel={onWheel} onMouseDown={() => setDragging(true)} onMouseUp={() => setDragging(false)} onMouseLeave={() => setDragging(false)} onMouseMove={(event) => dragging && setPan((prev) => ({ x: prev.x + event.movementX, y: prev.y + event.movementY }))}>
         <svg viewBox="0 0 700 960" className="h-full w-full transition-transform duration-200" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
           {projected.map((province) => {
             const active = province.slug === selectedSlug || matchesSearch(province.province_name_th, province.province_name_en);

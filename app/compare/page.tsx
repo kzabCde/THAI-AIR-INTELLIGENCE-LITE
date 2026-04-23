@@ -12,7 +12,7 @@ const presets = [
 ];
 
 export default function ComparePage() {
-  const { data } = useThailandSnapshot();
+  const { data, error } = useThailandSnapshot();
   const rows: ProvinceSnapshot[] = data?.data ?? [];
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -36,6 +36,8 @@ export default function ComparePage() {
         <h1 className="mr-auto text-2xl font-bold">เปรียบเทียบจังหวัด (2-5 จังหวัด)</h1>
         <button onClick={() => window.print()} className="rounded-xl border px-3 py-2 text-sm">ส่งออกรายงานเป็นภาพ/PDF</button>
       </div>
+
+      {error && <p className="text-sm text-rose-600">เชื่อมต่อข้อมูลสดไม่สำเร็จ: {error}</p>}
 
       <Card>
         <p className="mb-2 text-sm text-slate-500">พรีเซ็ตเปรียบเทียบ</p>

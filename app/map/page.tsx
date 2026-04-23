@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { useThailandSnapshot } from "@/lib/hooks/use-thailand-snapshot";
 
 export default function MapPage() {
-  const { data } = useThailandSnapshot();
+  const { data, error } = useThailandSnapshot();
   const rows = data?.data ?? [];
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -24,6 +24,8 @@ export default function MapPage() {
         <input className="rounded-xl border px-3 py-2 text-sm" placeholder="ค้นหาจังหวัดเพื่อโฟกัส" value={search} onChange={(e) => setSearch(e.target.value)} />
         <button onClick={() => document.documentElement.requestFullscreen?.()} className="rounded-xl border px-3 py-2 text-sm">เต็มจอ</button>
       </div>
+
+      {error && <p className="text-sm text-rose-600">เชื่อมต่อข้อมูลสดไม่สำเร็จ: {error}</p>}
 
       <Card>
         <ThailandMap rows={ranked.map((x) => ({ ...x, air: { ...x.air, pm25: Math.max(1, x.air.pm25 - (6 - timelineIndex) * 1.2) } }))} search={search} selectedSlug={selected} pmDeltaByProvince={{}} onSelect={setSelected} />

@@ -1,4 +1,6 @@
-import { create } from "zustand";
+"use client";
+
+import { useSyncExternalStore } from "react";
 
 type AppState = {
   favorites: string[];
@@ -7,13 +9,59 @@ type AppState = {
   setSelectedProvince: (slug: string | null) => void;
 };
 
-export const useAppStore = create<AppState>((set) => ({
-  favorites: [],
-  selectedProvince: null,
-  toggleFavorite: (slug: string) => set((state: AppState) => ({
-    favorites: state.favorites.includes(slug)
-      ? state.favorites.filter((x: string) => x !== slug)
-      : [...state.favorites, slug],
-  })),
-  setSelectedProvince: (slug: string | null) => set({ selectedProvince: slug }),
-}));
+type Store = {
+  state: Omit<AppState, "toggleFavorite" | "setSelectedProvince">;
+  listeners: Set<() => void>;
+};
+
+const store: Store = {
+  state: {
+    favorites: [],
+    selectedProvince: null,
+  },
+  listeners: new Set(),
+};
+
+function emit() {
+  store.listeners.forEach((listener) => listener());
+}
+
+function toggleFavorite(slug: string) {
+  const exists = store.state.favorites.includes(slug);
+  store.state = {
+    ...store.state,
+    favorites: exists ? store.state.favorites.filter((item) => item !== slug) : [...store.state.favorites, slug],
+  };
+  emit();
+}
+
+function setSelectedProvince(slug: string | null) {
+  store.state = {
+    ...store.state,
+    selectedProvince: slug,
+  };
+  emit();
+}
+
+function subscribe(listener: () => void) {
+  store.listeners.add(listener);
+  return () => store.listeners.delete(listener);
+}
+
+export function useAppStore<T>(selector: (state: AppState) => T): T {
+  return useSyncExternalStore(
+    subscribe,
+    () =>
+      selector({
+        ...store.state,
+        toggleFavorite,
+        setSelectedProvince,
+      }),
+    () =>
+      selector({
+        ...store.state,
+        toggleFavorite,
+        setSelectedProvince,
+      }),
+  );
+}

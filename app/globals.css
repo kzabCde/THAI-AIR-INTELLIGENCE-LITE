@@ -23,5 +23,5 @@ body {
 
 
 body {
-  font-family: var(--font-prompt), var(--font-sarabun), var(--font-kanit), var(--font-ibm-thai), system-ui, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
