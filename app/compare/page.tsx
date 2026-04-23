@@ -1,10 +1,15 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
-import { HistoricalPmChart } from "@/components/dashboard/charts";
 import { Card } from "@/components/ui/card";
 import { useThailandSnapshot } from "@/lib/hooks/use-thailand-snapshot";
 import type { ProvinceSnapshot } from "@/types/air";
+
+const HistoricalPmChart = dynamic(() => import("@/components/dashboard/charts").then((m) => m.HistoricalPmChart), {
+  ssr: false,
+  loading: () => <div className="h-72 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />,
+});
 
 const presets = [
   ["bangkok", "chiang-mai", "nonthaburi"],

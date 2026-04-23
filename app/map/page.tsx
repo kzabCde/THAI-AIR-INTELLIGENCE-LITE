@@ -1,21 +1,40 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
 import { ProvinceDrawer } from "@/components/panel/province-drawer";
-import { ThailandMap } from "@/components/ThailandMap";
 import { Card } from "@/components/ui/card";
 import { useThailandSnapshot } from "@/lib/hooks/use-thailand-snapshot";
+
+const ThailandMap = dynamic(() => import("@/components/ThailandMap").then((m) => m.ThailandMap), {
+  ssr: false,
+  loading: () => <div className="h-[72vh] animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" />,
+});
 
 export default function MapPage() {
   const { data, error } = useThailandSnapshot();
   const rows = data?.data ?? [];
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [timelineIndex, setTimelineIndex] = useState(6);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search), 150);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
   const ranked = useMemo(() => [...rows].sort((a, b) => b.air.pm25 - a.air.pm25), [rows]);
   const selectedRow = ranked.find((x) => x.slug === selected) ?? null;
-  const timeline = Array.from({ length: 7 }).map((_, i) => Math.max(5, (selectedRow?.air.pm25 ?? 20) - (6 - i) * 2));
+  const timeline = useMemo(
+    () => Array.from({ length: 7 }).map((_, i) => Math.max(5, (selectedRow?.air.pm25 ?? 20) - (6 - i) * 2)),
+    [selectedRow?.air.pm25],
+  );
+
+  const timelineAdjustedRows = useMemo(
+    () => ranked.map((x) => ({ ...x, air: { ...x.air, pm25: Math.max(1, x.air.pm25 - (6 - timelineIndex) * 1.2) } })),
+    [ranked, timelineIndex],
+  );
 
   return (
     <section className="space-y-4">
@@ -28,7 +47,7 @@ export default function MapPage() {
       {error && <p className="text-sm text-rose-600">เชื่อมต่อข้อมูลสดไม่สำเร็จ: {error}</p>}
 
       <Card>
-        <ThailandMap rows={ranked.map((x) => ({ ...x, air: { ...x.air, pm25: Math.max(1, x.air.pm25 - (6 - timelineIndex) * 1.2) } }))} search={search} selectedSlug={selected} pmDeltaByProvince={{}} onSelect={setSelected} />
+        <ThailandMap rows={timelineAdjustedRows} search={debouncedSearch} selectedSlug={selected} pmDeltaByProvince={{}} onSelect={setSelected} />
       </Card>
 
       <Card>

@@ -1,13 +1,25 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ForecastTrendChart, ProvinceRankingChart } from "@/components/dashboard/charts";
-import { ThailandHeatMap } from "@/components/dashboard/heatmap";
-import { RealtimeTicker } from "@/components/RealtimeTicker";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { useThailandSnapshot } from "@/lib/hooks/use-thailand-snapshot";
 import type { ProvinceSnapshot } from "@/types/air";
+
+const ProvinceRankingChart = dynamic(() => import("@/components/dashboard/charts").then((m) => m.ProvinceRankingChart), {
+  ssr: false,
+  loading: () => <div className="h-80 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />,
+});
+const ForecastTrendChart = dynamic(() => import("@/components/dashboard/charts").then((m) => m.ForecastTrendChart), {
+  ssr: false,
+  loading: () => <div className="h-80 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />,
+});
+const ThailandHeatMap = dynamic(() => import("@/components/dashboard/heatmap").then((m) => m.ThailandHeatMap), {
+  ssr: false,
+  loading: () => <div className="h-[360px] animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />,
+});
+const RealtimeTicker = dynamic(() => import("@/components/RealtimeTicker").then((m) => m.RealtimeTicker), { ssr: false });
 
 const rankModes = {
   worst: "ฝุ่นสูงสุด",
@@ -19,15 +31,26 @@ type RankMode = keyof typeof rankModes;
 
 export default function DashboardPage() {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [mode, setMode] = useState<RankMode>("worst");
   const { data, isLoading, error } = useThailandSnapshot();
   const rows: ProvinceSnapshot[] = data?.data ?? [];
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(query), 150);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  const indexedRows = useMemo(
+    () => rows.map((row) => ({ row, searchText: `${row.province_name_th} ${row.province_name_en}`.toLowerCase() })),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((p) => `${p.province_name_th} ${p.province_name_en}`.toLowerCase().includes(q));
-  }, [query, rows]);
+    return indexedRows.filter((entry) => entry.searchText.includes(q)).map((entry) => entry.row);
+  }, [debouncedQuery, indexedRows, rows]);
 
   const ranked = useMemo(() => {
     const copy = [...filtered];
@@ -79,7 +102,7 @@ export default function DashboardPage() {
         <h2 className="mb-2 font-semibold">รายชื่อจังหวัด</h2>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {ranked.map((p) => (
-            <Link key={p.slug} className="rounded-xl border p-2 hover:bg-slate-50 dark:hover:bg-slate-900" href={`/province/${p.slug}`}>
+            <Link key={p.slug} prefetch className="rounded-xl border p-2 hover:bg-slate-50 dark:hover:bg-slate-900" href={`/province/${p.slug}`}>
               <p className="font-medium">{p.province_name_th}</p>
               <p className="text-xs text-slate-500">{p.province_name_en} • {p.region}</p>
               <p className="text-sm">PM2.5 {p.air.pm25.toFixed(1)} • คาดการณ์ {p.predicted_pm25.toFixed(1)}</p>
