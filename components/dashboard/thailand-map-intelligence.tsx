@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useThailandSnapshot } from "@/lib/hooks/use-thailand-snapshot";
+import { useAppStore } from "@/lib/store/app-store";
 import { motion } from "framer-motion";
 import { Bell, Expand, Moon, RefreshCw, Search, SunMedium } from "lucide-react";
 import { buildThailandSnapshot } from "@/lib/engine";
@@ -26,7 +28,11 @@ function generateTimeline(seed: string, base: number) {
 
 export function ThailandMapIntelligence() {
   const [rows, setRows] = useState<ProvinceSnapshot[]>([]);
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const { data: swrData, mutate: refreshFromApi } = useThailandSnapshot();
+  const selectedSlug = useAppStore((s: { selectedProvince: string | null }) => s.selectedProvince);
+  const setSelectedSlug = useAppStore((s: { setSelectedProvince: (slug: string | null) => void }) => s.setSelectedProvince);
+  const favorites = useAppStore((s: { favorites: string[] }) => s.favorites);
+  const toggleFavorite = useAppStore((s: { toggleFavorite: (slug: string) => void }) => s.toggleFavorite);
   const [compareSlug, setCompareSlug] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isDark, setIsDark] = useState(false);
@@ -57,6 +63,12 @@ export function ThailandMapIntelligence() {
     load();
   }, []);
 
+
+  useEffect(() => {
+    if (!swrData?.data?.length) return;
+    setRows(swrData.data);
+    setUpdatedAt(new Date(swrData.updatedAt));
+  }, [swrData]);
   useEffect(() => {
     const timer = window.setInterval(async () => {
       const now = Date.now();
@@ -112,9 +124,7 @@ export function ThailandMapIntelligence() {
   const compareWith = rows.find((x) => x.slug === compareSlug) ?? null;
 
   const refresh = async () => {
-    const latest = await buildThailandSnapshot();
-    setRows(latest);
-    setUpdatedAt(new Date());
+    await refreshFromApi();
   };
 
   const toggleTheme = () => {
@@ -179,6 +189,17 @@ export function ThailandMapIntelligence() {
           <div className="rounded-2xl border border-slate-200/60 p-3 text-sm dark:border-slate-700/60">
             <p className="font-semibold">AI วิเคราะห์ง่ายๆ</p>
             <p className="mt-2 text-slate-600 dark:text-slate-300">{worst ? `${worst.province_name_th}มีแนวโน้ม${pmDeltaByProvince[worst.slug] > 0 ? "เพิ่มขึ้น" : "ทรงตัว"} เนื่องจากจุดความร้อน ${worst.hotspot_count} จุด และลม ${worst.weather.wind} m/s` : "กำลังโหลดการวิเคราะห์..."}</p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/60 p-3 text-sm dark:border-slate-700/60">
+            <p className="font-semibold">จังหวัดโปรด</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {rows.slice(0, 12).map((item) => (
+                <button key={item.slug} onClick={() => toggleFavorite(item.slug)} className="rounded-full border px-3 py-1 text-xs">
+                  {favorites.includes(item.slug) ? "★" : "☆"} {item.province_name_th}
+                </button>
+              ))}
+            </div>
           </div>
 
           <button onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}`, "_blank")} className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">แชร์ภาพค่าฝุ่นลง Facebook</button>
