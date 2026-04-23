@@ -21,7 +21,7 @@
     "swr": "^2.3.3",
     "zustand": "^5.0.8",
     "date-fns": "^4.1.0",
-    "react-simple-maps": "^3.0.0"
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

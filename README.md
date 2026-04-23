@@ -11,6 +11,7 @@
 - SWR (stale-while-revalidate)
 - Zustand
 - date-fns
+- Leaflet
 - พร้อม Deploy บน Vercel
 
 ## ความสามารถหลัก
