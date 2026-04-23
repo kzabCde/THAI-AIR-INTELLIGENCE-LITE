@@ -36,6 +36,27 @@ export function weightedSmartScoreModel(history: HistoricalPoint[], hotspotFacto
   return Number(Math.max(1, prediction).toFixed(1));
 }
 
+export function confidenceScore(history: HistoricalPoint[]): number {
+  if (history.length < 3) return 0.35;
+  const recent = history.slice(-10).map((x) => x.pm25);
+  const mean = recent.reduce((s, x) => s + x, 0) / recent.length;
+  const variance = recent.reduce((s, x) => s + (x - mean) ** 2, 0) / recent.length;
+  const normalized = Math.max(0, 1 - Math.sqrt(variance) / 50);
+  return Number(normalized.toFixed(2));
+}
+
+export function compareModelAccuracy(history: HistoricalPoint[], hotspotFactor: number, wind: number) {
+  const actual = history.at(-1)?.pm25 ?? 0;
+  const ma = movingAverageModel(history.slice(0, -1));
+  const lr = linearRegressionModel(history.slice(0, -1));
+  const weighted = weightedSmartScoreModel(history.slice(0, -1), hotspotFactor, wind);
+  return {
+    ma: Math.abs(actual - ma),
+    lr: Math.abs(actual - lr),
+    weighted: Math.abs(actual - weighted),
+  };
+}
+
 export function chooseBestPrediction(models: { ma: number; lr: number; weighted: number }, history: HistoricalPoint[]) {
   if (history.length < 7) return { value: models.weighted || models.ma || models.lr, model: "weighted-smart-score" as const };
 

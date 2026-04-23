@@ -2,16 +2,30 @@ import type { HistoricalPoint, ProvinceSnapshot } from "@/types/air";
 
 const HISTORY_KEY = "thai_air_history_v2";
 const SNAPSHOT_KEY = "thai_air_snapshot_v2";
+const SNAPSHOT_META_KEY = "thai_air_snapshot_meta_v1";
 const MAX_DAYS = 90;
+const DEFAULT_TTL_MS = 60 * 1000;
 
 function isClient() {
   return typeof window !== "undefined";
 }
 
+type SnapshotMeta = { savedAt: number; ttlMs: number };
+
+function readMeta(): SnapshotMeta {
+  if (!isClient()) return { savedAt: 0, ttlMs: DEFAULT_TTL_MS };
+  try {
+    return JSON.parse(localStorage.getItem(SNAPSHOT_META_KEY) ?? "") as SnapshotMeta;
+  } catch {
+    return { savedAt: 0, ttlMs: DEFAULT_TTL_MS };
+  }
+}
+
 export const cache = {
-  saveSnapshot(data: ProvinceSnapshot[]) {
+  saveSnapshot(data: ProvinceSnapshot[], ttlMs = DEFAULT_TTL_MS) {
     if (!isClient()) return;
     localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(data));
+    localStorage.setItem(SNAPSHOT_META_KEY, JSON.stringify({ savedAt: Date.now(), ttlMs }));
   },
 
   getSnapshot(): ProvinceSnapshot[] {
@@ -23,6 +37,21 @@ export const cache = {
     } catch {
       return [];
     }
+  },
+
+  getSnapshotState() {
+    const meta = readMeta();
+    const age = Date.now() - meta.savedAt;
+    return {
+      isFresh: age <= meta.ttlMs,
+      isStale: age > meta.ttlMs,
+      ageMs: age,
+      staleWhileRevalidate: this.getSnapshot(),
+    };
+  },
+
+  getOfflineFallback(): ProvinceSnapshot[] {
+    return this.getSnapshot();
   },
 
   saveHistoricalPoint(point: HistoricalPoint) {
