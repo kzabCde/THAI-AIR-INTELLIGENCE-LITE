@@ -9,6 +9,19 @@ type OpenAQResponse = {
   }>;
 };
 
+type WaqiResponse = {
+  status?: string;
+  data?: {
+    city?: { name?: string };
+    iaqi?: {
+      pm25?: { v?: number };
+      pm10?: { v?: number };
+    };
+    aqi?: number;
+    time?: { s?: string };
+  };
+};
+
 const FALLBACK_AIR: AirReading = {
   pm25: 28,
   pm10: 42,
@@ -20,19 +33,26 @@ const FALLBACK_AIR: AirReading = {
 
 async function fetchOpenMeteoAir(lat: number, lon: number): Promise<AirReading | null> {
   try {
-    const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&hourly=pm2_5,pm10&timezone=auto`;
+    const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=pm2_5,pm10,us_aqi&hourly=pm2_5,pm10&timezone=auto&forecast_hours=1`;
     const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8_000) });
     if (!res.ok) return null;
-    const json = (await res.json()) as { hourly?: { pm2_5?: number[]; pm10?: number[] } };
-    const pm25Values = json.hourly?.pm2_5 ?? [];
-    const pm10Values = json.hourly?.pm10 ?? [];
-    const pm25 = Number(pm25Values.at(-1) ?? 0);
-    const pm10 = Number(pm10Values.at(-1) ?? pm25 * 1.35);
+    const json = (await res.json()) as {
+      current?: { pm2_5?: number; pm10?: number; us_aqi?: number };
+      hourly?: { pm2_5?: Array<number | null>; pm10?: Array<number | null> };
+    };
+
+    const firstValid = (values?: Array<number | null>) =>
+      Number(values?.find((v): v is number => typeof v === "number" && Number.isFinite(v)) ?? 0);
+
+    const pm25 = Number(json.current?.pm2_5 ?? firstValid(json.hourly?.pm2_5));
+    if (!pm25 || Number.isNaN(pm25)) return null;
+    const pm10 = Number(json.current?.pm10 ?? firstValid(json.hourly?.pm10) ?? pm25 * 1.35);
+    const aqi = Number(json.current?.us_aqi ?? estimateAqi(pm25));
 
     return {
       pm25: Number(pm25.toFixed(1)),
       pm10: Number(pm10.toFixed(1)),
-      aqi: estimateAqi(pm25),
+      aqi: Number.isFinite(aqi) ? Math.round(aqi) : estimateAqi(pm25),
       source: "open-meteo-air",
       station: "Open-Meteo Grid",
       fetchedAt: new Date().toISOString(),
@@ -96,15 +116,45 @@ async function fetchAir4Thai(lat: number, lon: number): Promise<AirReading | nul
   }
 }
 
+async function fetchWaqi(lat: number, lon: number): Promise<AirReading | null> {
+  try {
+    const url = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=demo`;
+    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(6_000) });
+    if (!res.ok) return null;
+    const json = (await res.json()) as WaqiResponse;
+    if (json.status !== "ok" || !json.data) return null;
+
+    const pm25 = Number(json.data.iaqi?.pm25?.v ?? 0);
+    if (!pm25 || Number.isNaN(pm25)) return null;
+
+    const pm10 = Number(json.data.iaqi?.pm10?.v ?? pm25 * 1.35);
+    const aqi = Number(json.data.aqi ?? estimateAqi(pm25));
+
+    return {
+      pm25: Number(pm25.toFixed(1)),
+      pm10: Number(pm10.toFixed(1)),
+      aqi: Number.isFinite(aqi) ? Math.round(aqi) : estimateAqi(pm25),
+      source: "waqi",
+      station: json.data.city?.name ?? "WAQI station",
+      fetchedAt: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getBestAirReading(lat: number, lon: number): Promise<AirReading> {
+  const openMeteo = await fetchOpenMeteoAir(lat, lon);
+  if (openMeteo) return openMeteo;
+
+  const waqi = await fetchWaqi(lat, lon);
+  if (waqi) return waqi;
+
   const air4thai = await fetchAir4Thai(lat, lon);
   if (air4thai) return air4thai;
 
   const openaq = await fetchOpenAQ(lat, lon);
   if (openaq) return openaq;
-
-  const openMeteo = await fetchOpenMeteoAir(lat, lon);
-  if (openMeteo) return openMeteo;
 
   return { ...FALLBACK_AIR, fetchedAt: new Date().toISOString() };
 }
