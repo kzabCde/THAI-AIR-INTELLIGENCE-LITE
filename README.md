@@ -19,10 +19,11 @@
 - แดชบอร์ดภาษาไทยเต็มระบบ (ฟอนต์ Kanit, Prompt, Sarabun)
 - ครอบคลุมข้อมูล 77 จังหวัด (จังหวัด, ภูมิภาค, พิกัด centroid, สถานีใกล้เคียง)
 - ระบบผู้ให้บริการข้อมูลแบบ fallback:
-  1. Air4Thai/PCD (soft fail)
-  2. OpenAQ
-  3. Open-Meteo Air
-  4. Fallback sample mode
+  1. Open-Meteo Air (primary)
+  2. WAQI (secondary)
+  3. Air4Thai/PCD (soft fail)
+  4. OpenAQ
+  5. Fallback sample mode
 - Realtime refresh policy:
   - PM2.5 ทุก 1 นาที
   - สภาพอากาศทุก 5 นาที
@@ -115,4 +116,3 @@ cp .env.example .env.local
 - **Data Layer:** SWR + API routes (`/api/air`, `/api/weather`) + provider fallback
 - **Domain Layer:** Prediction / Risk / Merge / Score utilities ใน `lib/`
 - **Cache Layer:** localStorage สำหรับ snapshot และ history
-

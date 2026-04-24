@@ -1,4 +1,4 @@
-export type DataSource = "air4thai" | "openaq" | "open-meteo-air" | "fallback";
+export type DataSource = "air4thai" | "openaq" | "open-meteo-air" | "waqi" | "fallback";
 
 export type AirReading = {
   pm25: number;
