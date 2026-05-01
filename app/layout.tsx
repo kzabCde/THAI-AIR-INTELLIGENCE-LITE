@@ -17,6 +17,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider />
         <SiteHeader />
         <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        <footer className="mx-auto max-w-7xl px-4 pb-24 text-center text-xs text-slate-500 md:pb-6">
+          © 2026 NOWHEREDEV · {" "}
+          <a
+            href="https://nowheredev.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-slate-300 underline-offset-2 transition hover:text-slate-700"
+          >
+            nowheredev.vercel.app
+          </a>
+        </footer>
         <MobileNav />
       </body>
     </html>
