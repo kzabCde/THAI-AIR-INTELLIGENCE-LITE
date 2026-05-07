@@ -1,5 +1,5 @@
-import { PagePlaceholder } from "@/components/layout/page-placeholder";
+import { LandingPage } from "@/components/home/landing-page";
 
 export default function HomePage() {
-  return <PagePlaceholder title="หน้าแรก" subtitle="ภาพรวมระบบข่าวกรองอากาศของประเทศไทยในมุมมองผู้บริหาร" />;
+  return <LandingPage />;
 }
