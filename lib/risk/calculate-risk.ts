@@ -15,9 +15,10 @@ export function calculateRisk(input: RiskInput): RiskResult {
   const weatherPenalty = [windPenalty, humidityPenalty, temperaturePenalty].filter((n): n is number => n !== undefined).reduce((a, b) => a + b, 0) / Math.max(1, [windPenalty, humidityPenalty, temperaturePenalty].filter((x) => x !== undefined).length);
 
   const stalePenalty = input.isStale ? 100 : 0;
-  const hotspotPenalty = input.hotspotRisk ? clamp100(input.hotspotRisk) : 0;
+  const hotspotAdjustment = input.hotspotRisk ? clamp100(input.hotspotRisk) * 0.2 : 0;
+  const adjustedWeatherPenalty = clamp100((weatherPenalty ?? 0) + hotspotAdjustment);
 
-  const weighted = (pm25Score ?? 0) * 0.45 + (pm10Score ?? 0) * 0.2 + (aqiScore ?? 0) * 0.2 + (weatherPenalty ?? 0) * 0.1 + stalePenalty * 0.05 + hotspotPenalty * 0.05;
+  const weighted = (pm25Score ?? 0) * 0.45 + (pm10Score ?? 0) * 0.2 + (aqiScore ?? 0) * 0.2 + adjustedWeatherPenalty * 0.1 + stalePenalty * 0.05;
   const riskScore = clamp100(Number(weighted.toFixed(1)));
 
   let riskLevel: RiskLevelKey = "low";
