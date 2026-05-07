@@ -1,2 +1,5 @@
-import { PagePlaceholder } from "@/components/layout/page-placeholder";
-export default function ProvincePage() { return <PagePlaceholder title="จังหวัดทั้งหมด" subtitle="รายการจังหวัดพร้อมสถานะคุณภาพอากาศและข้อมูลเชิงเปรียบเทียบ" />; }
+import { ProvinceDirectory } from "@/components/province/province-directory";
+
+export default function ProvincePage() {
+  return <ProvinceDirectory />;
+}
