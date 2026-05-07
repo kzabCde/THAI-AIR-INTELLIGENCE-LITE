@@ -43,7 +43,14 @@ export function AirQualityMapClient() {
       const L = await import("leaflet");
       if (cancelled || !mapRef.current || leafletMap.current) return;
 
-      leafletMap.current = L.map(mapRef.current).setView([13.3, 101], 6);
+      const thailandBounds = L.latLngBounds([[5.4, 97.2], [20.6, 105.8]]);
+      leafletMap.current = L.map(mapRef.current, {
+        maxBounds: thailandBounds,
+        maxBoundsViscosity: 1.0,
+        minZoom: 5.5,
+        maxZoom: 10,
+      });
+      leafletMap.current.fitBounds(thailandBounds);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(leafletMap.current);
       markerLayer.current = L.layerGroup().addTo(leafletMap.current);
     })();
