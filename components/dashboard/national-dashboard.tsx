@@ -7,6 +7,7 @@ import { AlertCircle, Search } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { generateMockAirQualityData } from "@/lib/mock/air-quality";
 import { formatAQI, getAQIBgClass, getAQICategory, getAQITextClass } from "@/lib/aqi/calculate";
+import { calculateRisk } from "@/lib/risk/calculate-risk";
 import { type ThaiRegion } from "@/lib/provinces";
 
 const regions: (ThaiRegion | "all")[] = ["all", "north", "northeast", "central", "east", "west", "south", "bangkok-metropolitan"];
@@ -21,7 +22,10 @@ export function NationalDashboard() {
   const [loading] = useState(false);
   const [error] = useState<string | null>(null);
 
-  const rows = useMemo(() => generateMockAirQualityData(), []);
+  const rows = useMemo(() => generateMockAirQualityData().map((row) => ({
+    ...row,
+    risk: calculateRisk({ pm25: row.pm25, pm10: row.pm10, aqi: row.aqi, windSpeed: 8, humidity: 70, temperature: 33, isStale: row.isStale }),
+  })), []);
 
   const filtered = useMemo(() => {
     let list = rows.filter((item) => {
@@ -46,7 +50,7 @@ export function NationalDashboard() {
     const avgPM25 = Number((rows.reduce((sum, p) => sum + p.pm25, 0) / rows.length).toFixed(1));
     const worst = [...rows].sort((a, b) => b.aqi - a.aqi)[0];
     const best = [...rows].sort((a, b) => a.aqi - b.aqi)[0];
-    const riskCount = rows.filter((p) => getAQICategory(p.aqi).severityScore >= 70).length;
+    const riskCount = rows.filter((p) => p.risk.riskScore > 60).length;
     return { avgAQI, avgPM25, worst, best, riskCount };
   }, [rows]);
 
@@ -82,7 +86,7 @@ export function NationalDashboard() {
                 <Card className="space-y-2 hover:-translate-y-0.5 hover:shadow-xl">
                   <div className="flex items-start justify-between"><div><h3 className="font-semibold">{item.province.thaiName}</h3><p className="text-xs text-slate-500">{item.province.englishName} • {item.province.region}</p></div><span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">Demo Data</span></div>
                   <div className="grid grid-cols-3 gap-2 text-sm"><div>PM2.5 <b>{item.pm25}</b></div><div>PM10 <b>{item.pm10}</b></div><div>AQI <b>{formatAQI(item.aqi)}</b></div></div>
-                  <div className="flex items-center justify-between text-xs"><span className={`rounded-full px-2 py-1 ${getAQIBgClass(item.aqi)} ${getAQITextClass(item.aqi)}`}>{item.aqiCategory} • {getAQICategory(item.aqi).thaiLabel}</span><span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">source: {item.source}</span></div>
+                  <div className="flex items-center justify-between text-xs"><span className={`rounded-full px-2 py-1 ${getAQIBgClass(item.aqi)} ${getAQITextClass(item.aqi)}`}>{item.aqiCategory} • {item.risk.thaiLabel}</span><span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">source: {item.source}</span></div>
                   <p className="text-xs text-slate-400">updated: {new Date(item.updatedAt).toLocaleTimeString("th-TH")}</p>
                 </Card>
               </Link>

@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card } from "@/components/ui/card";
 import { getAQIBgClass, getAQICategory, getAQITextClass } from "@/lib/aqi/calculate";
+import { calculateRisk } from "@/lib/risk/calculate-risk";
 import { type Province } from "@/lib/provinces";
 import { type ProvinceAirQuality } from "@/lib/mock/air-quality";
 
@@ -26,6 +27,7 @@ export function ProvinceDetailPage({ province, current, previousProvince, nextPr
   const aqiTrend = makeSeries(current.aqi, 24, "H");
   const forecast7d = makeSeries(current.pm25 * 0.95, 7, "D");
   const weather = { temp: 31, humidity: 64, windSpeed: 14, windDir: "NE", rain: 20, source: "demo-weather" };
+  const risk = calculateRisk({ pm25: current.pm25, pm10: current.pm10, aqi: current.aqi, windSpeed: weather.windSpeed, humidity: weather.humidity, temperature: weather.temp, isStale: current.isStale });
 
   return (
     <div className="space-y-5">
@@ -48,18 +50,18 @@ export function ProvinceDetailPage({ province, current, previousProvince, nextPr
         <Card>AQI <p className="text-2xl font-bold">{current.aqi}</p></Card>
         <Card>PM2.5 <p className="text-2xl font-bold">{current.pm25}</p></Card>
         <Card>PM10 <p className="text-2xl font-bold">{current.pm10}</p></Card>
-        <Card>Risk Score <p className="text-2xl font-bold">{category.severityScore}</p></Card>
-        <Card>Confidence <p className="text-2xl font-bold">{100 - (current.isStale ? 22 : 8)}%</p></Card>
+        <Card>Risk Score <p className="text-2xl font-bold">{risk.riskScore}</p></Card>
+        <Card>Confidence <p className="text-2xl font-bold">{risk.confidence}%</p></Card>
       </div>
 
       <Card>
         <h3 className="font-semibold">Risk analysis</h3>
         <div className="mt-3 space-y-2 text-sm">
-          <p><span className={`rounded-full px-2 py-1 ${getAQIBgClass(current.aqi)} ${getAQITextClass(current.aqi)}`}>{category.thaiLabel}</span></p>
-          <p>คำอธิบาย: {category.technicalLabel} ({category.label})</p>
-          <p>คำแนะนำสุขภาพ: {category.recommendationTh}</p>
-          <p>กลุ่มเสี่ยง: เด็ก ผู้สูงอายุ ผู้ป่วยโรคทางเดินหายใจควรเฝ้าระวัง</p>
-          <p>กิจกรรมกลางแจ้ง: {category.severityScore >= 70 ? "ควรลดหรือหลีกเลี่ยง" : "ทำได้แต่ควรติดตามค่า AQI"}</p>
+          <p><span className={`rounded-full px-2 py-1 ${getAQIBgClass(current.aqi)} ${getAQITextClass(current.aqi)}`}>{risk.thaiLabel}</span></p>
+          <p>คำอธิบาย: {risk.explanation}</p>
+          <p>คำแนะนำสุขภาพ: {risk.recommendations.join(" • ")}</p>
+          <p>กลุ่มเสี่ยง: {risk.sensitiveGroups.join(" • ")}</p>
+          <p>กิจกรรมกลางแจ้ง: {risk.outdoorAdvice}</p>
         </div>
       </Card>
 
@@ -86,7 +88,7 @@ export function ProvinceDetailPage({ province, current, previousProvince, nextPr
           <li>fetchedAt: {new Date().toISOString()}</li>
           <li>isFallback: true (demo chain)</li>
           <li>isStale: {String(current.isStale)}</li>
-          <li>confidence: {100 - (current.isStale ? 22 : 8)}%</li>
+          <li>confidence: {risk.confidence}%</li>
           <li>provider chain: Open-Meteo → WAQI → Air4Thai/PCD → OpenAQ → Cache/Demo</li>
         </ul>
       </Card>
