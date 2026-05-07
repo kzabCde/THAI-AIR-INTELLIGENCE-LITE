@@ -3,25 +3,24 @@
 @tailwind utilities;
 
 :root {
-  --background: 247 250 252;
+  --background: 245 247 255;
   --foreground: 15 23 42;
-  --card: 255 255 255;
-  --muted: 100 116 139;
 }
 
 .dark {
   --background: 2 6 23;
   --foreground: 226 232 240;
-  --card: 15 23 42;
-  --muted: 148 163 184;
+}
+
+* {
+  @apply border-slate-200 dark:border-slate-800;
 }
 
 body {
-  background: rgb(var(--background));
+  background:
+    radial-gradient(circle at 10% 10%, rgba(14, 165, 233, 0.15), transparent 35%),
+    radial-gradient(circle at 90% 20%, rgba(99, 102, 241, 0.12), transparent 30%),
+    rgb(var(--background));
   color: rgb(var(--foreground));
-}
-
-
-body {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: "Inter", "Noto Sans Thai", system-ui, sans-serif;
 }

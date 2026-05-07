@@ -1,28 +1,20 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AppShell } from "@/components/layout/app-shell";
 import { ThemeProvider } from "@/components/theme-provider";
-import { MobileNav } from "@/components/mobile-nav";
-import { SiteHeader } from "@/components/site-header";
 
 export const metadata: Metadata = {
-  title: "ประเทศไทย AI คุณภาพอากาศอัจฉริยะ (Thailand Air Intelligence)",
-  description: "แดชบอร์ด PM2.5 วันนี้ ค่าฝุ่นประเทศไทย เช็คค่าฝุ่นจังหวัดทั้ง 77 จังหวัดแบบเรียลไทม์ พร้อมคาดการณ์พรุ่งนี้",
-  keywords: ["PM2.5 วันนี้", "ค่าฝุ่นประเทศไทย", "เช็คค่าฝุ่นจังหวัด", "AQI ไทย", "Thailand Air Intelligence"],
+  title: "Thailand Air Intelligence",
+  description: "แพลตฟอร์มวิเคราะห์คุณภาพอากาศประเทศไทย (Thai-first) — App Foundation",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="th">
-      <body className="min-h-screen pb-20 font-sans md:pb-0">
-        <ThemeProvider />
-        <SiteHeader />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-7xl px-4 pb-24 text-center text-xs text-slate-500 md:pb-6">
-          <a href="https://nowheredev.vercel.app/" target="_blank" rel="noopener noreferrer" className="transition hover:text-slate-700">
-            © 2026 NOWHEREDEV<span className="sr-only"> https://nowheredev.vercel.app/</span>
-          </a>
-        </footer>
-        <MobileNav />
+    <html lang="th" suppressHydrationWarning>
+      <body>
+        <ThemeProvider>
+          <AppShell>{children}</AppShell>
+        </ThemeProvider>
       </body>
     </html>
   );
