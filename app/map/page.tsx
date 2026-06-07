@@ -56,7 +56,7 @@ export default function MapPage() {
               <Sparkles size={14} /> New Thailand Map UI
             </span>
             <h1 className="mt-4 max-w-3xl text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-5xl">แผนที่ PM2.5 ประเทศไทย โฉมใหม่แบบ Air Atlas</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300 md:text-base">ดูภาพรวมทั้งประเทศในแผนที่ทรงไทยใหม่ พร้อมจุดจังหวัดแบบอินเทอร์แอคทีฟ สีตามระดับความเสี่ยง และไทม์ไลน์ย้อนหลัง 7 วัน.</p>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300 md:text-base">ดูภาพรวมทั้งประเทศบนแผนที่ประเทศไทยที่แบ่งรายจังหวัดและรายภาคชัดเจน สีตามระดับความเสี่ยง และไทม์ไลน์ย้อนหลัง 7 วัน.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
