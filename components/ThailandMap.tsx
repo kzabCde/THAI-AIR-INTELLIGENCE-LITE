@@ -45,13 +45,13 @@ const THAILAND_CLIP_POLYGON: Point[] = [
   { x: 232, y: 62 },
 ];
 
-const REGION_STYLES: Record<string, { th: string; fill: string; stroke: string; label: { x: number; y: number } }> = {
-  North: { th: "ภาคเหนือ", fill: "#38bdf8", stroke: "#0ea5e9", label: { x: 282, y: 150 } },
-  Northeast: { th: "ภาคอีสาน", fill: "#a78bfa", stroke: "#7c3aed", label: { x: 455, y: 286 } },
-  Central: { th: "ภาคกลาง", fill: "#fbbf24", stroke: "#d97706", label: { x: 292, y: 452 } },
-  East: { th: "ภาคตะวันออก", fill: "#34d399", stroke: "#059669", label: { x: 478, y: 532 } },
-  West: { th: "ภาคตะวันตก", fill: "#fb7185", stroke: "#e11d48", label: { x: 210, y: 440 } },
-  South: { th: "ภาคใต้", fill: "#2dd4bf", stroke: "#0f766e", label: { x: 318, y: 770 } },
+const REGION_STYLES: Record<string, { th: string; short: string; fill: string; stroke: string; labelBg: string; label: { x: number; y: number } }> = {
+  North: { th: "ภาคเหนือ", short: "เหนือ", fill: "#ffd21f", stroke: "#b98500", labelBg: "#fff04a", label: { x: 300, y: 205 } },
+  Northeast: { th: "ภาคตะวันออกเฉียงเหนือ", short: "อีสาน", fill: "#ff8a1f", stroke: "#b95000", labelBg: "#ffc56d", label: { x: 470, y: 350 } },
+  Central: { th: "ภาคกลาง", short: "กลาง", fill: "#78c91f", stroke: "#3f8a12", labelBg: "#cff3c5", label: { x: 302, y: 496 } },
+  East: { th: "ภาคตะวันออก", short: "ตะวันออก", fill: "#ff6f74", stroke: "#bf2f43", labelBg: "#ffd1df", label: { x: 490, y: 573 } },
+  West: { th: "ภาคตะวันตก", short: "ตะวันตก", fill: "#9b65c8", stroke: "#5b2f92", labelBg: "#eac0f0", label: { x: 190, y: 520 } },
+  South: { th: "ภาคใต้", short: "ใต้", fill: "#1488d3", stroke: "#075a9d", labelBg: "#bff2ff", label: { x: 334, y: 805 } },
 };
 
 const REGION_ORDER = ["North", "Northeast", "Central", "East", "West", "South"];
@@ -227,11 +227,11 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_18%,rgba(56,189,248,0.32),transparent_34%),radial-gradient(circle_at_78%_10%,rgba(16,185,129,0.23),transparent_30%),linear-gradient(135deg,rgba(15,23,42,0.12),rgba(8,47,73,0.75))]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/10 to-transparent" />
 
-      <div className="relative h-[60vh] w-full cursor-grab overflow-hidden rounded-[1.55rem] bg-gradient-to-br from-sky-950 via-cyan-950 to-slate-950 active:cursor-grabbing md:h-[78vh]" onWheel={onWheel} onMouseDown={() => setDragging(true)} onMouseUp={() => setDragging(false)} onMouseLeave={() => setDragging(false)} onMouseMove={(event) => dragging && setPan((prev) => ({ x: prev.x + event.movementX, y: prev.y + event.movementY }))}>
-        <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white shadow-xl backdrop-blur-md">
-          <p className="text-xs font-semibold text-cyan-200">Thailand Province Map</p>
-          <p className="mt-1 text-2xl font-black">{nationalAverage.toFixed(1)} <span className="text-sm font-semibold text-slate-300">μg/m³</span></p>
-          <p className="text-xs text-slate-300">77 จังหวัด · แบ่ง {REGION_ORDER.length} ภาค · สูงสุด {topProvince?.province_name_th ?? "-"}</p>
+      <div className="relative h-[62vh] w-full cursor-grab overflow-hidden rounded-[1.55rem] bg-white active:cursor-grabbing dark:bg-slate-950 md:h-[82vh]" onWheel={onWheel} onMouseDown={() => setDragging(true)} onMouseUp={() => setDragging(false)} onMouseLeave={() => setDragging(false)} onMouseMove={(event) => dragging && setPan((prev) => ({ x: prev.x + event.movementX, y: prev.y + event.movementY }))}>
+        <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-2xl border border-slate-200/80 bg-white/90 px-4 py-3 text-slate-950 shadow-xl backdrop-blur-md dark:border-white/10 dark:bg-slate-950/85 dark:text-white">
+          <p className="text-xs font-semibold text-sky-600 dark:text-cyan-200">Thailand Province Map</p>
+          <p className="mt-1 text-2xl font-black">{nationalAverage.toFixed(1)} <span className="text-sm font-semibold text-slate-500 dark:text-slate-300">μg/m³</span></p>
+          <p className="text-xs text-slate-500 dark:text-slate-300">77 จังหวัด · สีตามภาค · สูงสุด {topProvince?.province_name_th ?? "-"}</p>
         </div>
 
         <svg viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`} className="h-full w-full transition-transform duration-200" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} role="img" aria-label="แผนที่ประเทศไทยแบ่งรายจังหวัดและรายภาค">
@@ -241,22 +241,22 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
             </filter>
           </defs>
 
-          <polygon points={pathFromPoints(THAILAND_CLIP_POLYGON)} fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.72)" strokeWidth="5" strokeLinejoin="round" filter="url(#provinceShadow)" />
+          <polygon points={pathFromPoints(THAILAND_CLIP_POLYGON)} fill="rgba(255,255,255,0.04)" stroke="rgba(15,23,42,0.88)" strokeWidth="5" strokeLinejoin="round" filter="url(#provinceShadow)" />
 
           {cells.map((province) => {
             const regionStyle = REGION_STYLES[normalizeRegion(province.region)];
             const pmStyle = pmLevel(province.air.pm25);
-            const shouldShowName = province.active || province.rank <= 12 || province.danger;
+            const labelFontSize = province.province_name_th.length > 12 ? 7.2 : province.province_name_th.length > 9 ? 8 : 8.8;
 
             return (
               <g key={province.slug}>
                 {province.danger && <circle cx={province.labelCenter.x} cy={province.labelCenter.y} r="22" fill={pmStyle.ring} className="animate-pulse" />}
                 <polygon
                   points={province.pointString}
-                  fill={pmStyle.fill}
-                  fillOpacity={province.active ? 0.95 : 0.75}
-                  stroke={province.active ? "#ffffff" : regionStyle.stroke}
-                  strokeWidth={province.active ? 3.4 : 1.45}
+                  fill={regionStyle.fill}
+                  fillOpacity={province.active ? 0.98 : 0.9}
+                  stroke={province.active ? "#111827" : "rgba(255,255,255,0.92)"}
+                  strokeWidth={province.active ? 3.2 : 1.25}
                   strokeLinejoin="round"
                   className="cursor-pointer transition-all duration-200 hover:brightness-110"
                   style={{ filter: province.active ? "drop-shadow(0 0 18px rgba(255,255,255,0.65))" : undefined }}
@@ -265,12 +265,10 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
                   onMouseMove={(event) => handleHover(event, province)}
                   onMouseLeave={() => setHovered(null)}
                 />
-                <circle cx={province.labelCenter.x} cy={province.labelCenter.y} r={province.active ? 4.8 : 2.5} fill="#ffffff" opacity={province.active ? 0.95 : 0.65} />
-                {shouldShowName && (
-                  <text x={province.labelCenter.x} y={province.labelCenter.y - 7} textAnchor="middle" fontSize={province.active ? 12 : 9.4} fontWeight="900" fill="#ffffff" paintOrder="stroke" stroke="rgba(15,23,42,0.78)" strokeWidth="3">
-                    {province.province_name_th}
-                  </text>
-                )}
+                <text x={province.labelCenter.x} y={province.labelCenter.y - 2} textAnchor="middle" fontSize={province.active ? 11.5 : labelFontSize} fontWeight={province.active ? "900" : "700"} fill="#111827" paintOrder="stroke" stroke="rgba(255,255,255,0.75)" strokeWidth="2.2">
+                  {province.province_name_th}
+                </text>
+                <circle cx={province.labelCenter.x} cy={province.labelCenter.y + 8} r={province.active ? 5.2 : province.danger ? 4.7 : 3.6} fill={pmStyle.fill} stroke="#ffffff" strokeWidth="1.5" opacity="0.96" />
                 {Math.abs(province.delta) >= 1 && (
                   <text x={province.labelCenter.x + 10} y={province.labelCenter.y + 13} fontSize="10" fontWeight="900" fill={province.delta > 0 ? "#fecdd3" : "#bbf7d0"} paintOrder="stroke" stroke="rgba(15,23,42,0.75)" strokeWidth="2">
                     {province.delta > 0 ? `▲ +${province.delta.toFixed(0)}` : `▼ ${Math.abs(province.delta).toFixed(0)}`}
@@ -284,8 +282,8 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
             const style = REGION_STYLES[region];
             return (
               <g key={region} className="pointer-events-none">
-                <rect x={style.label.x - 42} y={style.label.y - 18} width="84" height="28" rx="14" fill="rgba(15,23,42,0.48)" stroke={style.stroke} strokeWidth="1.6" />
-                <text x={style.label.x} y={style.label.y} textAnchor="middle" fill="#ffffff" fontSize="13" fontWeight="900">
+                <rect x={style.label.x - (region === "Northeast" ? 92 : 48)} y={style.label.y - 26} width={region === "Northeast" ? 184 : 96} height="42" rx="14" fill={style.labelBg} stroke="rgba(255,255,255,0.72)" strokeWidth="2" opacity="0.94" />
+                <text x={style.label.x} y={style.label.y} textAnchor="middle" fill="#111827" fontSize={region === "Northeast" ? 17 : 20} fontWeight="950" paintOrder="stroke" stroke="rgba(255,255,255,0.35)" strokeWidth="1">
                   {style.th}
                 </text>
               </g>
@@ -297,7 +295,21 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
           <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-xs text-white shadow-xl backdrop-blur-md">
             <div className="grid gap-3 lg:grid-cols-2">
               <div>
-                <p className="mb-2 font-bold">สีค่าฝุ่น PM2.5</p>
+                <p className="mb-2 font-bold">สีพื้นแบ่งตามภาค</p>
+                <div className="flex flex-wrap gap-2">
+                  {regionCounts.map(({ region, count }) => {
+                    const style = REGION_STYLES[region];
+                    return (
+                      <span key={region} className="flex items-center gap-1.5 rounded-full bg-white/10 px-2 py-1">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: style.fill }} />
+                        {style.short} {count}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 font-bold">จุดสีแสดง PM2.5</p>
                 <div className="flex flex-wrap gap-2">
                   {["ดี", "ปานกลาง", "เริ่มกระทบ", "ไม่ดี", "อันตราย"].map((label, index) => (
                     <span key={label} className="flex items-center gap-1.5 rounded-full bg-white/10 px-2 py-1">
@@ -305,20 +317,6 @@ export function ThailandMap({ rows, search, selectedSlug, pmDeltaByProvince, onS
                       {label}
                     </span>
                   ))}
-                </div>
-              </div>
-              <div>
-                <p className="mb-2 font-bold">เส้นขอบแบ่งภาค</p>
-                <div className="flex flex-wrap gap-2">
-                  {regionCounts.map(({ region, count }) => {
-                    const style = REGION_STYLES[region];
-                    return (
-                      <span key={region} className="flex items-center gap-1.5 rounded-full bg-white/10 px-2 py-1">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: style.stroke }} />
-                        {style.th.replace("ภาค", "")} {count}
-                      </span>
-                    );
-                  })}
                 </div>
               </div>
             </div>
