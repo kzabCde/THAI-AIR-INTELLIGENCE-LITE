@@ -16,12 +16,12 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 
 const navItems = [
-  { href: "/", label: "หน้าแรก", icon: Home },
-  { href: "/dashboard", label: "แดชบอร์ด", icon: Activity },
-  { href: "/map", label: "แผนที่สด", icon: MapPinned },
-  { href: "/compare", label: "เปรียบเทียบ", icon: GitCompareArrows },
+  { href: "/", label: "หน้าหลัก", icon: Home },
+  { href: "/map", label: "แผนที่", icon: MapPinned },
+  { href: "/forecast", label: "พยากรณ์", icon: Activity },
   { href: "/analytics", label: "วิเคราะห์", icon: BarChart3 },
-  { href: "/settings", label: "ตั้งค่า", icon: Settings },
+  { href: "/model-performance", label: "ML Models", icon: GitCompareArrows },
+  { href: "/dashboard", label: "อำเภอ", icon: Settings },
 ];
 
 export function SiteHeader() {
