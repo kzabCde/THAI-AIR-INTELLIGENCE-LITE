@@ -52,7 +52,7 @@ export async function getDataFreshness(): Promise<DataFreshness[]> {
       sb.from(table).select(timeCol).order(timeCol, { ascending: false }).limit(1).maybeSingle(),
       sb.from(table).select("*", { count: "exact", head: true }),
     ]);
-    const value = latest ? (latest as Record<string, string>)[timeCol] : null;
+    const value = latest ? (latest as unknown as Record<string, string>)[timeCol] : null;
     return { table, latest: value ?? null, rowCount: count ?? null };
   }
 

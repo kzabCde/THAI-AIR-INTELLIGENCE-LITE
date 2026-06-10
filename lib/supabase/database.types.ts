@@ -207,6 +207,40 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["isan_provinces"]["Insert"]>;
         Relationships: [];
       };
+      weather_hourly: {
+        Row: {
+          cloud_cover: number | null;
+          created_at: string | null;
+          humidity: number | null;
+          id: number;
+          observed_at: string;
+          precipitation: number | null;
+          pressure: number | null;
+          province_id: string;
+          source: string;
+          temperature: number | null;
+          visibility: number | null;
+          wind_direction: number | null;
+          wind_speed: number | null;
+        };
+        Insert: {
+          cloud_cover?: number | null;
+          created_at?: string | null;
+          humidity?: number | null;
+          id?: number;
+          observed_at: string;
+          precipitation?: number | null;
+          pressure?: number | null;
+          province_id: string;
+          source?: string;
+          temperature?: number | null;
+          visibility?: number | null;
+          wind_direction?: number | null;
+          wind_speed?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["weather_hourly"]["Insert"]>;
+        Relationships: [];
+      };
       sync_state: {
         Row: {
           cursor_at: string | null;
