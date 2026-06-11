@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSupabase, isSupabaseConfigured } from "./_db";
-import type { CleanupLog, DataFreshness, SyncJob } from "./types";
+import type { CronLog, DataFreshness, SyncJob } from "./types";
 
 export async function getSyncJobs(): Promise<SyncJob[]> {
   if (!isSupabaseConfigured) return [];
@@ -22,20 +22,24 @@ export async function getSyncJobs(): Promise<SyncJob[]> {
   }));
 }
 
-export async function getCleanupLogs(limit = 20): Promise<CleanupLog[]> {
+export async function getCronLogs(limit = 20): Promise<CronLog[]> {
   if (!isSupabaseConfigured) return [];
   const { data, error } = await getSupabase()
-    .from("cleanup_logs")
+    .from("cron_log")
     .select("*")
-    .order("ran_at", { ascending: false })
+    .order("started_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
   return (data ?? []).map((r) => ({
     id: r.id,
-    tableName: r.table_name,
-    rowsDeleted: r.rows_deleted,
+    jobName: r.job_name,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
     status: r.status,
-    ranAt: r.ran_at,
+    durationMs: r.duration_ms,
+    recordsIn: r.records_in,
+    recordsOut: r.records_out,
+    errorMsg: r.error_msg,
   }));
 }
 

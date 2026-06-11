@@ -82,12 +82,16 @@ export type SyncJob = {
   errorMsg: string | null;
 };
 
-export type CleanupLog = {
+export type CronLog = {
   id: number;
-  tableName: string;
-  rowsDeleted: number;
+  jobName: string;
+  startedAt: string | null;
+  finishedAt: string | null;
   status: string;
-  ranAt: string;
+  durationMs: number | null;
+  recordsIn: number | null;
+  recordsOut: number | null;
+  errorMsg: string | null;
 };
 
 export type DataFreshness = {

@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getRegionOverview } from "@/services/overview.service";
 import { IsanMapCard } from "@/components/map/isan-map-card";
-import { NotConfiguredState, ErrorState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
 import type { MapProvince } from "@/components/map/types";
 import { fmtPm25, fmtRelativeTh } from "@/lib/format";
 
@@ -14,7 +15,8 @@ export default async function MapPage() {
   let overview;
   try {
     overview = await getRegionOverview();
-  } catch {
+  } catch (err) {
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
 

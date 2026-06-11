@@ -5,6 +5,25 @@ import { getServiceSupabase, isSupabaseConfigured, resetClients } from "@/lib/su
 
 export { getSupabase, getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
 
+/** Thrown when Supabase blocks the request due to Network Restrictions. */
+export class NetworkRestrictedError extends Error {
+  constructor() {
+    super("Host not in allowlist — Supabase Network Restrictions are blocking this server.");
+    this.name = "NetworkRestrictedError";
+  }
+}
+
+/** Returns true if the error is a Supabase host/network allowlist rejection. */
+export function isNetworkRestrictedError(err: unknown): boolean {
+  if (err instanceof NetworkRestrictedError) return true;
+  if (err instanceof Error && err.message.includes("Host not in allowlist")) return true;
+  if (typeof err === "object" && err !== null) {
+    const msg = (err as Record<string, unknown>).message;
+    if (typeof msg === "string" && msg.includes("Host not in allowlist")) return true;
+  }
+  return false;
+}
+
 /**
  * Retry a transient DB/network failure up to `maxAttempts` times with linear
  * backoff. On the first failure the singleton client is reset so the next
@@ -17,6 +36,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
       return await fn();
     } catch (err) {
       lastError = err;
+      // Network restriction errors are permanent — no point retrying.
+      if (isNetworkRestrictedError(err)) throw new NetworkRestrictedError();
       // Reset the singleton so the next attempt opens a new connection.
       resetClients();
       if (attempt < maxAttempts) {
