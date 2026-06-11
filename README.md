@@ -80,13 +80,28 @@ npm run typecheck  # tsc --noEmit
 | `GET /api/system-status` | สถานะ pipeline |
 | `GET /api/cron/<job>` | งานตามกำหนดเวลา (ต้องมี `CRON_SECRET`) |
 
+## สถาปัตยกรรม Realtime (ไม่พึ่ง Vercel Cron)
+
+แดชบอร์ด **ไม่ผูกกับ Vercel Cron** — เหมาะกับ Vercel Hobby Plan
+ข้อมูลถูกอัปเดตจากภายนอก (worker/edge function ใดก็ได้) ลง Supabase ส่วนฟรอนต์เอนด์
+จะ **ตอบสนองต่อการเปลี่ยนแปลง** ผ่าน Supabase Realtime + TanStack Query:
+
+- อ่านข้อมูลผ่าน Server Components + ISR (`revalidate = 300`) และ `/api/*`
+- React Query: SWR caching, dedupe, retry/backoff (`hooks/`, `lib/query/`)
+- Supabase Realtime invalidate cache + `router.refresh()` เมื่อ DB เปลี่ยน
+- Error boundary, offline banner, skeleton/empty/error states ครบ
+
+รายละเอียดเชิงสถาปัตยกรรม (diagram, data flow, state, perf checklist, roadmap):
+ดู [`docs/FRONTEND-ARCHITECTURE.md`](docs/FRONTEND-ARCHITECTURE.md)
+
 ## Data Update Workflow
 
 ```
 Backfill (one-time) → Incremental sync → Forecast generation → Dashboard refresh
 ```
 
-Cron jobs (กำหนดใน `vercel.json`, เวลาเป็น UTC):
+Cron jobs ด้านล่างเป็น **ทางเลือก** (สำหรับ scheduler ภายนอกหรือ Vercel Pro)
+กำหนดใน `vercel.json`, เวลาเป็น UTC:
 
 | งาน | ความถี่ | เวลา (ICT) | Endpoint |
 | --- | --- | --- | --- |

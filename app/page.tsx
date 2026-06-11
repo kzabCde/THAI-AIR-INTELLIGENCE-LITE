@@ -7,11 +7,12 @@ import { getRegionOverview } from "@/services/overview.service";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Section } from "@/components/ui/card";
 import { IsanMapCard } from "@/components/map/isan-map-card";
-import { ProvinceTable, type ProvinceRow } from "@/components/overview/province-table";
+import { LiveProvinceTable } from "@/components/overview/live-province-table";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { NotConfiguredState, ErrorState } from "@/components/ui/states";
 import type { MapProvince } from "@/components/map/types";
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 export default async function OverviewPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
@@ -22,22 +23,6 @@ export default async function OverviewPage() {
   } catch {
     return <ErrorState description="ไม่สามารถเชื่อมต่อฐานข้อมูล Supabase ได้" />;
   }
-
-  const rows: ProvinceRow[] = overview.snapshots.map((s) => ({
-    id: s.province.id,
-    nameTh: s.province.nameTh,
-    nameEn: s.province.nameEn,
-    zoneTh: ZONE_LABELS[s.province.zone].th,
-    pm25: s.pm25,
-    aqi: s.aqi,
-    color: s.band.color,
-    labelTh: s.band.labelTh,
-    temp: s.temperature,
-    humidity: s.humidity,
-    wind: s.windSpeed,
-    hotspots: s.hotspotCount,
-    delta: s.pm25Delta,
-  }));
 
   const mapProvinces: MapProvince[] = overview.snapshots.map((s) => ({
     id: s.province.id,
@@ -133,8 +118,10 @@ export default async function OverviewPage() {
         </div>
       </Section>
 
-      <Section title="อันดับจังหวัด" description="เรียงตามค่าฝุ่น PM2.5 ล่าสุด">
-        <ProvinceTable rows={rows} />
+      <Section title="อันดับจังหวัด" description="เรียงตามค่าฝุ่น PM2.5 ล่าสุด · อัปเดตอัตโนมัติแบบเรียลไทม์">
+        <ErrorBoundary>
+          <LiveProvinceTable initial={overview} />
+        </ErrorBoundary>
       </Section>
     </div>
   );

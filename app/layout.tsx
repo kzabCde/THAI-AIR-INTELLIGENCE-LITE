@@ -4,6 +4,7 @@ import "leaflet/dist/leaflet.css";
 import { Header } from "@/components/layout/header";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { themeInitScript } from "@/components/theme/theme-toggle";
+import { AppProviders } from "@/components/providers/app-providers";
 
 export const metadata: Metadata = {
   title: {
@@ -22,12 +23,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-screen pb-24 md:pb-0">
-        <Header />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-7xl px-4 pb-24 pt-8 text-center text-xs muted md:pb-8">
-          ข้อมูลเชิงสาธิตจาก Supabase · Isan Air Intelligence · © 2026
-        </footer>
-        <MobileNav />
+        <AppProviders>
+          <Header />
+          <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+          <footer className="mx-auto max-w-7xl px-4 pb-24 pt-8 text-center text-xs muted md:pb-8">
+            ข้อมูลเชิงสาธิตจาก Supabase · Isan Air Intelligence · © 2026
+          </footer>
+          <MobileNav />
+        </AppProviders>
       </body>
     </html>
   );

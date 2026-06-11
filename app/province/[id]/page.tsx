@@ -14,7 +14,7 @@ import { AqiBadge } from "@/components/ui/aqi-badge";
 import { ForecastCard, HistoryCard } from "@/components/province/province-charts";
 import { NotConfiguredState, ErrorState } from "@/components/ui/states";
 
-export const revalidate = 120;
+export const revalidate = 300;
 
 export function generateStaticParams() {
   return ISAN_PROVINCES.map((p) => ({ id: p.id }));

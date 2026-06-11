@@ -13,7 +13,7 @@ import { ProvinceSelect } from "@/components/controls/province-select";
 import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "แนวโน้มย้อนหลัง" };
-export const revalidate = 600;
+export const revalidate = 300;
 
 const MONTH_LABELS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 

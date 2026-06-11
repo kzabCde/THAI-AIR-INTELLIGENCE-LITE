@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Wind } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { LiveStatus } from "@/components/realtime/live-status";
 import { NAV_ITEMS } from "./nav-items";
 
 function isActive(pathname: string, href: string) {
@@ -48,7 +49,10 @@ export function Header() {
           })}
         </nav>
 
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <LiveStatus />
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );

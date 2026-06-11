@@ -13,7 +13,7 @@ import { RangePresets } from "@/components/controls/range-presets";
 import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "วิเคราะห์ข้อมูล" };
-export const revalidate = 600;
+export const revalidate = 300;
 
 function dayLabel(iso: string) {
   return new Date(iso).toLocaleDateString("th-TH", { day: "numeric", month: "short" });

@@ -7,7 +7,7 @@ import { Section, CardHeader } from "@/components/ui/card";
 import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "สถานะระบบ" };
-export const revalidate = 60;
+export const revalidate = 300;
 
 const JOB_LABELS: Record<string, string> = {
   pm25_sync: "ซิงค์ PM2.5 (รายชั่วโมง)",

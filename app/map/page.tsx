@@ -7,7 +7,7 @@ import type { MapProvince } from "@/components/map/types";
 import { fmtPm25, fmtRelativeTh } from "@/lib/format";
 
 export const metadata: Metadata = { title: "แผนที่คุณภาพอากาศ" };
-export const revalidate = 60;
+export const revalidate = 300;
 
 export default async function MapPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
