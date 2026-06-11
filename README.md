@@ -100,8 +100,11 @@ npm run typecheck  # tsc --noEmit
 Backfill (one-time) → Incremental sync → Forecast generation → Dashboard refresh
 ```
 
-Cron jobs ด้านล่างเป็น **ทางเลือก** (สำหรับ scheduler ภายนอกหรือ Vercel Pro)
-กำหนดใน `vercel.json`, เวลาเป็น UTC:
+> **Vercel Hobby:** ไม่ประกาศ cron ใน `vercel.json` (Hobby ไม่รองรับ cron ถี่กว่ารายวัน
+> ทำให้ deploy ล้มเหลว) ฟรอนต์เอนด์ใช้ Supabase Realtime แทน ส่วน endpoint `/api/cron/*`
+> ยังคงเรียกได้จาก scheduler ภายนอก (GitHub Actions / cron-job.org) หรือเปิดบน Vercel Pro
+
+ตารางงานที่แนะนำ (เรียกผ่าน scheduler ภายนอก, เวลาเป็น UTC):
 
 | งาน | ความถี่ | เวลา (ICT) | Endpoint |
 | --- | --- | --- | --- |
