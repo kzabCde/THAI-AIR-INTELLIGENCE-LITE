@@ -279,11 +279,36 @@ export type Database = {
     Views: {
       /** Latest PM2.5/AQI reading per province — created by migration 0003. */
       air_quality_latest: {
-        Row: Database["public"]["Tables"]["air_quality_hourly"]["Row"];
+        Row: {
+          id: number;
+          province_id: string;
+          observed_at: string;
+          pm25: number | null;
+          pm10: number | null;
+          aqi: number | null;
+          aqi_category: string | null;
+          source: string;
+          station_id: string | null;
+          created_at: string | null;
+        };
       };
       /** Latest weather reading per province — created by migration 0003. */
       weather_latest: {
-        Row: Database["public"]["Tables"]["weather_hourly"]["Row"];
+        Row: {
+          id: number;
+          province_id: string;
+          observed_at: string;
+          temperature: number | null;
+          humidity: number | null;
+          wind_speed: number | null;
+          wind_direction: number | null;
+          precipitation: number | null;
+          pressure: number | null;
+          cloud_cover: number | null;
+          visibility: number | null;
+          source: string;
+          created_at: string | null;
+        };
       };
     };
     Functions: {

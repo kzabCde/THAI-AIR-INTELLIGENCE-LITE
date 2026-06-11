@@ -19,7 +19,7 @@ export async function getLatestWeather(): Promise<WeatherRow[]> {
     .order("observed_at", { ascending: false });
   if (error) throw new Error(error.message);
   const seen = new Set<string>();
-  return (data ?? []).filter((r) => {
+  return (data ?? []).filter((r: WeatherRow) => {
     if (seen.has(r.province_id)) return false;
     seen.add(r.province_id);
     return true;

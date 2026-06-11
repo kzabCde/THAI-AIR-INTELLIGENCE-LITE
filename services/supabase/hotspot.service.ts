@@ -18,7 +18,7 @@ export async function getLatestHotspots(): Promise<HotspotRow[]> {
     .order("date", { ascending: false });
   if (error) throw new Error(error.message);
   const seen = new Set<string>();
-  return (data ?? []).filter((r) => {
+  return (data ?? []).filter((r: HotspotRow) => {
     if (seen.has(r.province_id)) return false;
     seen.add(r.province_id);
     return true;
