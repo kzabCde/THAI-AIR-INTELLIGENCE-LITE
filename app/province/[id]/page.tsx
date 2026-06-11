@@ -30,7 +30,8 @@ import {
   HourlyAirCard,
   HourlyWeatherCard,
 } from "@/components/province/province-charts";
-import { NotConfiguredState, ErrorState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
+import { isNetworkRestrictedError } from "@/services/_db";
 
 export const revalidate = 300;
 
@@ -69,7 +70,9 @@ export default async function ProvinceDetailPage({ params }: { params: Promise<{
       getDailyHistory(province.id, 90),
       getProvinceForecast(province.id),
     ]);
-  } catch {
+  } catch (err) {
+    console.error(`[province/${province.id}] load error:`, err);
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
   if (!snapshot) return <ErrorState description="ไม่พบข้อมูลของจังหวัดนี้" />;

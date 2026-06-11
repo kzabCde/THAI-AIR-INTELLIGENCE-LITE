@@ -3,6 +3,7 @@ import { AlertTriangle, Calendar, Gauge, TrendingDown, TrendingUp } from "lucide
 import { getProvince } from "@/lib/isan";
 import { bandForPm25 } from "@/lib/aqi";
 import { fmtPm25 } from "@/lib/format";
+import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getAnalytics } from "@/services/analytics.service";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -10,7 +11,7 @@ import { CardHeader } from "@/components/ui/card";
 import { TrendArea } from "@/components/charts/trend-area";
 import { ProvinceSelect } from "@/components/controls/province-select";
 import { RangePresets } from "@/components/controls/range-presets";
-import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState, EmptyState , NetworkRestrictedState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "วิเคราะห์ข้อมูล" };
 export const revalidate = 300;
@@ -38,7 +39,8 @@ export default async function AnalyticsPage({
   let result;
   try {
     result = await getAnalytics({ provinceId: province?.id ?? "all", from: fromStr, to: toStr });
-  } catch {
+  } catch (err) {
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
 

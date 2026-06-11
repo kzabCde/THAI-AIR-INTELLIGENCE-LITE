@@ -7,9 +7,15 @@ export type IsanDatabase = Database;
 export type IsanClient = SupabaseClient<Database>;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-// Prefer the modern publishable key; fall back to the legacy anon key name.
+
+// Server-side: use the JWT anon key (no host allowlist restriction).
+// The publishable key (sb_publishable_...) is restricted to browser origins only
+// and will return "Host not in allowlist" when called from the server.
+// Priority: SUPABASE_ANON_KEY (server-only JWT) → NEXT_PUBLIC_SUPABASE_ANON_KEY → publishable key
 const SUPABASE_ANON_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  process.env.SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 /**

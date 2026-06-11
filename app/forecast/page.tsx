@@ -3,6 +3,7 @@ import { CalendarClock, Droplets, Gauge, Target, Thermometer, TrendingDown, Tren
 import { getProvince } from "@/lib/isan";
 import { pm25ToAqi, bandForPm25 } from "@/lib/aqi";
 import { fmtNumber, fmtPm25, fmtDateTh } from "@/lib/format";
+import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getProvinceForecast } from "@/services/forecast.service";
 import { getLatestWeather } from "@/services/weather.service";
@@ -10,7 +11,7 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Section } from "@/components/ui/card";
 import { ForecastCard } from "@/components/province/province-charts";
 import { ProvinceSelect } from "@/components/controls/province-select";
-import { NotConfiguredState, ErrorState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "พยากรณ์คุณภาพอากาศ" };
 export const revalidate = 300;
@@ -30,7 +31,8 @@ export default async function ForecastPage({
       getProvinceForecast(province.id),
       getLatestWeather(province.id),
     ]);
-  } catch {
+  } catch (err) {
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
 

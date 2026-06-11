@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getProvince } from "@/lib/isan";
+import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import {
   getDailyHistory,
@@ -10,7 +11,7 @@ import { Section, CardHeader } from "@/components/ui/card";
 import { HistoryCard } from "@/components/province/province-charts";
 import { CategoryBars } from "@/components/charts/category-bars";
 import { ProvinceSelect } from "@/components/controls/province-select";
-import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState, EmptyState , NetworkRestrictedState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "แนวโน้มย้อนหลัง" };
 export const revalidate = 300;
@@ -33,7 +34,8 @@ export default async function TrendsPage({
       getMonthlyAverages(province.id, 12),
       getSeasonalAverages(province.id),
     ]);
-  } catch {
+  } catch (err) {
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
 

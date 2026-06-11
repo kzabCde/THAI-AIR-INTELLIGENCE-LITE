@@ -2,6 +2,7 @@ import { Activity, Flame, Gauge, MapPin, Wind } from "lucide-react";
 import { ZONE_LABELS } from "@/lib/isan";
 import { AQI_BANDS } from "@/lib/aqi";
 import { fmtNumber, fmtPm25, fmtRelativeTh } from "@/lib/format";
+import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getRegionOverview } from "@/services/overview.service";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -9,7 +10,7 @@ import { Section } from "@/components/ui/card";
 import { IsanMapCard } from "@/components/map/isan-map-card";
 import { LiveProvinceTable } from "@/components/overview/live-province-table";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { NotConfiguredState, ErrorState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
 import type { MapProvince } from "@/components/map/types";
 
 export const revalidate = 300;
@@ -20,7 +21,8 @@ export default async function OverviewPage() {
   let overview;
   try {
     overview = await getRegionOverview();
-  } catch {
+  } catch (err) {
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState description="ไม่สามารถเชื่อมต่อฐานข้อมูล Supabase ได้" />;
   }
 

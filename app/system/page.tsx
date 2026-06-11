@@ -3,8 +3,9 @@ import { CheckCircle2, Clock, Database, XCircle, Timer, ArrowDownToLine, ArrowUp
 import { fmtNumber, fmtRelativeTh, fmtDateTimeTh } from "@/lib/format";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getCronLogs, getDataFreshness, getSyncJobs } from "@/services/system.service";
+import { isNetworkRestrictedError } from "@/services/_db";
 import { Section, CardHeader } from "@/components/ui/card";
-import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
+import { NotConfiguredState, ErrorState, NetworkRestrictedState, EmptyState } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "สถานะระบบ" };
 export const revalidate = 300;
@@ -41,7 +42,9 @@ export default async function SystemPage() {
       getCronLogs(20),
       getDataFreshness(),
     ]);
-  } catch {
+  } catch (err) {
+    console.error("[system] load error:", err);
+    if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
 
