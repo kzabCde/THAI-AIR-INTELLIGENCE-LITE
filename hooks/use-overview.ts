@@ -15,7 +15,9 @@ export function useOverview(initialData?: RegionOverview) {
     queryKey: queryKeys.overview,
     queryFn: ({ signal }) => fetchJson<RegionOverview>("/api/air-quality", signal),
     initialData,
-    staleTime: 60_000,
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -25,7 +27,9 @@ export function useHotspots(initialData?: RegionOverview) {
     queryKey: queryKeys.overview,
     queryFn: ({ signal }) => fetchJson<RegionOverview>("/api/air-quality", signal),
     initialData,
-    staleTime: 60_000,
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
     select: (data) =>
       data.snapshots
         .map((s) => ({

@@ -13,6 +13,8 @@ export function useForecast(provinceId: string, initialData?: ProvinceForecast) 
       fetchJson<ProvinceForecast>(`/api/forecast?province=${provinceId}`, signal),
     initialData,
     enabled: Boolean(provinceId),
-    staleTime: 5 * 60_000, // forecasts change far less often than observations
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
   });
 }

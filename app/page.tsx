@@ -35,6 +35,10 @@ export default async function OverviewPage() {
     aqi: s.aqi,
     color: s.band.color,
     labelTh: s.band.labelTh,
+    temperature: s.temperature,
+    humidity: s.humidity,
+    windSpeed: s.windSpeed,
+    observedAt: s.observedAt,
   }));
 
   return (

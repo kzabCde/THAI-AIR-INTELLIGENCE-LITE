@@ -13,10 +13,12 @@ export const queryKeys = {
   systemStatus: ["system-status"] as const,
 };
 
-/** Maps a changed Supabase table to the query keys that should be invalidated. */
+/** Maps a changed Supabase table/view to the query keys that should be invalidated. */
 export const TABLE_INVALIDATIONS: Record<string, string[]> = {
   air_quality_hourly: ["overview", "air-quality", "history", "analytics"],
+  air_quality_latest: ["overview", "air-quality"],
   weather_hourly: ["overview", "weather"],
+  weather_latest: ["overview", "weather"],
   hotspot_daily: ["overview", "hotspots"],
   daily_summary: ["history", "analytics", "forecast"],
   forecast_hourly: ["forecast"],

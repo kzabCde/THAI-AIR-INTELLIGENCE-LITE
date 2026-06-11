@@ -14,9 +14,9 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 60_000, // serve cached data, revalidate in background
-            gcTime: 5 * 60_000,
-            refetchOnWindowFocus: true,
+            staleTime: 300_000, // 5 min — matches external scheduler cadence
+            gcTime: 600_000,    // 10 min — keep cache warm between navigations
+            refetchOnWindowFocus: false,
             refetchOnReconnect: true,
             retry: (failureCount, error) => {
               // Don't retry client validation errors (4xx surfaced as messages).
