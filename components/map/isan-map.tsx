@@ -4,7 +4,7 @@ import "@/lib/leaflet-icon-fix";
 import { useRouter } from "next/navigation";
 import { CircleMarker, MapContainer, TileLayer, Tooltip } from "react-leaflet";
 import { ISAN_BOUNDS, ISAN_CENTER } from "@/lib/isan";
-import { fmtPm25 } from "@/lib/format";
+import { fmtPm25, fmtTimeTh } from "@/lib/format";
 import type { MapProvince } from "./types";
 
 /** Marker radius scales gently with PM2.5 so hotspots stand out. */
@@ -52,7 +52,19 @@ export default function IsanMap({ provinces }: { provinces: MapProvince[] }) {
                 <span className="font-bold">{fmtPm25(p.pm25)}</span>
                 <span className="text-[11px]">µg/m³ · {p.labelTh}</span>
               </div>
-              {p.aqi != null && <div className="text-[11px]">AQI {p.aqi}</div>}
+              {p.aqi != null && (
+                <div className="text-[11px]">AQI {p.aqi}</div>
+              )}
+              {p.temperature != null && (
+                <div className="text-[11px]">
+                  {p.temperature.toFixed(1)}°C
+                  {p.humidity != null && ` · ${p.humidity.toFixed(0)}% RH`}
+                  {p.windSpeed != null && ` · ${p.windSpeed.toFixed(1)} m/s`}
+                </div>
+              )}
+              {p.observedAt && (
+                <div className="muted text-[10px]">อัปเดต {fmtTimeTh(p.observedAt)}</div>
+              )}
             </div>
           </Tooltip>
         </CircleMarker>

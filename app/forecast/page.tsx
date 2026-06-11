@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { CalendarClock, Gauge, Target, TrendingDown, TrendingUp, Wind } from "lucide-react";
+import { CalendarClock, Droplets, Gauge, Target, Thermometer, TrendingDown, TrendingUp, Wind } from "lucide-react";
 import { getProvince } from "@/lib/isan";
 import { pm25ToAqi, bandForPm25 } from "@/lib/aqi";
-import { fmtPm25, fmtDateTh } from "@/lib/format";
+import { fmtNumber, fmtPm25, fmtDateTh } from "@/lib/format";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getProvinceForecast } from "@/services/forecast.service";
+import { getLatestWeather } from "@/services/weather.service";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Section } from "@/components/ui/card";
 import { ForecastCard } from "@/components/province/province-charts";
@@ -23,9 +24,12 @@ export default async function ForecastPage({
   const { province: pParam } = await searchParams;
   const province = getProvince(pParam ?? "TH-30") ?? getProvince("TH-30")!;
 
-  let forecast;
+  let forecast, weather;
   try {
-    forecast = await getProvinceForecast(province.id);
+    [forecast, weather] = await Promise.all([
+      getProvinceForecast(province.id),
+      getLatestWeather(province.id),
+    ]);
   } catch {
     return <ErrorState />;
   }
@@ -49,12 +53,47 @@ export default async function ForecastPage({
         <ProvinceSelect value={province.id} />
       </div>
 
+      {/* PM2.5 / AQI forecast KPIs */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard label="ค่าปัจจุบัน" value={fmtPm25(current)} unit="µg/m³" icon={<Gauge size={16} />} accent={bandForPm25(current).color} hint={`AQI ${pm25ToAqi(current)}`} />
         <KpiCard label="คาดการณ์ 24 ชม." value={fmtPm25(avg24)} unit="µg/m³" icon={<CalendarClock size={16} />} accent={bandForPm25(avg24).color} hint={`AQI ${pm25ToAqi(avg24)} (เฉลี่ย)`} />
         <KpiCard label="ทิศทางแนวโน้ม" value={trendLabel} icon={<TrendIcon size={16} />} hint="เทียบ 7 วันข้างหน้า" />
         <KpiCard label="ระดับความเชื่อมั่น" value={`${Math.round(avgConfidence * 100)}`} unit="%" icon={<Target size={16} />} hint="เฉลี่ยตลอดช่วงพยากรณ์" />
       </div>
+
+      {/* Current weather context */}
+      {weather && (
+        <Section title="สภาพอากาศปัจจุบัน" description={`${province.nameTh} · ข้อมูลล่าสุดจาก Supabase`}>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <KpiCard
+              label="อุณหภูมิ"
+              value={weather.temperature != null ? fmtNumber(weather.temperature, 1) : "–"}
+              unit="°C"
+              icon={<Thermometer size={16} />}
+            />
+            <KpiCard
+              label="ความชื้นสัมพัทธ์"
+              value={weather.humidity != null ? fmtNumber(weather.humidity, 0) : "–"}
+              unit="%"
+              icon={<Droplets size={16} />}
+            />
+            <KpiCard
+              label="ความเร็วลม"
+              value={weather.wind_speed != null ? fmtNumber(weather.wind_speed, 1) : "–"}
+              unit="m/s"
+              icon={<Wind size={16} />}
+              hint={weather.wind_direction != null ? `ทิศ ${Math.round(weather.wind_direction)}°` : undefined}
+            />
+            <KpiCard
+              label="ปริมาณฝน"
+              value={weather.precipitation != null ? fmtNumber(weather.precipitation, 1) : "–"}
+              unit="mm"
+              icon={<Droplets size={16} />}
+              hint="สะสม 1 ชม."
+            />
+          </div>
+        </Section>
+      )}
 
       <ForecastCard hourly={forecast.hourly} daily={forecast.daily} />
 
@@ -65,6 +104,7 @@ export default async function ForecastPage({
               <tr className="muted border-b border-border text-left text-xs">
                 <th className="px-4 py-2.5 font-medium">วันที่</th>
                 <th className="px-4 py-2.5 text-right font-medium">PM2.5 เฉลี่ย</th>
+                <th className="px-4 py-2.5 text-right font-medium">AQI</th>
                 <th className="px-4 py-2.5 text-right font-medium">สูงสุด</th>
                 <th className="px-4 py-2.5 text-center font-medium">ระดับ</th>
                 <th className="px-4 py-2.5 text-right font-medium">ความเชื่อมั่น</th>
@@ -77,6 +117,7 @@ export default async function ForecastPage({
                   <tr key={d.t} className="border-b border-border/60 last:border-0">
                     <td className="px-4 py-2.5">{fmtDateTh(d.t)}</td>
                     <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{fmtPm25(d.pm25)}</td>
+                    <td className="muted px-4 py-2.5 text-right tabular-nums">{pm25ToAqi(d.pm25)}</td>
                     <td className="muted px-4 py-2.5 text-right tabular-nums">{fmtPm25(d.pm25Max ?? null)}</td>
                     <td className="px-4 py-2.5 text-center">
                       <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold text-white" style={{ background: band.color }}>

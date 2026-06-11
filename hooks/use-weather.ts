@@ -14,7 +14,9 @@ export function useProvinceWeather(provinceId: string, enabled = true) {
     queryFn: ({ signal }) =>
       fetchJson<WeatherRow | null>(`/api/weather?province=${provinceId}`, signal),
     enabled: enabled && Boolean(provinceId),
-    staleTime: 120_000,
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -27,6 +29,11 @@ export function useWeatherHistory(provinceId: string, hours = 48, enabled = true
         signal,
       ),
     enabled: enabled && Boolean(provinceId),
-    staleTime: 120_000,
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
   });
 }
+
+/** Alias — fetches the latest weather reading for a province. */
+export const useWeather = useProvinceWeather;

@@ -276,7 +276,16 @@ export type Database = {
         Relationships: [];
       };
     };
-    Views: { [_ in never]: never };
+    Views: {
+      /** Latest PM2.5/AQI reading per province — created by migration 0003. */
+      air_quality_latest: {
+        Row: Database["public"]["Tables"]["air_quality_hourly"]["Row"];
+      };
+      /** Latest weather reading per province — created by migration 0003. */
+      weather_latest: {
+        Row: Database["public"]["Tables"]["weather_hourly"]["Row"];
+      };
+    };
     Functions: {
       aqi_category: { Args: { aqi: number }; Returns: string };
       pm25_to_aqi: { Args: { pm25: number }; Returns: number };

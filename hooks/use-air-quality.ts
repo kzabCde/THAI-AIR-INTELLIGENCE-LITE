@@ -15,6 +15,9 @@ export function useProvinceAir(provinceId: string, enabled = true) {
     queryFn: ({ signal }) =>
       fetchJson<AirRow | null>(`/api/air-quality?province=${provinceId}`, signal),
     enabled: enabled && Boolean(provinceId),
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -28,6 +31,11 @@ export function useAirHistory(provinceId: string, hours = 72, enabled = true) {
         signal,
       ),
     enabled: enabled && Boolean(provinceId),
-    staleTime: 120_000,
+    staleTime: 300_000,
+    gcTime: 600_000,
+    refetchOnWindowFocus: false,
   });
 }
+
+/** Alias — fetches the latest reading for a province. */
+export const useAirQuality = useProvinceAir;

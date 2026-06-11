@@ -9,4 +9,8 @@ export type MapProvince = {
   aqi: number | null;
   color: string;
   labelTh: string;
+  temperature: number | null;
+  humidity: number | null;
+  windSpeed: number | null;
+  observedAt: string | null;
 };
