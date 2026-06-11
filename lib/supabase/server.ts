@@ -22,6 +22,23 @@ export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 let readClient: IsanClient | null = null;
 let writeClient: IsanClient | null = null;
 
+// Abort any Supabase HTTP call that takes longer than 8 seconds so a slow or
+// sleeping project doesn't hang a Next.js server render until Vercel kills it.
+const FETCH_TIMEOUT_MS = 8_000;
+
+function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+}
+
+/** Reset cached singletons so the next call gets a fresh connection. */
+export function resetClients(): void {
+  readClient = null;
+  writeClient = null;
+}
+
 /** Read-only client (publishable/anon key). Used by all dashboard queries. */
 export function getSupabase(): IsanClient {
   if (!isSupabaseConfigured) {
@@ -32,6 +49,7 @@ export function getSupabase(): IsanClient {
   if (!readClient) {
     readClient = createClient<Database>(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
       auth: { persistSession: false },
+      global: { fetch: fetchWithTimeout },
     });
   }
   return readClient;
@@ -48,6 +66,7 @@ export function getServiceSupabase(): IsanClient {
   if (!writeClient) {
     writeClient = createClient<Database>(SUPABASE_URL!, SERVICE_ROLE_KEY || SUPABASE_ANON_KEY!, {
       auth: { persistSession: false },
+      global: { fetch: fetchWithTimeout },
     });
   }
   return writeClient;

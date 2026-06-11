@@ -1,20 +1,47 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
+import { getServiceSupabase, isSupabaseConfigured, resetClients } from "@/lib/supabase/server";
 
 export { getSupabase, getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
 
 /**
+ * Retry a transient DB/network failure up to `maxAttempts` times with linear
+ * backoff. On the first failure the singleton client is reset so the next
+ * attempt gets a fresh connection (handles stale/dead socket edge cases).
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      // Reset the singleton so the next attempt opens a new connection.
+      resetClients();
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
  * Wrap a server-side query in Next's data cache. Keeps the database from being
  * hit on every render while still revalidating on a sensible interval.
+ * Retries transient failures up to 3 times before propagating the error.
  */
 export function cachedQuery<T>(
   keyParts: string[],
   fn: () => Promise<T>,
   revalidate = 300,
 ): () => Promise<T> {
-  return unstable_cache(fn, ["isan", ...keyParts], { revalidate, tags: ["isan-data"] });
+  return unstable_cache(
+    () => withRetry(fn),
+    ["isan", ...keyParts],
+    { revalidate, tags: ["isan-data"] },
+  );
 }
 
 /** Resolve the most recent hourly timestamp present in the dataset.
