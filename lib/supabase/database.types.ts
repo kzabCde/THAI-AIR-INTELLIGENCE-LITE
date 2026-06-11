@@ -44,28 +44,32 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["air_quality_hourly"]["Insert"]>;
         Relationships: [];
       };
-      cleanup_logs: {
+      cron_log: {
         Row: {
-          cutoff_at: string | null;
-          duration_ms: number | null;
-          error_msg: string | null;
           id: number;
-          ran_at: string;
-          rows_deleted: number;
+          job_name: string;
+          started_at: string | null;
+          finished_at: string | null;
           status: string;
-          table_name: string;
+          duration_ms: number | null;
+          records_in: number | null;
+          records_out: number | null;
+          error_msg: string | null;
+          meta: Json | null;
         };
         Insert: {
-          cutoff_at?: string | null;
-          duration_ms?: number | null;
-          error_msg?: string | null;
           id?: never;
-          ran_at?: string;
-          rows_deleted?: number;
+          job_name: string;
+          started_at?: string | null;
+          finished_at?: string | null;
           status?: string;
-          table_name: string;
+          duration_ms?: number | null;
+          records_in?: number | null;
+          records_out?: number | null;
+          error_msg?: string | null;
+          meta?: Json | null;
         };
-        Update: Partial<Database["public"]["Tables"]["cleanup_logs"]["Insert"]>;
+        Update: Partial<Database["public"]["Tables"]["cron_log"]["Insert"]>;
         Relationships: [];
       };
       daily_summary: {

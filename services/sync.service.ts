@@ -101,20 +101,27 @@ export async function runCleanup(): Promise<SyncResult> {
     const sb = getServiceSupabase();
     const { data, error } = await sb.rpc("run_data_cleanup");
     if (error) throw error;
-    await sb.from("cleanup_logs").insert({
-      table_name: "all",
-      rows_deleted: 0,
+    const dur = Date.now() - started;
+    await sb.from("cron_log").insert({
+      job_name: "daily_cleanup",
+      started_at: new Date(started).toISOString(),
+      finished_at: new Date().toISOString(),
       status: "success",
-      duration_ms: Date.now() - started,
+      duration_ms: dur,
       error_msg: typeof data === "string" ? data.slice(0, 500) : null,
     });
-    await markDone("daily_cleanup", 0, Date.now() - started);
+    await markDone("daily_cleanup", 0, dur);
     return { job: "daily_cleanup", status: "success", records: 0, message: String(data ?? "") };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await getServiceSupabase()
-      .from("cleanup_logs")
-      .insert({ table_name: "all", rows_deleted: 0, status: "error", error_msg: msg });
+    await getServiceSupabase().from("cron_log").insert({
+      job_name: "daily_cleanup",
+      started_at: new Date(started).toISOString(),
+      finished_at: new Date().toISOString(),
+      status: "error",
+      duration_ms: Date.now() - started,
+      error_msg: msg,
+    });
     await markDone("daily_cleanup", 0, Date.now() - started, msg);
     return { job: "daily_cleanup", status: "error", records: 0, message: msg };
   }

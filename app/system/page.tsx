@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { CheckCircle2, Clock, Database, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Database, XCircle, Timer, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { fmtNumber, fmtRelativeTh, fmtDateTimeTh } from "@/lib/format";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
-import { getCleanupLogs, getDataFreshness, getSyncJobs } from "@/services/system.service";
+import { getCronLogs, getDataFreshness, getSyncJobs } from "@/services/system.service";
 import { Section, CardHeader } from "@/components/ui/card";
 import { NotConfiguredState, ErrorState, EmptyState } from "@/components/ui/states";
 
@@ -34,11 +34,11 @@ function StatusDot({ status }: { status: string }) {
 
 export default async function SystemPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
-  let jobs, cleanup, freshness;
+  let jobs, cronLogs, freshness;
   try {
-    [jobs, cleanup, freshness] = await Promise.all([
+    [jobs, cronLogs, freshness] = await Promise.all([
       getSyncJobs(),
-      getCleanupLogs(10),
+      getCronLogs(20),
       getDataFreshness(),
     ]);
   } catch {
@@ -106,35 +106,52 @@ export default async function SystemPage() {
         </div>
       </Section>
 
-      <Section title="ประวัติการล้างข้อมูล">
+      <Section title="ประวัติการจัดการข้อมูล (Cron Log)">
         <div className="card">
-          <CardHeader title="Cleanup Logs" description="งานลบข้อมูลเก่ารายวัน" />
-          {cleanup.length === 0 ? (
+          <CardHeader title="Cron Job History" description="บันทึกการทำงานของงานอัตโนมัติทั้งหมด" />
+          {cronLogs.length === 0 ? (
             <div className="card-pad">
-              <EmptyState description="ยังไม่มีประวัติการล้างข้อมูล" />
+              <EmptyState description="ยังไม่มีประวัติการทำงาน — งาน cron ยังไม่เคยรัน" />
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="muted border-b border-border text-left text-xs">
-                    <th className="px-4 py-2.5 font-medium">ตาราง</th>
-                    <th className="px-4 py-2.5 text-right font-medium">ลบแถว</th>
+                    <th className="px-4 py-2.5 font-medium">งาน</th>
                     <th className="px-4 py-2.5 font-medium">สถานะ</th>
+                    <th className="hidden px-4 py-2.5 text-right font-medium sm:table-cell">
+                      <span className="inline-flex items-center gap-1"><ArrowDownToLine size={11} /> รับ</span>
+                    </th>
+                    <th className="hidden px-4 py-2.5 text-right font-medium sm:table-cell">
+                      <span className="inline-flex items-center gap-1"><ArrowUpFromLine size={11} /> ส่ง</span>
+                    </th>
+                    <th className="hidden px-4 py-2.5 text-right font-medium md:table-cell">
+                      <span className="inline-flex items-center gap-1"><Timer size={11} /> ระยะเวลา</span>
+                    </th>
                     <th className="px-4 py-2.5 text-right font-medium">เวลา</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {cleanup.map((c) => (
+                  {cronLogs.map((c) => (
                     <tr key={c.id} className="border-b border-border/60 last:border-0">
-                      <td className="px-4 py-2.5">{c.tableName}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">{fmtNumber(c.rowsDeleted)}</td>
+                      <td className="px-4 py-2.5 font-medium">{JOB_LABELS[c.jobName] ?? c.jobName}</td>
                       <td className="px-4 py-2.5">
                         <span className="inline-flex items-center gap-1.5">
-                          <StatusDot status={c.status} /> {c.status}
+                          <StatusDot status={c.status} />
+                          <span className="capitalize">{c.status}</span>
                         </span>
                       </td>
-                      <td className="muted px-4 py-2.5 text-right text-xs">{fmtDateTimeTh(c.ranAt)}</td>
+                      <td className="hidden px-4 py-2.5 text-right tabular-nums sm:table-cell">
+                        {c.recordsIn != null ? fmtNumber(c.recordsIn) : "–"}
+                      </td>
+                      <td className="hidden px-4 py-2.5 text-right tabular-nums sm:table-cell">
+                        {c.recordsOut != null ? fmtNumber(c.recordsOut) : "–"}
+                      </td>
+                      <td className="hidden px-4 py-2.5 text-right tabular-nums md:table-cell">
+                        {c.durationMs != null ? `${fmtNumber(c.durationMs)} ms` : "–"}
+                      </td>
+                      <td className="muted px-4 py-2.5 text-right text-xs">{fmtDateTimeTh(c.startedAt)}</td>
                     </tr>
                   ))}
                 </tbody>

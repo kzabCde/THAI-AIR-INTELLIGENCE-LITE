@@ -24,5 +24,5 @@ export const TABLE_INVALIDATIONS: Record<string, string[]> = {
   forecast_hourly: ["forecast"],
   forecast_daily: ["forecast"],
   sync_state: ["system-status"],
-  cleanup_logs: ["system-status"],
+  cron_log: ["system-status"],
 };
