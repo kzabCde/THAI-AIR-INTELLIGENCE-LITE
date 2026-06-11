@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { cachedQuery, getLatestObservedAt, getServiceSupabase, isSupabaseConfigured } from "./_db";
+import { cachedMapQuery, getLatestObservedAt, getServiceSupabase, isSupabaseConfigured } from "./_db";
 import type { TimePoint } from "./types";
 
 export type AirRow = Tables<"air_quality_hourly">;
@@ -25,7 +25,7 @@ export async function getLatestAir(provinceId: string): Promise<AirRow | null> {
 }
 
 /** Latest reading for every province (keyed by province_id). */
-export const getLatestAirByProvince = cachedQuery(
+export const getLatestAirByProvince = cachedMapQuery(
   ["latest-air-all"],
   async (): Promise<Map<string, AirRow>> => {
     const result = new Map<string, AirRow>();
