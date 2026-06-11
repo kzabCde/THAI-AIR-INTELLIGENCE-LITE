@@ -107,6 +107,7 @@ export function ProvinceTable({ rows }: { rows: ProvinceRow[] }) {
                 <th className="px-2 py-2.5 text-right font-medium">PM2.5</th>
                 <th className="px-2 py-2.5 text-center font-medium">ระดับ</th>
                 <th className="hidden px-2 py-2.5 text-right font-medium sm:table-cell">อุณหภูมิ</th>
+                <th className="hidden px-2 py-2.5 text-right font-medium lg:table-cell">ความชื้น</th>
                 <th className="hidden px-2 py-2.5 text-right font-medium md:table-cell">ลม</th>
                 <th className="hidden px-2 py-2.5 text-right font-medium md:table-cell">จุดความร้อน</th>
                 <th className="px-2 py-2.5 pr-4 text-right font-medium">เปลี่ยนแปลง</th>
@@ -139,6 +140,9 @@ export function ProvinceTable({ rows }: { rows: ProvinceRow[] }) {
                   </td>
                   <td className="hidden px-2 py-2.5 text-right tabular-nums sm:table-cell">
                     {r.temp != null ? `${fmtNumber(r.temp, 1)}°` : "–"}
+                  </td>
+                  <td className="hidden px-2 py-2.5 text-right tabular-nums lg:table-cell">
+                    {r.humidity != null ? `${fmtNumber(r.humidity, 0)}%` : "–"}
                   </td>
                   <td className="hidden px-2 py-2.5 text-right tabular-nums md:table-cell">
                     <span className="inline-flex items-center justify-end gap-1">

@@ -1,14 +1,18 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { cachedQuery, getLatestObservedAt, getSupabase, isSupabaseConfigured } from "./_db";
+import { cachedQuery, getLatestObservedAt, getServiceSupabase, isSupabaseConfigured } from "./_db";
 import type { TimePoint } from "./types";
 
 export type WeatherRow = Tables<"weather_hourly">;
 
+/**
+ * weather_hourly has RLS USING(false) for anon — all reads must use service role.
+ */
+
 export async function getLatestWeather(provinceId: string): Promise<WeatherRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await getSupabase()
+  const { data, error } = await getServiceSupabase()
     .from("weather_hourly")
     .select("*")
     .eq("province_id", provinceId)
@@ -27,7 +31,7 @@ export const getLatestWeatherByProvince = cachedQuery(
     const latest = await getLatestObservedAt();
     if (!latest) return result;
     const since = new Date(new Date(latest).getTime() - 6 * 3600_000).toISOString();
-    const { data, error } = await getSupabase()
+    const { data, error } = await getServiceSupabase()
       .from("weather_hourly")
       .select("*")
       .gte("observed_at", since)
@@ -46,9 +50,9 @@ export async function getWeatherHistory(provinceId: string, hours: number): Prom
   const latest = await getLatestObservedAt();
   if (!latest) return [];
   const since = new Date(new Date(latest).getTime() - hours * 3600_000).toISOString();
-  const { data, error } = await getSupabase()
+  const { data, error } = await getServiceSupabase()
     .from("weather_hourly")
-    .select("observed_at, temperature, humidity, wind_speed")
+    .select("observed_at, temperature, humidity, wind_speed, wind_direction, pressure")
     .eq("province_id", provinceId)
     .gte("observed_at", since)
     .order("observed_at", { ascending: true });
@@ -59,5 +63,7 @@ export async function getWeatherHistory(provinceId: string, hours: number): Prom
     temperature: r.temperature,
     humidity: r.humidity,
     windSpeed: r.wind_speed,
+    windDirection: r.wind_direction,
+    pressure: r.pressure,
   }));
 }

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
+import { getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
 
 export { getSupabase, getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
 
@@ -17,12 +17,13 @@ export function cachedQuery<T>(
   return unstable_cache(fn, ["isan", ...keyParts], { revalidate, tags: ["isan-data"] });
 }
 
-/** Resolve the most recent hourly timestamp present in the dataset. */
+/** Resolve the most recent hourly timestamp present in the dataset.
+ *  Uses service-role because air_quality_hourly is an internal table (RLS USING(false) for anon). */
 export const getLatestObservedAt = cachedQuery(
   ["latest-observed-at"],
   async (): Promise<string | null> => {
     if (!isSupabaseConfigured) return null;
-    const { data, error } = await getSupabase()
+    const { data, error } = await getServiceSupabase()
       .from("air_quality_hourly")
       .select("observed_at")
       .order("observed_at", { ascending: false })

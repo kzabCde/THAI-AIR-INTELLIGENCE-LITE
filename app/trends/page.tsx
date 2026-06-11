@@ -53,7 +53,7 @@ export default async function TrendsPage({
         <ProvinceSelect value={province.id} />
       </div>
 
-      <HistoryCard daily={daily.map((d) => ({ date: d.date, pm25: d.pm25 }))} />
+      <HistoryCard daily={daily} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="card">
