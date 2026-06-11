@@ -12,9 +12,15 @@ export type DailyPoint = {
   pm25Min: number | null;
   aqi: number | null;
   temp: number | null;
+  tempMax: number | null;
+  tempMin: number | null;
   humidity: number | null;
   wind: number | null;
+  windMax: number | null;
+  windDir: number | null;
   hotspots: number | null;
+  hoursAvailable: number | null;
+  isBurningSeason: boolean | null;
 };
 
 function toPoint(r: Partial<DailyRow> & { date: string }): DailyPoint {
@@ -25,9 +31,15 @@ function toPoint(r: Partial<DailyRow> & { date: string }): DailyPoint {
     pm25Min: r.pm25_min ?? null,
     aqi: r.aqi_mean ?? null,
     temp: r.temp_mean ?? null,
+    tempMax: r.temp_max ?? null,
+    tempMin: r.temp_min ?? null,
     humidity: r.humidity_mean ?? null,
     wind: r.wind_speed_mean ?? null,
+    windMax: r.wind_speed_max ?? null,
+    windDir: r.wind_dir_mean ?? null,
     hotspots: r.hotspot_count ?? null,
+    hoursAvailable: r.hours_available ?? null,
+    isBurningSeason: r.is_burning_season ?? null,
   };
 }
 
@@ -36,7 +48,7 @@ export async function getDailyHistory(provinceId: string, days: number): Promise
   if (!isSupabaseConfigured) return [];
   const { data, error } = await getSupabase()
     .from("daily_summary")
-    .select("date, pm25_mean, pm25_max, pm25_min, aqi_mean, temp_mean, humidity_mean, wind_speed_mean, hotspot_count")
+    .select("date, pm25_mean, pm25_max, pm25_min, aqi_mean, temp_mean, temp_max, temp_min, humidity_mean, wind_speed_mean, wind_speed_max, wind_dir_mean, hotspot_count, hours_available, is_burning_season")
     .eq("province_id", provinceId)
     .gte("date", dateDaysAgo(days))
     .order("date", { ascending: true });

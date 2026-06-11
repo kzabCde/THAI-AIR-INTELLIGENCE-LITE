@@ -40,6 +40,8 @@ export type TimePoint = {
   temperature?: number | null;
   humidity?: number | null;
   windSpeed?: number | null;
+  windDirection?: number | null;
+  pressure?: number | null;
   hotspots?: number | null;
 };
 
