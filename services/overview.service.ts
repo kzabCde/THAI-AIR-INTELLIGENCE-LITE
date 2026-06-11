@@ -10,12 +10,23 @@ import type { ProvinceSnapshot, RegionOverview } from "./types";
 
 /** Build the full region overview: one merged snapshot per Isan province. */
 export async function getRegionOverview(): Promise<RegionOverview> {
-  const [air, weather, hotspot, yesterday] = await Promise.all([
+  // Use allSettled so a failure in one data source (weather, hotspot, etc.)
+  // does not discard the air quality data that loaded successfully.
+  const [airResult, weatherResult, hotspotResult, yesterdayResult] = await Promise.allSettled([
     getLatestAirByProvince(),
     getLatestWeatherByProvince(),
     getLatestHotspotByProvince(),
     getYesterdayMeanByProvince(),
   ]);
+
+  // If the primary air-quality query failed, propagate the error so the page
+  // can show its ErrorState. Auxiliary failures degrade gracefully to empty maps.
+  if (airResult.status === "rejected") throw airResult.reason;
+
+  const air = airResult.value;
+  const weather = weatherResult.status === "fulfilled" ? weatherResult.value : new Map();
+  const hotspot = hotspotResult.status === "fulfilled" ? hotspotResult.value : new Map();
+  const yesterday = yesterdayResult.status === "fulfilled" ? yesterdayResult.value : new Map();
 
   let observedAt: string | null = null;
   const snapshots: ProvinceSnapshot[] = ISAN_PROVINCES.map((province) => {
