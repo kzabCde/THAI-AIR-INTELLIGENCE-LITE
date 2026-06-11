@@ -1,12 +1,12 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { cachedQuery, getSupabase, isSupabaseConfigured } from "./_db";
+import { cachedMapQuery, getSupabase, isSupabaseConfigured } from "./_db";
 
 export type HotspotRow = Tables<"hotspot_daily">;
 
 /** Latest known hotspot record per province (fire season data may be stale). */
-export const getLatestHotspotByProvince = cachedQuery(
+export const getLatestHotspotByProvince = cachedMapQuery(
   ["latest-hotspot-all"],
   async (): Promise<Map<string, HotspotRow>> => {
     const result = new Map<string, HotspotRow>();

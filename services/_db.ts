@@ -65,6 +65,26 @@ export function cachedQuery<T>(
   );
 }
 
+/**
+ * Like {@link cachedQuery} but for queries that resolve to a `Map`. Next's data
+ * cache JSON-serializes cached values, and a `Map` does not survive that round
+ * trip (`JSON.stringify(new Map())` is `"{}"`), so a cache hit would otherwise
+ * return a plain object with no `.get` method. We cache the entries array — which
+ * is serializable — and rebuild the `Map` on every read.
+ */
+export function cachedMapQuery<K, V>(
+  keyParts: string[],
+  fn: () => Promise<Map<K, V>>,
+  revalidate = 300,
+): () => Promise<Map<K, V>> {
+  const cached = unstable_cache(
+    async () => [...(await withRetry(fn)).entries()],
+    ["isan", ...keyParts],
+    { revalidate, tags: ["isan-data"] },
+  );
+  return async () => new Map(await cached());
+}
+
 /** Resolve the most recent hourly timestamp present in the dataset.
  *  Uses service-role because air_quality_hourly is an internal table (RLS USING(false) for anon). */
 export const getLatestObservedAt = cachedQuery(
