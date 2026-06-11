@@ -1,29 +1,36 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
-import { ThemeProvider } from "@/components/theme-provider";
-import { MobileNav } from "@/components/mobile-nav";
-import { SiteHeader } from "@/components/site-header";
+import { Header } from "@/components/layout/header";
+import { MobileNav } from "@/components/layout/mobile-nav";
+import { themeInitScript } from "@/components/theme/theme-toggle";
+import { AppProviders } from "@/components/providers/app-providers";
 
 export const metadata: Metadata = {
-  title: "ประเทศไทย AI คุณภาพอากาศอัจฉริยะ (Thailand Air Intelligence)",
-  description: "แดชบอร์ด PM2.5 วันนี้ ค่าฝุ่นประเทศไทย เช็คค่าฝุ่นจังหวัดทั้ง 77 จังหวัดแบบเรียลไทม์ พร้อมคาดการณ์พรุ่งนี้",
-  keywords: ["PM2.5 วันนี้", "ค่าฝุ่นประเทศไทย", "เช็คค่าฝุ่นจังหวัด", "AQI ไทย", "Thailand Air Intelligence"],
+  title: {
+    default: "Isan Air Intelligence — คุณภาพอากาศภาคอีสาน",
+    template: "%s · Isan Air Intelligence",
+  },
+  description:
+    "แพลตฟอร์มติดตามคุณภาพอากาศ PM2.5 / AQI แบบเรียลไทม์ ครอบคลุม 20 จังหวัดภาคตะวันออกเฉียงเหนือ (อีสาน) พร้อมพยากรณ์และวิเคราะห์ย้อนหลัง",
+  keywords: ["PM2.5 อีสาน", "ค่าฝุ่นภาคอีสาน", "AQI Isan", "Northeastern Thailand air quality"],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="th">
-      <body className="min-h-screen pb-20 font-sans md:pb-0">
-        <ThemeProvider />
-        <SiteHeader />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-7xl px-4 pb-24 text-center text-xs text-slate-500 md:pb-6">
-          <a href="https://nowheredev.vercel.app/" target="_blank" rel="noopener noreferrer" className="transition hover:text-slate-700">
-            © 2026 NOWHEREDEV<span className="sr-only"> https://nowheredev.vercel.app/</span>
-          </a>
-        </footer>
-        <MobileNav />
+    <html lang="th" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-screen pb-24 md:pb-0">
+        <AppProviders>
+          <Header />
+          <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+          <footer className="mx-auto max-w-7xl px-4 pb-24 pt-8 text-center text-xs muted md:pb-8">
+            ข้อมูลเชิงสาธิตจาก Supabase · Isan Air Intelligence · © 2026
+          </footer>
+          <MobileNav />
+        </AppProviders>
       </body>
     </html>
   );

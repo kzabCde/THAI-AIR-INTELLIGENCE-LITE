@@ -1,11 +1,24 @@
-import { cn } from "@/lib/utils";
 import type { ButtonHTMLAttributes } from "react";
+import { cn } from "@/lib/utils";
 
-export function Button({ className, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+type Variant = "primary" | "ghost" | "outline";
+
+const variants: Record<Variant, string> = {
+  primary: "bg-brand text-white hover:opacity-90",
+  ghost: "hover:bg-surface-2",
+  outline: "border border-border hover:bg-surface-2",
+};
+
+export function Button({
+  className,
+  variant = "primary",
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
   return (
     <button
       className={cn(
-        "rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-soft transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+        variants[variant],
         className,
       )}
       {...props}

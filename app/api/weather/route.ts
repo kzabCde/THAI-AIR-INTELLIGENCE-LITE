@@ -1,41 +1,33 @@
-import { NextRequest, NextResponse } from "next/server";
-import { FALLBACK_WEATHER, getWeather } from "@/lib/apis/weather";
+import type { NextRequest } from "next/server";
+import { handle, fail, ok } from "@/lib/api-response";
+import { getProvince, isValidProvinceId } from "@/lib/isan";
+import {
+  getLatestWeather,
+  getLatestWeatherByProvince,
+  getWeatherHistory,
+} from "@/services/weather.service";
 
 export const revalidate = 0;
 
-type WeatherPayload = {
-  updatedAt: string;
-  data: Awaited<ReturnType<typeof getWeather>>;
-  fallback?: boolean;
-};
+// GET /api/weather                 → latest weather for all provinces
+// GET /api/weather?province=TH-40  → latest weather for one province
+// GET /api/weather?province=TH-40&hours=48 → hourly weather history
+export async function GET(req: NextRequest) {
+  return handle(async () => {
+    const province = req.nextUrl.searchParams.get("province");
+    const hoursParam = req.nextUrl.searchParams.get("hours");
 
-let cachedWeather = new Map<string, WeatherPayload>();
-
-export async function GET(request: NextRequest) {
-  const lat = Number(request.nextUrl.searchParams.get("lat"));
-  const lng = Number(request.nextUrl.searchParams.get("lng"));
-
-  if (Number.isNaN(lat) || Number.isNaN(lng)) {
-    return NextResponse.json({ error: "กรุณาระบุ lat และ lng" }, { status: 400 });
-  }
-
-  const key = `${lat.toFixed(4)}:${lng.toFixed(4)}`;
-
-  try {
-    const data = await getWeather(lat, lng);
-    const payload: WeatherPayload = { updatedAt: new Date().toISOString(), data };
-    cachedWeather.set(key, payload);
-
-    return NextResponse.json(payload, {
-      headers: {
-        "Cache-Control": "no-store, max-age=0",
-      },
-    });
-  } catch {
-    const cached = cachedWeather.get(key);
-    if (cached) {
-      return NextResponse.json({ ...cached, fallback: true });
+    if (province) {
+      if (!isValidProvinceId(province)) return fail("Unknown Isan province", 404);
+      const id = getProvince(province)!.id;
+      if (hoursParam) {
+        const hours = Math.min(2160, Math.max(1, Number(hoursParam) || 24));
+        return ok({ provinceId: id, hours, history: await getWeatherHistory(id, hours) }, 120, 300);
+      }
+      return ok(await getLatestWeather(id), 120, 300);
     }
-    return NextResponse.json({ updatedAt: new Date().toISOString(), data: FALLBACK_WEATHER, fallback: true });
-  }
+
+    const map = await getLatestWeatherByProvince();
+    return ok(Object.fromEntries(map), 120, 300);
+  });
 }
