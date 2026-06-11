@@ -1,6 +1,5 @@
 "use client";
 
-import "@/lib/leaflet-icon-fix";
 import { useRouter } from "next/navigation";
 import { CircleMarker, MapContainer, TileLayer, Tooltip } from "react-leaflet";
 import { ISAN_BOUNDS, ISAN_CENTER } from "@/lib/isan";
