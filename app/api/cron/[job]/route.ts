@@ -29,7 +29,8 @@ function authorized(req: NextRequest): boolean {
   return header === `Bearer ${secret}`;
 }
 
-// POST/GET /api/cron/<job> — invoked by Vercel Cron on a schedule.
+// POST/GET /api/cron/<job> — invoked by an external scheduler (GitHub Actions, Railway, etc.).
+// Protected by CRON_SECRET env var. See docs/SCHEDULER_SETUP.md for configuration examples.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ job: string }> }) {
   if (!authorized(req)) return fail("Unauthorized", 401);
   const { job } = await ctx.params;
