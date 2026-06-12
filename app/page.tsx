@@ -55,7 +55,7 @@ export default async function OverviewPage() {
           </span>
         </div>
         <p className="muted mt-1 text-sm">
-          เวลาปัจจุบัน <LiveClock className="tabular-nums font-medium text-fg" /> · ข้อมูลล่าสุด <RelativeTime iso={overview.observedAt} /> · แหล่งข้อมูล Supabase
+          เวลาปัจจุบัน <LiveClock withDate className="tabular-nums font-medium text-fg" /> · ข้อมูลล่าสุด <RelativeTime iso={overview.observedAt} /> · แหล่งข้อมูล Supabase
         </p>
       </div>
 

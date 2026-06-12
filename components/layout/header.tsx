@@ -53,7 +53,7 @@ export function Header() {
         <div className="flex items-center gap-2">
           <span className="hidden items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium tabular-nums sm:inline-flex">
             <Clock size={13} className="muted" />
-            <LiveClock />
+            <LiveClock withDate />
           </span>
           <LiveStatus />
           <ThemeToggle />
