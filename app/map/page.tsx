@@ -5,7 +5,8 @@ import { getRegionOverview } from "@/services/overview.service";
 import { IsanMapCard } from "@/components/map/isan-map-card";
 import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
 import type { MapProvince } from "@/components/map/types";
-import { fmtPm25, fmtRelativeTh } from "@/lib/format";
+import { fmtPm25 } from "@/lib/format";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 export const metadata: Metadata = { title: "แผนที่คุณภาพอากาศ" };
 export const revalidate = 300;
@@ -43,7 +44,7 @@ export default async function MapPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">แผนที่ภาคอีสาน</h1>
           <p className="muted text-sm">
-            PM2.5 เฉลี่ย {fmtPm25(overview.avgPm25)} µg/m³ · อัปเดต {fmtRelativeTh(overview.observedAt)}
+            PM2.5 เฉลี่ย {fmtPm25(overview.avgPm25)} µg/m³ · อัปเดต <RelativeTime iso={overview.observedAt} />
           </p>
         </div>
       </div>

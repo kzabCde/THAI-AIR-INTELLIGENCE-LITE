@@ -1,11 +1,12 @@
 import { Activity, Flame, Gauge, MapPin, Wind } from "lucide-react";
 import { ZONE_LABELS } from "@/lib/isan";
 import { AQI_BANDS } from "@/lib/aqi";
-import { fmtNumber, fmtPm25, fmtRelativeTh } from "@/lib/format";
+import { fmtNumber, fmtPm25 } from "@/lib/format";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getRegionOverview } from "@/services/overview.service";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { Section } from "@/components/ui/card";
 import { IsanMapCard } from "@/components/map/isan-map-card";
 import { LiveProvinceTable } from "@/components/overview/live-province-table";
@@ -53,7 +54,7 @@ export default async function OverviewPage() {
           </span>
         </div>
         <p className="muted mt-1 text-sm">
-          ข้อมูลล่าสุด {fmtRelativeTh(overview.observedAt)} · แหล่งข้อมูล Supabase
+          ข้อมูลล่าสุด <RelativeTime iso={overview.observedAt} /> · แหล่งข้อมูล Supabase
         </p>
       </div>
 

@@ -15,7 +15,7 @@ import {
   BarChart2,
 } from "lucide-react";
 import { ISAN_PROVINCES, ZONE_LABELS, getProvince } from "@/lib/isan";
-import { fmtNumber, fmtPm25, fmtRelativeTh } from "@/lib/format";
+import { fmtNumber, fmtPm25 } from "@/lib/format";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getProvinceSnapshot } from "@/services/overview.service";
 import { getAirHistory } from "@/services/air-quality.service";
@@ -23,6 +23,7 @@ import { getWeatherHistory } from "@/services/weather.service";
 import { getDailyHistory } from "@/services/daily-summary.service";
 import { getProvinceForecast } from "@/services/forecast.service";
 import { KpiCard, DeltaPill } from "@/components/ui/kpi-card";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { AqiBadge } from "@/components/ui/aqi-badge";
 import {
   ForecastCard,
@@ -99,7 +100,7 @@ export default async function ProvinceDetailPage({ params }: { params: Promise<{
             <p className="muted text-sm">
               {province.nameEn} · {ZONE_LABELS[province.zone].th} · {province.id}
             </p>
-            <p className="muted mt-1 text-xs">อัปเดต {fmtRelativeTh(snapshot.observedAt)}</p>
+            <p className="muted mt-1 text-xs">อัปเดต <RelativeTime iso={snapshot.observedAt} /></p>
           </div>
           <div className="text-right">
             <div className="flex items-baseline gap-1.5">

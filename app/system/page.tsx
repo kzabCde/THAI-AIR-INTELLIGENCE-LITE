@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { CheckCircle2, Clock, Database, XCircle, Timer, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
-import { fmtNumber, fmtRelativeTh, fmtDateTimeTh } from "@/lib/format";
+import { fmtNumber, fmtDateTimeTh } from "@/lib/format";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getCronLogs, getDataFreshness, getSyncJobs } from "@/services/system.service";
 import { isNetworkRestrictedError } from "@/services/_db";
@@ -63,7 +64,7 @@ export default async function SystemPage() {
                 <p className="section-title">{TABLE_LABELS[f.table] ?? f.table}</p>
                 <Database size={15} className="muted" />
               </div>
-              <p className="mt-2 text-sm font-semibold">{fmtRelativeTh(f.latest)}</p>
+              <p className="mt-2 text-sm font-semibold"><RelativeTime iso={f.latest} /></p>
               <p className="muted text-xs">{f.rowCount != null ? `${fmtNumber(f.rowCount)} แถว` : "–"}</p>
             </div>
           ))}
@@ -101,7 +102,7 @@ export default async function SystemPage() {
                   </td>
                   <td className="muted hidden px-4 py-2.5 sm:table-cell">{j.schedule ?? "–"}</td>
                   <td className="hidden px-4 py-2.5 text-right tabular-nums md:table-cell">{fmtNumber(j.recordsProcessed)}</td>
-                  <td className="muted px-4 py-2.5 text-right text-xs">{fmtRelativeTh(j.lastSuccessAt)}</td>
+                  <td className="muted px-4 py-2.5 text-right text-xs"><RelativeTime iso={j.lastSuccessAt} /></td>
                 </tr>
               ))}
             </tbody>
