@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Wind } from "lucide-react";
+import { Clock, Wind } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { LiveClock } from "@/components/ui/live-clock";
 import { LiveStatus } from "@/components/realtime/live-status";
 import { NAV_ITEMS } from "./nav-items";
 
@@ -50,6 +51,10 @@ export function Header() {
         </nav>
 
         <div className="flex items-center gap-2">
+          <span className="hidden items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium tabular-nums sm:inline-flex">
+            <Clock size={13} className="muted" />
+            <LiveClock withDate />
+          </span>
           <LiveStatus />
           <ThemeToggle />
         </div>
