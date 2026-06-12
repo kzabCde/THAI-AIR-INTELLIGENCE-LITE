@@ -37,10 +37,10 @@ export function fmtTimeTh(iso: string | null | undefined): string {
   return new Date(iso).toLocaleTimeString(TH, { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Human "x นาทีที่แล้ว" relative time. */
-export function fmtRelativeTh(iso: string | null | undefined): string {
+/** Human "x นาทีที่แล้ว" relative time. `now` lets callers drive a live clock. */
+export function fmtRelativeTh(iso: string | null | undefined, now: number = Date.now()): string {
   if (!iso) return "ไม่มีข้อมูล";
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMs = now - new Date(iso).getTime();
   const min = Math.round(diffMs / 60000);
   if (min < 1) return "เมื่อสักครู่";
   if (min < 60) return `${min} นาทีที่แล้ว`;

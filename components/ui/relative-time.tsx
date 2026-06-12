@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import { fmtRelativeTh } from "@/lib/format";
 
 /**
- * Live relative timestamp ("x นาทีที่แล้ว"). Computed against the viewer's real
- * clock and re-rendered on an interval so it stays in sync instead of freezing
- * at server render time. `suppressHydrationWarning` absorbs the expected
- * server/client clock difference on first paint.
+ * Live relative timestamp ("x นาทีที่แล้ว"). Re-syncs to the viewer's real clock
+ * immediately on mount and then re-renders on an interval, so it tracks elapsed
+ * time instead of freezing at server render time. The server paints the initial
+ * value and `suppressHydrationWarning` absorbs the expected clock difference.
  */
 export function RelativeTime({
   iso,
@@ -18,16 +18,18 @@ export function RelativeTime({
   className?: string;
   intervalMs?: number;
 }) {
-  const [, force] = useState(0);
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
-    const id = setInterval(() => force((n) => n + 1), intervalMs);
+    // Recompute right away (no 30s wait after hydration), then keep ticking.
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
 
   return (
     <span className={className} suppressHydrationWarning>
-      {fmtRelativeTh(iso)}
+      {fmtRelativeTh(iso, now ?? undefined)}
     </span>
   );
 }
