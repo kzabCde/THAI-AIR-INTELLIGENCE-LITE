@@ -347,8 +347,9 @@ export type Database = {
     };
     Functions: {
       aqi_category: { Args: { aqi: number }; Returns: string };
+      fn_cleanup_old_data: { Args: Record<string, never>; Returns: Json };
+      fn_generate_forecast: { Args: { p_horizon?: number }; Returns: number };
       pm25_to_aqi: { Args: { pm25: number }; Returns: number };
-      run_data_cleanup: { Args: Record<string, never>; Returns: string };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

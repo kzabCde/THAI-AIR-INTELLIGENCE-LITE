@@ -1,7 +1,6 @@
 import "server-only";
 
 import { getServiceSupabase, isSupabaseConfigured } from "./_db";
-import { generateAndStoreForecasts } from "./forecast.service";
 
 type SyncResult = { job: string; status: "success" | "error"; records: number; message?: string };
 
@@ -92,14 +91,16 @@ export async function runHotspotSync(): Promise<SyncResult> {
   }
 }
 
-/** Daily cleanup: delegates to the DB `run_data_cleanup()` routine + logs it. */
+/** Daily cleanup: delegates to the DB `fn_cleanup_old_data()` routine + logs it.
+ *  Retention matches pg_cron: 18 mo for raw measurements, 90 d for forecasts.
+ */
 export async function runCleanup(): Promise<SyncResult> {
   const started = Date.now();
   await markStart("daily_cleanup");
   try {
     if (!isSupabaseConfigured) throw new Error("Supabase not configured");
     const sb = getServiceSupabase();
-    const { data, error } = await sb.rpc("run_data_cleanup");
+    const { data, error } = await sb.rpc("fn_cleanup_old_data");
     if (error) throw error;
     const dur = Date.now() - started;
     await sb.from("cron_log").insert({
@@ -108,10 +109,10 @@ export async function runCleanup(): Promise<SyncResult> {
       finished_at: new Date().toISOString(),
       status: "success",
       duration_ms: dur,
-      error_msg: typeof data === "string" ? data.slice(0, 500) : null,
+      meta: data as import("@/lib/supabase/database.types").Json,
     });
     await markDone("daily_cleanup", 0, dur);
-    return { job: "daily_cleanup", status: "success", records: 0, message: String(data ?? "") };
+    return { job: "daily_cleanup", status: "success", records: 0, message: JSON.stringify(data) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await getServiceSupabase().from("cron_log").insert({
@@ -127,13 +128,20 @@ export async function runCleanup(): Promise<SyncResult> {
   }
 }
 
-/** Model retrain step → regenerate & persist forecasts for all provinces. */
+/** Model retrain step → delegates to DB `fn_generate_forecast(7)`.
+ *  Uses the same model (persist-revert-v2) and writes to model_registry,
+ *  keeping the DB as the single source of truth for forecast generation.
+ */
 export async function runRetrainAndForecast(): Promise<SyncResult> {
   const started = Date.now();
   await markStart("model_retrain");
   await markStart("forecast_generate");
   try {
-    const records = await generateAndStoreForecasts();
+    if (!isSupabaseConfigured) throw new Error("Supabase not configured");
+    const sb = getServiceSupabase();
+    const { data, error } = await sb.rpc("fn_generate_forecast", { p_horizon: 7 });
+    if (error) throw error;
+    const records = typeof data === "number" ? data : 0;
     const dur = Date.now() - started;
     await markDone("model_retrain", records, dur);
     await markDone("forecast_generate", records, dur);
