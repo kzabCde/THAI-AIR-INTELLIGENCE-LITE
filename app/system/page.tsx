@@ -11,6 +11,12 @@ import { NotConfiguredState, ErrorState, NetworkRestrictedState, EmptyState } fr
 export const metadata: Metadata = { title: "สถานะระบบ" };
 export const revalidate = 300;
 
+const MODEL_LABELS: Record<string, string> = {
+  "persist-revert-v2": "Persistence + Mean-Revert (ค่า 7 วันย้อนหลัง)",
+  "ewma-diurnal-v1": "EWMA + Diurnal Curve",
+  "weighted-ensemble-v1": "Weighted Ensemble (เลิกใช้)",
+};
+
 const JOB_LABELS: Record<string, string> = {
   pm25_sync: "ซิงค์ PM2.5 (รายชั่วโมง)",
   weather_sync: "ซิงค์สภาพอากาศ (รายชั่วโมง)",
@@ -97,6 +103,9 @@ export default async function SystemPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="font-semibold font-mono text-sm">{name}</p>
+                      {MODEL_LABELS[name] && (
+                        <p className="text-xs text-foreground/70">{MODEL_LABELS[name]}</p>
+                      )}
                       <p className="muted text-xs">
                         เทรนเมื่อ <RelativeTime iso={trainedAt} /> · {rows.length} จังหวัด
                       </p>
