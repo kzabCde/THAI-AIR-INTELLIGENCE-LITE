@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSupabase, isSupabaseConfigured } from "./_db";
-import type { CronLog, DataFreshness, SyncJob } from "./types";
+import type { CronLog, DataFreshness, ModelMetric, SyncJob } from "./types";
 
 export async function getSyncJobs(): Promise<SyncJob[]> {
   if (!isSupabaseConfigured) return [];
@@ -40,6 +40,28 @@ export async function getCronLogs(limit = 20): Promise<CronLog[]> {
     recordsIn: r.records_in,
     recordsOut: r.records_out,
     errorMsg: r.error_msg,
+  }));
+}
+
+/** Active model metrics from model_registry (one row per province). */
+export async function getModelMetrics(): Promise<ModelMetric[]> {
+  if (!isSupabaseConfigured) return [];
+  const { data, error } = await getSupabase()
+    .from("model_registry")
+    .select("model_name, province_id, trained_at, training_rows, mae, rmse, r2, is_active")
+    .eq("is_active", true)
+    .order("model_name", { ascending: true })
+    .order("province_id", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    modelName: r.model_name,
+    provinceId: r.province_id,
+    trainedAt: r.trained_at,
+    trainingRows: r.training_rows,
+    mae: r.mae != null ? Number(r.mae) : null,
+    rmse: r.rmse != null ? Number(r.rmse) : null,
+    r2: r.r2 != null ? Number(r.r2) : null,
+    isActive: r.is_active,
   }));
 }
 

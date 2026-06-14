@@ -245,6 +245,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["weather_hourly"]["Insert"]>;
         Relationships: [];
       };
+      model_registry: {
+        Row: {
+          id: number;
+          model_name: string;
+          province_id: string;
+          trained_at: string;
+          training_rows: number | null;
+          mae: number | null;
+          rmse: number | null;
+          r2: number | null;
+          is_active: boolean;
+          model_params: Json | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: number;
+          model_name: string;
+          province_id: string;
+          trained_at?: string;
+          training_rows?: number | null;
+          mae?: number | null;
+          rmse?: number | null;
+          r2?: number | null;
+          is_active?: boolean;
+          model_params?: Json | null;
+          created_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["model_registry"]["Insert"]>;
+        Relationships: [];
+      };
       sync_state: {
         Row: {
           cursor_at: string | null;
@@ -280,7 +310,41 @@ export type Database = {
         Relationships: [];
       };
     };
-    Views: { [_ in never]: never };
+    Views: {
+      air_quality_latest: {
+        Row: {
+          id: number;
+          province_id: string;
+          observed_at: string;
+          pm25: number | null;
+          pm10: number | null;
+          aqi: number | null;
+          aqi_category: string | null;
+          source: string;
+          station_id: string | null;
+          created_at: string | null;
+        };
+        Relationships: [];
+      };
+      weather_latest: {
+        Row: {
+          id: number;
+          province_id: string;
+          observed_at: string;
+          temperature: number | null;
+          humidity: number | null;
+          wind_speed: number | null;
+          wind_direction: number | null;
+          precipitation: number | null;
+          pressure: number | null;
+          cloud_cover: number | null;
+          visibility: number | null;
+          source: string;
+          created_at: string | null;
+        };
+        Relationships: [];
+      };
+    };
     Functions: {
       aqi_category: { Args: { aqi: number }; Returns: string };
       pm25_to_aqi: { Args: { pm25: number }; Returns: number };
@@ -299,3 +363,5 @@ export type TablesInsert<T extends keyof PublicSchema["Tables"]> =
   PublicSchema["Tables"][T]["Insert"];
 export type TablesUpdate<T extends keyof PublicSchema["Tables"]> =
   PublicSchema["Tables"][T]["Update"];
+export type Views<T extends keyof PublicSchema["Views"]> =
+  PublicSchema["Views"][T]["Row"];

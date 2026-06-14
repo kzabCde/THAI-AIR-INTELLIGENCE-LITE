@@ -112,32 +112,29 @@ export async function getProvinceForecast(provinceId: string): Promise<ProvinceF
 
 async function readStoredForecast(provinceId: string): Promise<ProvinceForecast | null> {
   const sb = getSupabase();
-  const { data: latestRow } = await sb
-    .from("forecast_hourly")
-    .select("forecast_at")
-    .eq("province_id", provinceId)
-    .order("forecast_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!latestRow) return null;
 
-  const forecastAt = latestRow.forecast_at;
+  // Both tables are queried independently — sorted by forecast_at DESC so the
+  // latest model batch always wins, regardless of what model_name it carries.
   const [{ data: hourly }, { data: daily }] = await Promise.all([
     sb
       .from("forecast_hourly")
-      .select("target_time, pm25_forecast")
+      .select("target_time, pm25_forecast, forecast_at, model_name")
       .eq("province_id", provinceId)
-      .eq("forecast_at", forecastAt)
-      .order("target_time", { ascending: true }),
+      .order("forecast_at", { ascending: false })
+      .order("target_time", { ascending: true })
+      .limit(FORECAST_HORIZON_HOURS),
     sb
       .from("forecast_daily")
-      .select("target_date, pm25_mean_forecast, pm25_max_forecast")
+      .select("target_date, pm25_mean_forecast, pm25_max_forecast, model_name")
       .eq("province_id", provinceId)
-      .eq("forecast_at", forecastAt)
-      .order("target_date", { ascending: true }),
+      .order("forecast_at", { ascending: false })
+      .order("target_date", { ascending: true })
+      .limit(FORECAST_HORIZON_DAYS),
   ]);
 
   if (!hourly?.length) return null;
+  const forecastAt = hourly[0].forecast_at;
+  const modelName = hourly[0].model_name;
   const start = new Date(forecastAt).getTime();
   const hPoints: ForecastPoint[] = hourly.map((r) => {
     const dt = new Date(r.target_time).getTime();
@@ -162,7 +159,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
 
   return {
     provinceId,
-    model: FORECAST_MODEL,
+    model: modelName,
     generatedAt: forecastAt,
     current,
     hourly: hPoints,

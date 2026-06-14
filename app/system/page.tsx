@@ -3,7 +3,7 @@ import { CheckCircle2, Clock, Database, XCircle, Timer, ArrowDownToLine, ArrowUp
 import { fmtNumber, fmtDateTimeTh } from "@/lib/format";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
-import { getCronLogs, getDataFreshness, getSyncJobs } from "@/services/system.service";
+import { getCronLogs, getDataFreshness, getModelMetrics, getSyncJobs } from "@/services/system.service";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { Section, CardHeader } from "@/components/ui/card";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState, EmptyState } from "@/components/ui/states";
@@ -36,12 +36,13 @@ function StatusDot({ status }: { status: string }) {
 
 export default async function SystemPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
-  let jobs, cronLogs, freshness;
+  let jobs, cronLogs, freshness, modelMetrics;
   try {
-    [jobs, cronLogs, freshness] = await Promise.all([
+    [jobs, cronLogs, freshness, modelMetrics] = await Promise.all([
       getSyncJobs(),
       getCronLogs(20),
       getDataFreshness(),
+      getModelMetrics(),
     ]);
   } catch (err) {
     console.error("[system] load error:", err);
@@ -70,6 +71,68 @@ export default async function SystemPage() {
           ))}
         </div>
       </Section>
+
+      {modelMetrics.length > 0 && (() => {
+        const byModel = modelMetrics.reduce<Record<string, typeof modelMetrics>>((acc, m) => {
+          (acc[m.modelName] ??= []).push(m);
+          return acc;
+        }, {});
+        return (
+          <Section
+            title="โมเดลพยากรณ์ที่ใช้งาน"
+            description="ค่าวัดประสิทธิภาพจาก model_registry — ยิ่งต่ำยิ่งดีสำหรับ MAE/RMSE; R² ใกล้ 1 = ดี"
+          >
+            {Object.entries(byModel).map(([name, rows]) => {
+              const avg = (vals: (number | null)[]) => {
+                const nums = vals.filter((v): v is number => v != null);
+                return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+              };
+              const avgMae = avg(rows.map((r) => r.mae));
+              const avgRmse = avg(rows.map((r) => r.rmse));
+              const avgR2 = avg(rows.map((r) => r.r2));
+              const minR2 = rows.reduce<number | null>((m, r) => r.r2 != null && (m == null || r.r2 < m) ? r.r2 : m, null);
+              const trainedAt = rows[0]?.trainedAt;
+              return (
+                <div key={name} className="card card-pad space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-semibold font-mono text-sm">{name}</p>
+                      <p className="muted text-xs">
+                        เทรนเมื่อ <RelativeTime iso={trainedAt} /> · {rows.length} จังหวัด
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div>
+                      <p className="muted text-xs">MAE (เฉลี่ย)</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {avgMae != null ? avgMae.toFixed(2) : "–"}
+                      </p>
+                      <p className="muted text-xs">µg/m³</p>
+                    </div>
+                    <div>
+                      <p className="muted text-xs">RMSE (เฉลี่ย)</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {avgRmse != null ? avgRmse.toFixed(2) : "–"}
+                      </p>
+                      <p className="muted text-xs">µg/m³</p>
+                    </div>
+                    <div>
+                      <p className="muted text-xs">R² (เฉลี่ย / ต่ำสุด)</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {avgR2 != null ? avgR2.toFixed(2) : "–"}
+                      </p>
+                      <p className="muted text-xs">
+                        {minR2 != null ? `min ${minR2.toFixed(2)}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </Section>
+        );
+      })()}
 
       <Section title="งานซิงค์ข้อมูล (Cron Jobs)">
         <div className="card overflow-x-auto">
