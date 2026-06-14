@@ -109,7 +109,7 @@ export async function runCleanup(): Promise<SyncResult> {
       finished_at: new Date().toISOString(),
       status: "success",
       duration_ms: dur,
-      meta: data as Record<string, unknown>,
+      meta: data as import("@/lib/supabase/database.types").Json,
     });
     await markDone("daily_cleanup", 0, dur);
     return { job: "daily_cleanup", status: "success", records: 0, message: JSON.stringify(data) };
