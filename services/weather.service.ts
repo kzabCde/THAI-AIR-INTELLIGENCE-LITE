@@ -6,21 +6,15 @@ import type { TimePoint } from "./types";
 
 export type WeatherRow = Tables<"weather_hourly">;
 
-/**
- * weather_hourly has RLS USING(false) for anon — all reads must use service role.
- */
-
 export async function getLatestWeather(provinceId: string): Promise<WeatherRow | null> {
   if (!isSupabaseConfigured) return null;
   const { data, error } = await getServiceSupabase()
-    .from("weather_hourly")
+    .from("weather_latest")
     .select("*")
     .eq("province_id", provinceId)
-    .order("observed_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data;
+  return data as WeatherRow | null;
 }
 
 export const getLatestWeatherByProvince = cachedMapQuery(
@@ -28,17 +22,12 @@ export const getLatestWeatherByProvince = cachedMapQuery(
   async (): Promise<Map<string, WeatherRow>> => {
     const result = new Map<string, WeatherRow>();
     if (!isSupabaseConfigured) return result;
-    const latest = await getLatestObservedAt();
-    if (!latest) return result;
-    const since = new Date(new Date(latest).getTime() - 6 * 3600_000).toISOString();
     const { data, error } = await getServiceSupabase()
-      .from("weather_hourly")
-      .select("*")
-      .gte("observed_at", since)
-      .order("observed_at", { ascending: false });
+      .from("weather_latest")
+      .select("*");
     if (error) throw error;
     for (const row of data ?? []) {
-      if (!result.has(row.province_id)) result.set(row.province_id, row);
+      result.set(row.province_id, row as WeatherRow);
     }
     return result;
   },

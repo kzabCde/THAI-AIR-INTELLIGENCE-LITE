@@ -6,42 +6,30 @@ import type { TimePoint } from "./types";
 
 export type AirRow = Tables<"air_quality_hourly">;
 
-/**
- * air_quality_hourly has RLS USING(false) for anon — all reads must use service role.
- */
-
-/** Most recent PM2.5 reading for a single province. */
+/** Most recent PM2.5 reading for a single province (via air_quality_latest view). */
 export async function getLatestAir(provinceId: string): Promise<AirRow | null> {
   if (!isSupabaseConfigured) return null;
   const { data, error } = await getServiceSupabase()
-    .from("air_quality_hourly")
+    .from("air_quality_latest")
     .select("*")
     .eq("province_id", provinceId)
-    .order("observed_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data;
+  return data as AirRow | null;
 }
 
-/** Latest reading for every province (keyed by province_id). */
+/** Latest reading for every province (keyed by province_id) via air_quality_latest view. */
 export const getLatestAirByProvince = cachedMapQuery(
   ["latest-air-all"],
   async (): Promise<Map<string, AirRow>> => {
     const result = new Map<string, AirRow>();
     if (!isSupabaseConfigured) return result;
-    const latest = await getLatestObservedAt();
-    if (!latest) return result;
-    // Look back a few hours so provinces with a small gap still resolve.
-    const since = new Date(new Date(latest).getTime() - 6 * 3600_000).toISOString();
     const { data, error } = await getServiceSupabase()
-      .from("air_quality_hourly")
-      .select("*")
-      .gte("observed_at", since)
-      .order("observed_at", { ascending: false });
+      .from("air_quality_latest")
+      .select("*");
     if (error) throw error;
     for (const row of data ?? []) {
-      if (!result.has(row.province_id)) result.set(row.province_id, row);
+      result.set(row.province_id, row as AirRow);
     }
     return result;
   },

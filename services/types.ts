@@ -99,3 +99,14 @@ export type DataFreshness = {
   latest: string | null;
   rowCount: number | null;
 };
+
+export type ModelMetric = {
+  modelName: string;
+  provinceId: string;
+  trainedAt: string;
+  trainingRows: number | null;
+  mae: number | null;
+  rmse: number | null;
+  r2: number | null;
+  isActive: boolean;
+};
