@@ -262,15 +262,18 @@ export function HourlyAirCard({ hourly }: { hourly: TimePoint[] }) {
   );
 }
 
-/** Hourly weather chart — temperature + wind speed + humidity. */
+/** Hourly weather chart — temperature · wind · humidity · pressure · precipitation. */
 export function HourlyWeatherCard({ hourly }: { hourly: TimePoint[] }) {
-  const [metric, setMetric] = useState<"temp-wind" | "humidity" | "pressure">("temp-wind");
+  const [metric, setMetric] = useState<"temp-wind" | "humidity" | "pressure" | "precip">("temp-wind");
 
   const data: MultiMetricPoint[] = hourly.map((h) => ({
     label: hourLabel(h.t),
     temperature: h.temperature ?? null,
     humidity: h.humidity ?? null,
     windSpeed: h.windSpeed ?? null,
+    pressure: h.pressure ?? null,
+    precipitation: h.precipitation ?? null,
+    visibility: h.visibility ?? null,
   }));
 
   const series: (keyof MultiMetricPoint)[] =
@@ -278,13 +281,15 @@ export function HourlyWeatherCard({ hourly }: { hourly: TimePoint[] }) {
       ? ["temperature", "windSpeed"]
       : metric === "humidity"
       ? ["humidity"]
-      : ["windSpeed"];
+      : metric === "pressure"
+      ? ["pressure"]
+      : ["precipitation"];
 
   return (
     <div className="card">
       <CardHeader
         title="สภาพอากาศรายชั่วโมง"
-        description={`อุณหภูมิ · ลม · ความชื้น · ${hourly.length} จุดข้อมูล`}
+        description={`อุณหภูมิ · ลม · ความชื้น · ความกดอากาศ · ฝน · ${hourly.length} จุดข้อมูล`}
         action={
           <Tabs
             value={metric}
@@ -292,7 +297,8 @@ export function HourlyWeatherCard({ hourly }: { hourly: TimePoint[] }) {
             options={[
               ["temp-wind", "อุณหภูมิ+ลม"],
               ["humidity", "ความชื้น"],
-              ["pressure", "ลม"],
+              ["pressure", "ความดัน"],
+              ["precip", "ฝน"],
             ]}
           />
         }
