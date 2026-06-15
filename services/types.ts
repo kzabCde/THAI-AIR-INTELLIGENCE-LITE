@@ -42,6 +42,9 @@ export type TimePoint = {
   windSpeed?: number | null;
   windDirection?: number | null;
   pressure?: number | null;
+  precipitation?: number | null;
+  cloudCover?: number | null;
+  visibility?: number | null;
   hotspots?: number | null;
 };
 

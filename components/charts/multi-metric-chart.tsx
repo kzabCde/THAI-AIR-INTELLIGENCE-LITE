@@ -19,6 +19,9 @@ export type MultiMetricPoint = {
   temperature?: number | null;
   humidity?: number | null;
   windSpeed?: number | null;
+  pressure?: number | null;
+  precipitation?: number | null;
+  visibility?: number | null;
 };
 
 type Series = {
@@ -36,6 +39,9 @@ const SERIES_DEFS: Series[] = [
   { key: "temperature", name: "อุณหภูมิ", color: "#0d9488", yAxisId: "right", unit: "°C" },
   { key: "humidity", name: "ความชื้น", color: "#3b82f6", yAxisId: "right", unit: "%" },
   { key: "windSpeed", name: "ลม", color: "#06b6d4", yAxisId: "right", unit: "m/s" },
+  { key: "pressure", name: "ความกดอากาศ", color: "#8b5cf6", yAxisId: "right", unit: "hPa" },
+  { key: "precipitation", name: "ฝน", color: "#2563eb", yAxisId: "right", unit: "mm" },
+  { key: "visibility", name: "ทัศนวิสัย", color: "#10b981", yAxisId: "right", unit: "km" },
 ];
 
 export function MultiMetricChart({

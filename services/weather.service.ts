@@ -41,7 +41,7 @@ export async function getWeatherHistory(provinceId: string, hours: number): Prom
   const since = new Date(new Date(latest).getTime() - hours * 3600_000).toISOString();
   const { data, error } = await getServiceSupabase()
     .from("weather_hourly")
-    .select("observed_at, temperature, humidity, wind_speed, wind_direction, pressure")
+    .select("observed_at, temperature, humidity, wind_speed, wind_direction, pressure, precipitation, cloud_cover, visibility")
     .eq("province_id", provinceId)
     .gte("observed_at", since)
     .order("observed_at", { ascending: true });
@@ -54,5 +54,8 @@ export async function getWeatherHistory(provinceId: string, hours: number): Prom
     windSpeed: r.wind_speed,
     windDirection: r.wind_direction,
     pressure: r.pressure,
+    precipitation: r.precipitation,
+    cloudCover: r.cloud_cover,
+    visibility: r.visibility,
   }));
 }
