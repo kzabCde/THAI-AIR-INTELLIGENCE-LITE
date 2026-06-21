@@ -9,6 +9,21 @@ import { useUiStore } from "@/stores/ui-store";
 
 const WATCHED_TABLES = Object.keys(TABLE_INVALIDATIONS);
 
+/** Indochina Time offset (UTC+7, no DST) used to anchor the pipeline schedule. */
+const ICT_OFFSET_MS = 7 * 60 * 60 * 1000;
+/** Daily data pipeline lands ~01:35 ICT; nudge a refresh just after it runs. */
+const PIPELINE_HOUR_ICT = 1;
+const PIPELINE_MINUTE_ICT = 35;
+
+/** Milliseconds from now until the next 01:35 ICT occurrence. */
+function msUntilNextPipelineRun(now = Date.now()): number {
+  const ict = new Date(now + ICT_OFFSET_MS);
+  const target = new Date(ict);
+  target.setUTCHours(PIPELINE_HOUR_ICT, PIPELINE_MINUTE_ICT, 0, 0);
+  if (target.getTime() <= ict.getTime()) target.setUTCDate(target.getUTCDate() + 1);
+  return target.getTime() - ict.getTime();
+}
+
 /**
  * Subscribes to Supabase Realtime postgres_changes for every data table and,
  * on change, invalidates the matching React Query caches and refreshes the
@@ -68,6 +83,28 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     // When auto-refresh is re-enabled, pull fresh data immediately.
     queryClient.invalidateQueries();
   }, [autoRefresh, queryClient]);
+
+  // Scheduled safety net: force a full invalidation shortly after the daily
+  // pipeline runs (~01:35 ICT). Guarantees fresh data even if a realtime event
+  // was missed (e.g. websocket was disconnected during the write window).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const arm = () => {
+      timer = setTimeout(() => {
+        if (useUiStore.getState().autoRefresh) {
+          queryClient.invalidateQueries();
+          router.refresh();
+        }
+        arm(); // re-arm for the following day
+      }, msUntilNextPipelineRun());
+    };
+
+    arm();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [queryClient, router]);
 
   return <>{children}</>;
 }
