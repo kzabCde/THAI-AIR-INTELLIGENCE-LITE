@@ -1,3 +1,10 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/ml/forecast.py": {
+      "memory": 1024,
+      "maxDuration": 10,
+      "excludeFiles": "{node_modules,.next,components,app,services,lib,stores,hooks,docs,training,public,supabase}/**"
+    }
+  }
 }
