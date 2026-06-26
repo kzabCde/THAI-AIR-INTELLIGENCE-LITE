@@ -112,4 +112,5 @@ export type ModelMetric = {
   rmse: number | null;
   r2: number | null;
   isActive: boolean;
+  modelParams: Record<string, unknown> | null;
 };
