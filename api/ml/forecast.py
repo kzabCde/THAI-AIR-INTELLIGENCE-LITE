@@ -1,302 +1,350 @@
 """
-Vercel Python Serverless Function — PM2.5 7-day forecast inference.
+POST /api/ml/forecast
+GET  /api/ml/forecast  — health check
 
-    POST /api/ml/forecast
-    Authorization: Bearer <ML_SECRET>
+รองรับ 3 model types จาก model_registry:
+  1. stacking-v1    → Learned Stacking (Option B)
+                      query base model แยก แล้ว combine
+                      ŷ = w_persist × persist_revert + w_ml × ml_weighted
+  2. lightgbm-v1   → feature importance weighted (fallback)
+  3. xgboost-v1    → feature importance weighted (fallback)
 
-WHY THIS EXISTS
-───────────────
-The real model is a gradient-boosted ensemble (XGBoost + LightGBM) that is far
-too heavy to import inside a Vercel function and still cold-start under the 10s
-limit. So we split the work:
+Query pattern (ทั้งหมด 3 queries ต่อ request):
+  Q1: model_registry WHERE is_active=true          → active model per province
+  Q2: model_registry WHERE model_name IN (base)    → base model feature_importance
+  Q3: daily_summary 14 วันล่าสุด รายจังหวัด       → features สำหรับ inference
 
-  • Offline (Colab, training/train_xgb_lgbm.ipynb):
-        train XGB + LGBM → distil into a per-province LINEAR SURROGATE
-        (coef + intercept) → persist to model_registry.model_params, together
-        with feature_importance for the dashboard.
-
-  • Online (this file):
-        load the surrogate from model_registry, pull recent daily_summary
-        rows from Supabase REST, evaluate the surrogate iteratively for 7 days,
-        expand to 168 hourly points, and upsert into forecast_hourly /
-        forecast_daily.
-
-IMPORTANT: if model_registry has no active rows with a usable model_params
-(i.e. the Colab notebook has not been run yet), there is nothing to evaluate
-and the endpoint returns {"rows": 0}. Run the notebook first.
+ไม่มี xgboost/lightgbm ใน runtime → รันใน Hobby plan ≤ 10 วิ
 """
 
-from __future__ import annotations
-
 import json
-import math
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, timedelta, timezone, datetime
 from http.server import BaseHTTPRequestHandler
 
 import numpy as np
-import requests
+from supabase import create_client, Client
 
-MODEL_NAME = os.environ.get("ML_MODEL_NAME", "xgb-lgbm-ensemble-v1")
-HORIZON_DAYS = 7
-HORIZON_HOURS = HORIZON_DAYS * 24
-LOOKBACK_DAYS = 21
-PM25_FLOOR = 1.0
-REQUEST_TIMEOUT = 6  # seconds — leave headroom under Vercel's 10s ceiling
+# ── Environment ───────────────────────────────────────────────────────
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+ML_SECRET    = os.environ.get("ML_SECRET", "")
 
-# Feature order MUST match what the notebook writes into model_params.coef.
-DEFAULT_FEATURES = [
-    "lag1", "lag7", "roll7", "roll14",
-    "doy_sin", "doy_cos",
-    "hotspot", "burning", "temp", "humidity", "wind",
-]
-# Neutral diurnal shape (sums-to-mean ~ 1.0) used only if the notebook didn't
-# persist one. Higher overnight/early-morning, lower midday.
-DEFAULT_DIURNAL = [
-    1.10, 1.12, 1.13, 1.14, 1.14, 1.13, 1.15, 1.16, 1.10, 1.00, 0.92, 0.86,
-    0.83, 0.82, 0.83, 0.86, 0.90, 0.95, 1.00, 1.05, 1.08, 1.09, 1.09, 1.10,
+# ── Constants ─────────────────────────────────────────────────────────
+FEATURE_COLS = [
+    "pm25_lag_1d", "pm25_lag_3d", "pm25_lag_7d",
+    "pm25_roll7", "neighbor_pm25_avg", "regional_pm25_avg",
+    "temp_mean", "humidity_mean", "wind_speed_mean", "precip_total",
+    "hotspot_count", "total_frp",
+    "month", "day_of_week", "is_burning_season", "is_dry_season",
 ]
 
+PROVINCE_IDS = [
+    "TH-30","TH-31","TH-32","TH-33","TH-34",
+    "TH-35","TH-36","TH-37","TH-38","TH-39",
+    "TH-40","TH-41","TH-42","TH-43","TH-44",
+    "TH-45","TH-46","TH-47","TH-48","TH-49",
+]
 
-# ── Supabase REST helpers ────────────────────────────────────────────────────
-
-def _supabase_env() -> tuple[str, str]:
-    url = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
-    if not url or not key:
-        raise RuntimeError("Supabase env not configured (SUPABASE_URL / service role key)")
-    return url.rstrip("/"), key
-
-
-def _headers(key: str, write: bool = False) -> dict[str, str]:
-    h = {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
-    if write:
-        # Upsert semantics — merge on the table's conflict target.
-        h["Prefer"] = "resolution=merge-duplicates,return=minimal"
-    return h
+STACKING_MODEL  = "stacking-v1"
+BASE_ML_MODELS  = {"lightgbm-v1", "xgboost-v1"}
 
 
-def _rest_get(url: str, key: str, path: str, params: dict) -> list[dict]:
-    r = requests.get(
-        f"{url}/rest/v1/{path}", headers=_headers(key), params=params, timeout=REQUEST_TIMEOUT
-    )
-    r.raise_for_status()
-    return r.json()
+# ── Auth ──────────────────────────────────────────────────────────────
+def _authorized(headers: dict) -> bool:
+    if not ML_SECRET:
+        return True
+    auth = headers.get("Authorization") or headers.get("authorization", "")
+    return auth == f"Bearer {ML_SECRET}"
 
 
-def _rest_upsert(url: str, key: str, path: str, rows: list[dict], on_conflict: str) -> None:
-    if not rows:
-        return
-    r = requests.post(
-        f"{url}/rest/v1/{path}",
-        headers=_headers(key, write=True),
-        params={"on_conflict": on_conflict},
-        data=json.dumps(rows),
-        timeout=REQUEST_TIMEOUT,
-    )
-    r.raise_for_status()
+def get_client() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-# ── Model loading ────────────────────────────────────────────────────────────
-
-def _load_models(url: str, key: str) -> dict[str, dict]:
-    """province_id → model_params for the active rows of MODEL_NAME.
-
-    Rows whose model_params lacks a `coef` array are skipped — they carry no
-    usable surrogate (e.g. metrics-only rows), so they cannot drive inference.
+# ── Q1: โหลด active model ทุกจังหวัด ─────────────────────────────────
+def load_active_models(sb: Client) -> dict:
     """
-    rows = _rest_get(
-        url, key, "model_registry",
-        {
-            "select": "province_id,model_params",
-            "model_name": f"eq.{MODEL_NAME}",
-            "is_active": "is.true",
-        },
-    )
-    models: dict[str, dict] = {}
-    for r in rows:
-        params = r.get("model_params")
-        pid = r.get("province_id")
-        if not pid or not isinstance(params, dict):
-            continue
-        if not params.get("coef"):
-            continue
-        models[pid] = params
-    return models
+    return: {
+      province_id: {
+        model_name, model_params, mae
+      }
+    }
+    ถ้าจังหวัดมีทั้ง stacking-v1 และ lightgbm-v1 active
+    → เลือก stacking-v1 ก่อนเสมอ (MAE ดีกว่า)
+    """
+    resp = sb.table("model_registry") \
+        .select("province_id,model_name,model_params,mae") \
+        .eq("is_active", True) \
+        .execute()
+
+    result: dict = {}
+    for r in (resp.data or []):
+        pid  = r["province_id"]
+        name = r["model_name"]
+        # stacking-v1 มีความสำคัญสูงสุด — override ถ้ามีทั้งคู่
+        if pid not in result or name == STACKING_MODEL:
+            result[pid] = r
+    return result
 
 
-# ── Feature engineering + inference ──────────────────────────────────────────
+# ── Q2: โหลด base model feature_importance สำหรับ stacking ──────────
+def load_base_models(sb: Client, base_names: set) -> dict:
+    """
+    ดึง feature_importance ของ base model (xgboost-v1 / lightgbm-v1)
+    สำหรับจังหวัดที่ใช้ stacking-v1 เท่านั้น
 
-def _num(v, default=0.0) -> float:
+    return: {
+      (province_id, model_name): { feature_importance }
+    }
+    """
+    if not base_names:
+        return {}
+
+    resp = sb.table("model_registry") \
+        .select("province_id,model_name,model_params") \
+        .in_("model_name", list(base_names)) \
+        .execute()
+
+    result: dict = {}
+    for r in (resp.data or []):
+        key    = (r["province_id"], r["model_name"])
+        params = r.get("model_params") or {}
+        result[key] = params.get("feature_importance", {})
+    return result
+
+
+# ── Q3: โหลด daily_summary 14 วันล่าสุด ─────────────────────────────
+def load_recent_features(sb: Client) -> dict:
+    """
+    return: { province_id: [rows sorted by date asc] }
+    """
+    cutoff = (date.today() - timedelta(days=14)).isoformat()
+    by_province: dict = {}
+
+    for pid in PROVINCE_IDS:
+        resp = sb.table("daily_summary") \
+            .select(
+                "province_id,date,pm25_mean,"
+                "pm25_lag_1d,pm25_lag_3d,pm25_lag_7d,pm25_roll7,"
+                "neighbor_pm25_avg,regional_pm25_avg,"
+                "temp_mean,humidity_mean,wind_speed_mean,precip_total,"
+                "hotspot_count,total_frp,month,day_of_week,"
+                "is_burning_season,is_dry_season"
+            ) \
+            .eq("province_id", pid) \
+            .gte("date", cutoff) \
+            .order("date") \
+            .limit(20) \
+            .execute()
+        rows = resp.data or []
+        if rows:
+            by_province[pid] = rows
+
+    return by_province
+
+
+# ── Helper ────────────────────────────────────────────────────────────
+def _fval(row: dict, col: str, default: float = 0.0) -> float:
+    v = row.get(col)
+    if v is None:
+        return default
     try:
-        return float(v) if v is not None else default
+        return float(v)
     except (TypeError, ValueError):
         return default
 
 
-def _build_history(rows: list[dict]) -> dict:
-    """rows come newest-first from REST; flip to oldest-first series."""
-    rows = list(reversed(rows))
-    return {
-        "pm25": [_num(r.get("pm25_mean")) for r in rows],
-        "hotspot": [_num(r.get("hotspot_count")) for r in rows],
-        "burning": [1.0 if r.get("is_burning_season") else 0.0 for r in rows],
-        "temp": [_num(r.get("temp_mean"), 28.0) for r in rows],
-        "humidity": [_num(r.get("humidity_mean"), 60.0) for r in rows],
-        "wind": [_num(r.get("wind_speed_mean"), 5.0) for r in rows],
-        "last_date": rows[-1].get("date") if rows else None,
+# ── Inference: ML weighted forecast ──────────────────────────────────
+def ml_weighted_forecast(
+    last_row: dict,
+    feature_imp: dict,
+    rolling: list,
+    target_date: date,
+) -> float:
+    """
+    Linear approximation จาก feature_importance:
+      raw = Σ (norm_weight_i × feature_value_i)
+    blend กับ lag1 เป็น anchor เพื่อ rescale ให้อยู่ในช่วงจริง
+    """
+    total_imp = sum(feature_imp.values()) or 1.0
+    norm_w    = {k: v / total_imp for k, v in feature_imp.items()}
+
+    lag1 = rolling[-1] if len(rolling) >= 1 else _fval(last_row, "pm25_mean", 20.0)
+    lag3 = rolling[-3] if len(rolling) >= 3 else lag1
+    lag7 = rolling[-7] if len(rolling) >= 7 else lag1
+
+    fvec = {
+        "pm25_lag_1d":       lag1,
+        "pm25_lag_3d":       lag3,
+        "pm25_lag_7d":       lag7,
+        "pm25_roll7":        float(np.mean(rolling[-7:])) if len(rolling) >= 7 else lag1,
+        "neighbor_pm25_avg": _fval(last_row, "neighbor_pm25_avg", lag1),
+        "regional_pm25_avg": _fval(last_row, "regional_pm25_avg", lag1),
+        "temp_mean":         _fval(last_row, "temp_mean", 28.0),
+        "humidity_mean":     _fval(last_row, "humidity_mean", 70.0),
+        "wind_speed_mean":   _fval(last_row, "wind_speed_mean", 2.0),
+        "precip_total":      _fval(last_row, "precip_total", 0.0),
+        "hotspot_count":     _fval(last_row, "hotspot_count", 0.0),
+        "total_frp":         _fval(last_row, "total_frp", 0.0),
+        "month":             float(target_date.month),
+        "day_of_week":       float(target_date.weekday()),
+        "is_burning_season": 1.0 if target_date.month in (1, 2, 3, 4) else 0.0,
+        "is_dry_season":     1.0 if target_date.month in (11, 12, 1, 2, 3, 4) else 0.0,
     }
 
+    raw      = sum(norm_w.get(col, 0.0) * fvec.get(col, 0.0) for col in FEATURE_COLS)
+    anchor   = lag1
+    rescaled = raw * anchor / max(abs(raw), 1e-6)
+    blended  = 0.6 * rescaled + 0.4 * anchor
+    return float(np.clip(blended, 1.0, 500.0))
 
-def _features(series: list[float], hist: dict, target: datetime, names: list[str]) -> np.ndarray:
-    """Compute the feature vector for a single forecast day."""
-    n = len(series)
-    lag1 = series[-1] if n >= 1 else 0.0
-    lag7 = series[-7] if n >= 7 else (series[0] if n else 0.0)
-    roll7 = float(np.mean(series[-7:])) if n else 0.0
-    roll14 = float(np.mean(series[-14:])) if n else 0.0
-    doy = target.timetuple().tm_yday
-    doy_sin = math.sin(2 * math.pi * doy / 365.25)
-    doy_cos = math.cos(2 * math.pi * doy / 365.25)
-    # Future weather/hotspot are unknown → persist last observed value.
-    feat = {
-        "lag1": lag1, "lag7": lag7, "roll7": roll7, "roll14": roll14,
-        "doy_sin": doy_sin, "doy_cos": doy_cos,
-        "hotspot": hist["hotspot"][-1] if hist["hotspot"] else 0.0,
-        "burning": hist["burning"][-1] if hist["burning"] else 0.0,
-        "temp": hist["temp"][-1] if hist["temp"] else 28.0,
-        "humidity": hist["humidity"][-1] if hist["humidity"] else 60.0,
-        "wind": hist["wind"][-1] if hist["wind"] else 5.0,
+
+# ── Inference: persist-revert-v2 ─────────────────────────────────────
+def persist_revert_forecast(rolling: list, roll7_val: float, h: int) -> float:
+    """
+    persist-revert-v2 formula:
+      ŷ_h = last + (1 - 0.85^h) × (roll7 - last)
+    """
+    last = rolling[-1] if rolling else 20.0
+    return float(np.clip(
+        last + (1 - 0.85 ** h) * (roll7_val - last),
+        1.0, 500.0
+    ))
+
+
+# ── Main forecast logic ───────────────────────────────────────────────
+def make_forecasts(sb: Client, horizon: int = 7) -> list:
+    # Q1: active model ต่อจังหวัด
+    active_models = load_active_models(sb)
+
+    # หาว่าจังหวัดไหนใช้ stacking-v1 บ้าง → ต้องดึง base model แยก
+    stacking_pids  = {
+        pid for pid, row in active_models.items()
+        if row["model_name"] == STACKING_MODEL
     }
-    return np.array([feat.get(name, 0.0) for name in names], dtype=float)
+    # รวม base model names ที่ต้องการ (อาจเป็น lightgbm-v1 หรือ xgboost-v1)
+    needed_base_names: set = set()
+    for pid in stacking_pids:
+        params    = active_models[pid].get("model_params") or {}
+        base_name = params.get("base_model", "lightgbm-v1")
+        needed_base_names.add(base_name)
 
+    # Q2: base model feature_importance (เฉพาะจังหวัดที่ใช้ stacking)
+    base_models = load_base_models(sb, needed_base_names) if stacking_pids else {}
 
-def _forecast_province(params: dict, hist: dict, generated_at: datetime):
-    names = params.get("features", DEFAULT_FEATURES)
-    coef = np.array(params.get("coef", []), dtype=float)
-    intercept = _num(params.get("intercept"), 0.0)
-    floor = _num(params.get("pm25_floor"), PM25_FLOOR)
-    diurnal = params.get("diurnal", DEFAULT_DIURNAL)
-    if len(coef) != len(names):
-        return [], []
+    # Q3: daily_summary features
+    features = load_recent_features(sb)
 
-    series = list(hist["pm25"])
-    daily: list[tuple[str, float, float]] = []
-    base_date = generated_at.date()
-    for d in range(1, HORIZON_DAYS + 1):
-        target = datetime.combine(base_date, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=d)
-        x = _features(series, hist, target, names)
-        pred = float(intercept + np.dot(coef, x))
-        pred = max(floor, pred)
-        series.append(pred)  # feed prediction forward for the next lag
-        day_max = pred * max(diurnal)
-        daily.append((target.date().isoformat(), round(pred, 1), round(day_max, 1)))
+    forecast_at = datetime.now(timezone.utc).isoformat()
+    today       = date.today()
+    rows_out    = []
 
-    # Expand each day into 24 hourly points via the diurnal shape.
-    hourly: list[tuple[str, float]] = []
-    for d in range(HORIZON_DAYS):
-        day_mean = daily[d][1]
-        for h in range(24):
-            ts = (
-                datetime.combine(base_date, datetime.min.time(), tzinfo=timezone.utc)
-                + timedelta(days=d + 1, hours=h)
-            )
-            val = max(floor, day_mean * diurnal[h % 24])
-            hourly.append((ts.isoformat().replace("+00:00", "Z"), round(val, 1)))
-    return daily, hourly
-
-
-# ── Main run ─────────────────────────────────────────────────────────────────
-
-def run_forecast() -> dict:
-    url, key = _supabase_env()
-    models = _load_models(url, key)
-    if not models:
-        return {
-            "ok": True, "model": MODEL_NAME, "provinces": 0, "rows": 0,
-            "message": "No active model_registry rows with feature_importance — run the Colab notebook first.",
-        }
-
-    generated_at = datetime.now(timezone.utc)
-    forecast_at = generated_at.isoformat().replace("+00:00", "Z")
-    hourly_rows: list[dict] = []
-    daily_rows: list[dict] = []
-    used = 0
-
-    for pid, params in models.items():
-        rows = _rest_get(
-            url, key, "daily_summary",
-            {
-                "select": "date,pm25_mean,hotspot_count,is_burning_season,temp_mean,humidity_mean,wind_speed_mean",
-                "province_id": f"eq.{pid}",
-                "order": "date.desc",
-                "limit": str(LOOKBACK_DAYS),
-            },
-        )
-        hist = _build_history([r for r in rows if r.get("pm25_mean") is not None])
-        if not hist["pm25"]:
+    for pid in PROVINCE_IDS:
+        model_row = active_models.get(pid)
+        hist      = features.get(pid, [])
+        if not model_row or not hist:
             continue
-        daily, hourly = _forecast_province(params, hist, generated_at)
-        if not daily:
-            continue
-        used += 1
-        for date_iso, mean_v, max_v in daily:
-            daily_rows.append({
-                "province_id": pid, "forecast_at": forecast_at, "target_date": date_iso,
-                "pm25_mean_forecast": mean_v, "pm25_max_forecast": max_v, "model_name": MODEL_NAME,
+
+        model_name = model_row["model_name"]
+        params     = model_row.get("model_params") or {}
+        last_row   = hist[-1]
+        rolling    = [float(r.get("pm25_mean") or 0) for r in hist]
+        roll7_now  = float(np.mean(rolling[-7:])) if len(rolling) >= 7 else rolling[-1]
+
+        for h in range(1, horizon + 1):
+            target_date = today + timedelta(days=h)
+
+            # ── stacking-v1: combine persist + base ML ───────────────
+            if model_name == STACKING_MODEL:
+                w_persist  = float(params.get("w_persist", 0.3))
+                w_ml       = float(params.get("w_ml", 0.7))
+                base_name  = params.get("base_model", "lightgbm-v1")
+
+                # persist-revert-v2 component
+                y_persist = persist_revert_forecast(rolling, roll7_now, h)
+
+                # ML component — ดึง feature_importance จาก base model
+                feature_imp = base_models.get((pid, base_name), {})
+                y_ml = ml_weighted_forecast(last_row, feature_imp, rolling, target_date) \
+                       if feature_imp else y_persist  # fallback ถ้าหา base model ไม่เจอ
+
+                pm25_pred = w_persist * y_persist + w_ml * y_ml
+
+            # ── xgboost-v1 / lightgbm-v1: feature importance โดยตรง ──
+            elif model_name in BASE_ML_MODELS:
+                feature_imp = params.get("feature_importance", {})
+                pm25_pred   = ml_weighted_forecast(last_row, feature_imp, rolling, target_date)
+
+            # ── fallback: persist-revert-v2 ──────────────────────────
+            else:
+                pm25_pred = persist_revert_forecast(rolling, roll7_now, h)
+
+            pm25_pred = float(np.clip(pm25_pred, 1.0, 500.0))
+            rows_out.append({
+                "province_id":        pid,
+                "forecast_at":        forecast_at,
+                "target_date":        target_date.isoformat(),
+                "pm25_mean_forecast": round(pm25_pred, 2),
+                "pm25_max_forecast":  round(pm25_pred * 1.35, 2),
+                "model_name":         model_name,
             })
-        for ts, val in hourly:
-            hourly_rows.append({
-                "province_id": pid, "forecast_at": forecast_at, "target_time": ts,
-                "pm25_forecast": val, "model_name": MODEL_NAME,
-            })
+            rolling.append(pm25_pred)
 
-    _rest_upsert(url, key, "forecast_daily", daily_rows,
-                 "province_id,forecast_at,target_date,model_name")
-    _rest_upsert(url, key, "forecast_hourly", hourly_rows,
-                 "province_id,forecast_at,target_time,model_name")
-
-    return {
-        "ok": True, "model": MODEL_NAME, "provinces": used,
-        "rows": len(hourly_rows) + len(daily_rows),
-        "generatedAt": forecast_at,
-    }
+    return rows_out
 
 
-# ── HTTP handler (Vercel Python runtime) ─────────────────────────────────────
+def upsert_forecasts(sb: Client, rows: list) -> int:
+    if not rows:
+        return 0
+    resp = sb.rpc("fn_upsert_forecast_daily", {"rows": rows}).execute()
+    if resp.data:
+        return resp.data.get("upserted", len(rows))
+    return len(rows)
 
+
+# ── HTTP Handler ──────────────────────────────────────────────────────
 class handler(BaseHTTPRequestHandler):
-    def _authorized(self) -> bool:
-        secret = os.environ.get("ML_SECRET")
-        if not secret:
-            return True  # no secret configured → allow (dev parity with CRON_SECRET)
-        return self.headers.get("Authorization") == f"Bearer {secret}"
+    def do_GET(self):
+        self._send(200, {
+            "status":   "ok",
+            "endpoint": "api/ml/forecast",
+            "models":   ["stacking-v1", "lightgbm-v1", "xgboost-v1"],
+        })
 
-    def _send(self, status: int, body: dict) -> None:
-        payload = json.dumps(body).encode("utf-8")
-        self.send_response(status)
+    def do_POST(self):
+        if not _authorized(dict(self.headers)):
+            return self._send(401, {"error": "Unauthorized"})
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            return self._send(500, {"error": "Supabase env vars not set"})
+
+        length  = int(self.headers.get("Content-Length", 0))
+        body    = json.loads(self.rfile.read(length)) if length else {}
+        horizon = int(body.get("horizon", 7))
+
+        sb   = get_client()
+        rows = make_forecasts(sb, horizon)
+        n    = upsert_forecasts(sb, rows)
+
+        model_counts: dict = {}
+        for r in rows:
+            model_counts[r["model_name"]] = model_counts.get(r["model_name"], 0) + 1
+
+        self._send(200, {
+            "ok":           True,
+            "upserted":     n,
+            "provinces":    len(set(r["province_id"] for r in rows)),
+            "horizon":      horizon,
+            "model_counts": model_counts,
+        })
+
+    def _send(self, code: int, body: dict):
+        payload = json.dumps(body).encode()
+        self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
-    def _handle(self) -> None:
-        if not self._authorized():
-            self._send(401, {"ok": False, "error": "Unauthorized"})
-            return
-        try:
-            self._send(200, run_forecast())
-        except requests.HTTPError as e:  # surface Supabase REST errors clearly
-            self._send(502, {"ok": False, "error": f"Supabase REST error: {e}"})
-        except Exception as e:  # noqa: BLE001 — endpoint must always answer JSON
-            self._send(500, {"ok": False, "error": str(e)})
-
-    def do_POST(self) -> None:  # noqa: N802 — required name for the runtime
-        self._handle()
-
-    def do_GET(self) -> None:  # noqa: N802 — allow manual smoke tests
-        self._handle()
+    def log_message(self, *args):
+        pass
