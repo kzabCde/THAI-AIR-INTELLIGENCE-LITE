@@ -3,6 +3,7 @@ import { fail, ok } from "@/lib/api-response";
 import {
   runCleanup,
   runHotspotSync,
+  runMlForecast,
   runPm25Sync,
   runRetrainAndForecast,
   runWeatherSync,
@@ -17,6 +18,7 @@ const JOBS = {
   "hotspot-sync": runHotspotSync,
   cleanup: runCleanup,
   retrain: runRetrainAndForecast,
+  "ml-forecast": runMlForecast,
 } as const;
 
 type JobKey = keyof typeof JOBS;

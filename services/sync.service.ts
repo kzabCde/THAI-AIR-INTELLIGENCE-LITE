@@ -128,6 +128,58 @@ export async function runCleanup(): Promise<SyncResult> {
   }
 }
 
+/** Resolve the base URL of the current deployment so the Node cron route can
+ *  invoke the Python ML function on the same host. Vercel injects `VERCEL_URL`
+ *  (host only, no scheme); fall back to an explicit override or localhost. */
+function selfBaseUrl(): string {
+  if (process.env.ML_FORECAST_URL) return process.env.ML_FORECAST_URL.replace(/\/$/, "");
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
+/** ML forecast step → invokes the Vercel Python function `api/ml/forecast.py`,
+ *  which evaluates the distilled XGBoost+LightGBM surrogate from model_registry
+ *  and writes forecast_hourly / forecast_daily. The heavy training itself runs
+ *  offline in Colab (training/train_xgb_lgbm.ipynb); this only triggers inference.
+ *
+ *  Returns 0 records if model_registry has no trained rows yet — run the
+ *  notebook first so feature_importance / coef are present.
+ */
+export async function runMlForecast(): Promise<SyncResult> {
+  const started = Date.now();
+  await markStart("ml_forecast");
+  try {
+    const secret = process.env.ML_SECRET;
+    const res = await fetch(`${selfBaseUrl()}/api/ml/forecast`, {
+      method: "POST",
+      headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+      cache: "no-store",
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      rows?: number;
+      provinces?: number;
+      error?: string;
+      message?: string;
+    };
+    if (!res.ok || body.ok === false) {
+      throw new Error(body.error ?? `ML endpoint returned HTTP ${res.status}`);
+    }
+    const records = body.rows ?? 0;
+    await markDone("ml_forecast", records, Date.now() - started);
+    return {
+      job: "ml_forecast",
+      status: "success",
+      records,
+      message: body.message ?? `${body.provinces ?? 0} provinces`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await markDone("ml_forecast", 0, Date.now() - started, msg);
+    return { job: "ml_forecast", status: "error", records: 0, message: msg };
+  }
+}
+
 /** Model retrain step → delegates to DB `fn_generate_forecast(7)`.
  *  Uses the same model (persist-revert-v2) and writes to model_registry,
  *  keeping the DB as the single source of truth for forecast generation.
