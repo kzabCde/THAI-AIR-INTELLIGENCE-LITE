@@ -15,6 +15,9 @@ const MODEL_LABELS: Record<string, string> = {
   "persist-revert-v2": "Persistence + Mean-Revert (ค่า 7 วันย้อนหลัง)",
   "ewma-diurnal-v1": "EWMA + Diurnal Curve",
   "weighted-ensemble-v1": "Weighted Ensemble (เลิกใช้)",
+  "stacking-v1": "Learned Stacking (persist-revert + ML base model)",
+  "lightgbm-v1": "LightGBM (feature importance weighted)",
+  "xgboost-v1": "XGBoost (feature importance weighted)",
 };
 
 const JOB_LABELS: Record<string, string> = {
@@ -98,6 +101,13 @@ export default async function SystemPage() {
               const avgR2 = avg(rows.map((r) => r.r2));
               const minR2 = rows.reduce<number | null>((m, r) => r.r2 != null && (m == null || r.r2 < m) ? r.r2 : m, null);
               const trainedAt = rows[0]?.trainedAt;
+              // stacking-v1: ดึง params จากแถวแรกที่มี base_model
+              const stackingParams = name === "stacking-v1"
+                ? (rows.find((r) => r.modelParams?.base_model)?.modelParams ?? rows[0]?.modelParams ?? null)
+                : null;
+              const wPersist = stackingParams ? Number(stackingParams.w_persist ?? 0.3) : null;
+              const wMl      = stackingParams ? Number(stackingParams.w_ml      ?? 0.7) : null;
+              const baseModel = stackingParams ? String(stackingParams.base_model ?? "lightgbm-v1") : null;
               return (
                 <div key={name} className="card card-pad space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -136,6 +146,31 @@ export default async function SystemPage() {
                       </p>
                     </div>
                   </div>
+                  {name === "stacking-v1" && (
+                    <div className="border-t border-border/60 pt-3">
+                      <p className="muted text-xs mb-2">Stacking config</p>
+                      <div className="grid grid-cols-3 gap-3 text-center">
+                        <div>
+                          <p className="muted text-xs">Base model</p>
+                          <p className="text-sm font-semibold font-mono">
+                            {baseModel ?? "–"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="muted text-xs">w_persist</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {wPersist != null ? wPersist.toFixed(2) : "–"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="muted text-xs">w_ml</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {wMl != null ? wMl.toFixed(2) : "–"}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
