@@ -157,6 +157,9 @@ export async function runMlForecast(): Promise<SyncResult> {
     });
     const body = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
+      // The Python function (api/ml/forecast.py) reports the row count as
+      // `upserted`; older builds used `rows`. Accept either for compatibility.
+      upserted?: number;
       rows?: number;
       provinces?: number;
       error?: string;
@@ -165,7 +168,7 @@ export async function runMlForecast(): Promise<SyncResult> {
     if (!res.ok || body.ok === false) {
       throw new Error(body.error ?? `ML endpoint returned HTTP ${res.status}`);
     }
-    const records = body.rows ?? 0;
+    const records = body.upserted ?? body.rows ?? 0;
     await markDone("ml_forecast", records, Date.now() - started);
     return {
       job: "ml_forecast",

@@ -27,6 +27,7 @@ const JOB_LABELS: Record<string, string> = {
   daily_cleanup: "ล้างข้อมูลเก่า (รายวัน 01:00)",
   model_retrain: "เทรนโมเดลใหม่ (รายวัน 02:00)",
   forecast_generate: "สร้างพยากรณ์",
+  ml_forecast: "พยากรณ์ ML (Vercel Python)",
 };
 
 const TABLE_LABELS: Record<string, string> = {
