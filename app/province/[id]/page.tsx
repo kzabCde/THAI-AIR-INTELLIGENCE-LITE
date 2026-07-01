@@ -15,7 +15,7 @@ import {
   BarChart2,
 } from "lucide-react";
 import { ISAN_PROVINCES, ZONE_LABELS, getProvince } from "@/lib/isan";
-import { fmtNumber, fmtPm25 } from "@/lib/format";
+import { fmtDateTh, fmtNumber, fmtPm25, isHotspotDataStale } from "@/lib/format";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getProvinceSnapshot } from "@/services/overview.service";
 import { getAirHistory } from "@/services/air-quality.service";
@@ -124,7 +124,19 @@ export default async function ProvinceDetailPage({ params }: { params: Promise<{
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <KpiCard label="ดัชนีคุณภาพอากาศ" value={snapshot.aqi ?? "–"} unit="AQI" icon={<Gauge size={16} />} accent={snapshot.band.color} />
           <KpiCard label="PM10" value={fmtPm25(snapshot.pm10)} unit="µg/m³" icon={<Gauge size={16} />} />
-          <KpiCard label="จุดความร้อน" value={fmtNumber(snapshot.hotspotCount)} unit="จุด" icon={<Flame size={16} />} hint="ดาวเทียม FIRMS" />
+          <KpiCard
+            label="จุดความร้อน"
+            value={fmtNumber(snapshot.hotspotCount)}
+            unit="จุด"
+            icon={<Flame size={16} />}
+            hint={
+              snapshot.hotspotDate
+                ? isHotspotDataStale(snapshot.hotspotDate)
+                  ? `ไม่พบข้อมูลใหม่ตั้งแต่ ${fmtDateTh(snapshot.hotspotDate)}`
+                  : `ดาวเทียม FIRMS · ${fmtDateTh(snapshot.hotspotDate)}`
+                : "ไม่มีข้อมูลจากดาวเทียม FIRMS"
+            }
+          />
         </div>
       </div>
 
