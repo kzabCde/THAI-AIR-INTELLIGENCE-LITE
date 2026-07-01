@@ -29,6 +29,7 @@ export async function getRegionOverview(): Promise<RegionOverview> {
   const yesterday = yesterdayResult.status === "fulfilled" ? yesterdayResult.value : new Map();
 
   let observedAt: string | null = null;
+  let hotspotDate: string | null = null;
   const snapshots: ProvinceSnapshot[] = ISAN_PROVINCES.map((province) => {
     const a = air.get(province.id);
     const w = weather.get(province.id);
@@ -37,6 +38,7 @@ export async function getRegionOverview(): Promise<RegionOverview> {
     const aqi = a?.aqi ?? (pm25 != null ? pm25ToAqi(pm25) : null);
     const prev = yesterday.get(province.id);
     if (a?.observed_at && (!observedAt || a.observed_at > observedAt)) observedAt = a.observed_at;
+    if (h?.date && (!hotspotDate || h.date > hotspotDate)) hotspotDate = h.date;
 
     return {
       province,
@@ -51,6 +53,7 @@ export async function getRegionOverview(): Promise<RegionOverview> {
       windSpeed: w?.wind_speed ?? null,
       precipitation: w?.precipitation ?? null,
       hotspotCount: h?.hotspot_count ?? 0,
+      hotspotDate: h?.date ?? null,
       pm25Delta: pm25 != null && prev != null ? +(pm25 - prev).toFixed(1) : null,
     };
   });
@@ -74,6 +77,7 @@ export async function getRegionOverview(): Promise<RegionOverview> {
     worst: sorted[0] ?? null,
     best: sorted[sorted.length - 1] ?? null,
     totalHotspots: snapshots.reduce((a, s) => a + s.hotspotCount, 0),
+    hotspotDate,
     levelCounts,
     snapshots,
   };
@@ -105,6 +109,7 @@ export async function getProvinceSnapshot(provinceId: string): Promise<ProvinceS
     windSpeed: w?.wind_speed ?? null,
     precipitation: w?.precipitation ?? null,
     hotspotCount: hotspot.get(province.id)?.hotspot_count ?? 0,
+    hotspotDate: hotspot.get(province.id)?.date ?? null,
     pm25Delta: pm25 != null && prev != null ? +(pm25 - prev).toFixed(1) : null,
   };
 }

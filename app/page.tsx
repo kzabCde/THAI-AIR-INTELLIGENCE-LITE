@@ -1,7 +1,7 @@
 import { Activity, Flame, Gauge, MapPin, Wind } from "lucide-react";
 import { ZONE_LABELS } from "@/lib/isan";
 import { AQI_BANDS } from "@/lib/aqi";
-import { fmtNumber, fmtPm25 } from "@/lib/format";
+import { fmtDateTh, fmtNumber, fmtPm25, isHotspotDataStale } from "@/lib/format";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getRegionOverview } from "@/services/overview.service";
@@ -87,7 +87,13 @@ export default async function OverviewPage() {
           value={fmtNumber(overview.totalHotspots)}
           unit="จุด"
           icon={<Flame size={16} />}
-          hint="จากดาวเทียม FIRMS (ล่าสุด)"
+          hint={
+            overview.hotspotDate
+              ? isHotspotDataStale(overview.hotspotDate)
+                ? `ไม่พบข้อมูลใหม่ตั้งแต่ ${fmtDateTh(overview.hotspotDate)}`
+                : `จากดาวเทียม FIRMS · ${fmtDateTh(overview.hotspotDate)}`
+              : "ไม่มีข้อมูลจากดาวเทียม FIRMS"
+          }
         />
       </div>
 

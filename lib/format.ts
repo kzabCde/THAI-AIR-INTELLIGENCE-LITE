@@ -50,6 +50,13 @@ export function fmtRelativeTh(iso: string | null | undefined, now: number = Date
   return `${day} วันที่แล้ว`;
 }
 
+/** FIRMS hotspot data lands ~1 day behind; flag anything older as stale so
+ *  hotspot KPIs don't imply live detection when the feed has gone quiet. */
+export function isHotspotDataStale(dateIso: string): boolean {
+  const ageDays = (Date.now() - new Date(dateIso).getTime()) / 86_400_000;
+  return ageDays > 2;
+}
+
 export function trendArrow(delta: number): "up" | "down" | "flat" {
   if (delta > 0.5) return "up";
   if (delta < -0.5) return "down";

@@ -15,6 +15,9 @@ export type ProvinceSnapshot = {
   windSpeed: number | null;
   precipitation: number | null;
   hotspotCount: number;
+  /** `date` of the most recent hotspot record used for `hotspotCount` above —
+   *  may lag well behind `observedAt` when fire detection has gone quiet. */
+  hotspotDate: string | null;
   /** PM2.5 change vs. previous day mean (µg/m³). */
   pm25Delta: number | null;
 };
@@ -27,6 +30,9 @@ export type RegionOverview = {
   worst: ProvinceSnapshot | null;
   best: ProvinceSnapshot | null;
   totalHotspots: number;
+  /** Most recent `date` across all hotspot records used above — may lag `observedAt`
+   *  by days if satellite fire detection has gone quiet (e.g. off-season). */
+  hotspotDate: string | null;
   /** Count of provinces in each AQI level (0–5). */
   levelCounts: number[];
   snapshots: ProvinceSnapshot[];
