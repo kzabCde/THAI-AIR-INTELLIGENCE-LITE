@@ -12,9 +12,9 @@ GET  /api/ml/forecast  — health check
 Query pattern (ทั้งหมด 3 queries ต่อ request):
   Q1: model_registry WHERE is_active=true          → active model per province
   Q2: model_registry WHERE model_name IN (base)    → base model feature_importance
-  Q3: daily_summary 14 วันล่าสุด รายจังหวัด       → features สำหรับ inference
+  Q3: daily_summary 14 วันล่าสุด ทุกจังหวัดใน query เดียว → features สำหรับ inference
 
-ไม่มี xgboost/lightgbm ใน runtime → รันใน Hobby plan ≤ 10 วิ
+ไม่มี xgboost/lightgbm ใน runtime → cold start เร็ว จบใน maxDuration ของ Vercel
 """
 
 import json
@@ -118,28 +118,31 @@ def load_base_models(sb: Client, base_names: set) -> dict:
 def load_recent_features(sb: Client) -> dict:
     """
     return: { province_id: [rows sorted by date asc] }
+
+    Query เดียวครอบทุกจังหวัด (20 จังหวัด × ≤15 วัน ≈ 300 แถว) —
+    การ query แยกรายจังหวัดทำให้ cold start เกิน 10 วิ และโดน 504.
     """
     cutoff = (date.today() - timedelta(days=14)).isoformat()
-    by_province: dict = {}
 
-    for pid in PROVINCE_IDS:
-        resp = sb.table("daily_summary") \
-            .select(
-                "province_id,date,pm25_mean,"
-                "pm25_lag_1d,pm25_lag_3d,pm25_lag_7d,pm25_roll7,"
-                "neighbor_pm25_avg,regional_pm25_avg,"
-                "temp_mean,humidity_mean,wind_speed_mean,precip_total,"
-                "hotspot_count,total_frp,month,day_of_week,"
-                "is_burning_season,is_dry_season"
-            ) \
-            .eq("province_id", pid) \
-            .gte("date", cutoff) \
-            .order("date") \
-            .limit(20) \
-            .execute()
-        rows = resp.data or []
-        if rows:
-            by_province[pid] = rows
+    resp = sb.table("daily_summary") \
+        .select(
+            "province_id,date,pm25_mean,"
+            "pm25_lag_1d,pm25_lag_3d,pm25_lag_7d,pm25_roll7,"
+            "neighbor_pm25_avg,regional_pm25_avg,"
+            "temp_mean,humidity_mean,wind_speed_mean,precip_total,"
+            "hotspot_count,total_frp,month,day_of_week,"
+            "is_burning_season,is_dry_season"
+        ) \
+        .in_("province_id", PROVINCE_IDS) \
+        .gte("date", cutoff) \
+        .order("province_id") \
+        .order("date") \
+        .limit(20 * len(PROVINCE_IDS)) \
+        .execute()
+
+    by_province: dict = {}
+    for row in (resp.data or []):
+        by_province.setdefault(row["province_id"], []).append(row)
 
     return by_province
 

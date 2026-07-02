@@ -1,5 +1,4 @@
 import { Activity, Flame, Gauge, MapPin, Wind } from "lucide-react";
-import { ZONE_LABELS } from "@/lib/isan";
 import { AQI_BANDS } from "@/lib/aqi";
 import { fmtDateTh, fmtNumber, fmtPm25, isHotspotDataStale } from "@/lib/format";
 import { isNetworkRestrictedError } from "@/services/_db";

@@ -1,6 +1,5 @@
 // Auto-generated from the live Supabase project (Isan Air Quality).
 // Regenerate with: supabase gen types typescript --project-id <ref>
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 export type Json =
   | string
