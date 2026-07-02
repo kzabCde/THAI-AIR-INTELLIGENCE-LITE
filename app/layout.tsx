@@ -6,7 +6,20 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { themeInitScript } from "@/components/theme/theme-toggle";
 import { AppProviders } from "@/components/providers/app-providers";
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
+  openGraph: {
+    type: "website",
+    locale: "th_TH",
+    siteName: "Isan Air Intelligence",
+    title: "Isan Air Intelligence — คุณภาพอากาศภาคอีสาน",
+    description:
+      "ติดตาม PM2.5 / AQI แบบเรียลไทม์ 20 จังหวัดภาคอีสาน พร้อมพยากรณ์ 7 วันและวิเคราะห์ย้อนหลัง",
+  },
   title: {
     default: "Isan Air Intelligence — คุณภาพอากาศภาคอีสาน",
     template: "%s · Isan Air Intelligence",

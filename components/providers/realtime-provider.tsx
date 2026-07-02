@@ -75,7 +75,6 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(channel);
     };
     // autoRefresh intentionally read via getState to avoid re-subscribing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryClient, router, setStatus, markEvent]);
 
   useEffect(() => {

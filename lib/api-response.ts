@@ -13,7 +13,7 @@ export function fail(message: string, status = 500): NextResponse {
 }
 
 /** Wrap a route handler with uniform error handling. */
-export async function handle<T>(fn: () => Promise<NextResponse>): Promise<NextResponse> {
+export async function handle(fn: () => Promise<NextResponse>): Promise<NextResponse> {
   try {
     return await fn();
   } catch (e) {
