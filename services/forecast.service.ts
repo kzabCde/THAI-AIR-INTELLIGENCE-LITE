@@ -115,7 +115,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
 
   // Both tables are queried independently — sorted by forecast_at DESC so the
   // latest model batch always wins, regardless of what model_name it carries.
-  const [{ data: hourly }, { data: daily }] = await Promise.all([
+  const [{ data: hourlyRaw }, { data: dailyRaw }] = await Promise.all([
     sb
       .from("forecast_hourly")
       .select("target_time, pm25_forecast, forecast_at, model_name")
@@ -125,16 +125,25 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       .limit(FORECAST_HORIZON_HOURS),
     sb
       .from("forecast_daily")
-      .select("target_date, pm25_mean_forecast, pm25_max_forecast, model_name")
+      .select("target_date, pm25_mean_forecast, pm25_max_forecast, forecast_at, model_name")
       .eq("province_id", provinceId)
       .order("forecast_at", { ascending: false })
       .order("target_date", { ascending: true })
       .limit(FORECAST_HORIZON_DAYS),
   ]);
 
-  if (!hourly?.length) return null;
+  if (!hourlyRaw?.length) return null;
+  // Keep only the newest batch from each table so a short latest batch
+  // never gets padded with rows (and model names) from older batches.
+  const hourly = hourlyRaw.filter((r) => r.forecast_at === hourlyRaw[0].forecast_at);
+  const daily = (dailyRaw ?? []).filter((r) => r.forecast_at === dailyRaw?.[0]?.forecast_at);
+
   const forecastAt = hourly[0].forecast_at;
-  const modelName = hourly[0].model_name;
+  // The ML pipeline writes each province's active model (from model_registry)
+  // to forecast_daily only; forecast_hourly is filled by the persist-revert
+  // SQL fallback. The daily batch therefore carries the real model name —
+  // prefer it, and fall back to the hourly batch's name if daily is missing.
+  const modelName = daily[0]?.model_name ?? hourly[0].model_name;
   const start = new Date(forecastAt).getTime();
   const hPoints: ForecastPoint[] = hourly.map((r) => {
     const dt = new Date(r.target_time).getTime();
@@ -145,7 +154,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       confidence: +Math.max(0.35, 0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
     };
   });
-  const dPoints: ForecastPoint[] = (daily ?? []).map((r, i) => ({
+  const dPoints: ForecastPoint[] = daily.map((r, i) => ({
     t: r.target_date,
     pm25: r.pm25_mean_forecast,
     pm25Max: r.pm25_max_forecast ?? undefined,
