@@ -42,3 +42,6 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 .pytest_cache/
+
+# generated ML artifacts (manifests and native teacher models)
+/training/artifacts/

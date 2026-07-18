@@ -48,7 +48,7 @@ export async function getModelMetrics(): Promise<ModelMetric[]> {
   if (!isSupabaseConfigured) return [];
   const { data, error } = await getSupabase()
     .from("model_registry")
-    .select("run_id, model_name, province_id, trained_at, training_rows, mae, rmse, r2, is_active, model_params, data_cutoff, train_start, train_end, test_start, test_end, source")
+    .select("model_name, province_id, trained_at, training_rows, mae, rmse, r2, is_active, model_params")
     .eq("is_active", true)
     .order("model_name", { ascending: true })
     .order("province_id", { ascending: true });
@@ -77,7 +77,9 @@ export async function getDataFreshness(): Promise<DataFreshness[]> {
   ): Promise<DataFreshness> {
     const [{ data: latest }, { count }] = await Promise.all([
       sb.from(table).select(timeCol).order(timeCol, { ascending: false }).limit(1).maybeSingle(),
-      sb.from(table).select("*", { count: "exact", head: true }),
+      // Operational status only needs an approximate row count. Estimated
+      // counts avoid full scans of the 250k+ hourly tables on every page load.
+      sb.from(table).select("*", { count: "estimated", head: true }),
     ]);
     const value = latest ? (latest as unknown as Record<string, string>)[timeCol] : null;
     return { table, latest: value ?? null, rowCount: count ?? null };

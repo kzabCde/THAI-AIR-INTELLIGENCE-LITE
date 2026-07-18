@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 function pm25ToAqi(pm25) {
@@ -20,3 +21,23 @@ test('ml secret fails closed in production when missing', () => assert.equal(aut
 test('PM2.5 to AQI uses EPA breakpoints', () => { assert.equal(pm25ToAqi(12), 50); assert.equal(pm25ToAqi(35.4), 100); assert.equal(pm25ToAqi(250.4), 300); });
 test('horizon validation bounds requests', () => { assert.equal(parseHorizon('7'), 7); assert.throws(() => parseHorizon('30')); assert.throws(() => parseHorizon('1.5')); });
 test('observed data is separable from synthetic data', () => { const rows=[{id:1,source:'observed'},{id:2,source:'synthetic'},{id:3}]; assert.deepEqual(sourceFilter(rows).map(r=>r.id), [1,3]); });
+
+test('public dashboard reads do not require the service-role client', () => {
+  for (const path of ['services/air-quality.service.ts', 'services/weather.service.ts']) {
+    const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+    assert.match(source, /getSupabase\(\)/);
+    assert.doesNotMatch(source, /getServiceSupabase\(\)/);
+  }
+  const dbSource = readFileSync(new URL('../services/_db.ts', import.meta.url), 'utf8');
+  const latestObserved = dbSource.slice(dbSource.indexOf('getLatestObservedAt'));
+  assert.match(latestObserved, /getSupabase\(\)/);
+  assert.doesNotMatch(latestObserved, /getServiceSupabase\(\)/);
+});
+
+test('forecast runtime remains compatible with active v1 models during v2 migration', () => {
+  const source = readFileSync(new URL('../api/ml/forecast.py', import.meta.url), 'utf8');
+  for (const model of ['stacking-v1', 'lightgbm-v1', 'xgboost-v1', 'stacking-v2']) {
+    assert.ok(source.includes(model), `missing runtime support for ${model}`);
+  }
+  assert.match(source, /prediction \* 1\.35/);
+});
