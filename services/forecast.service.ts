@@ -132,34 +132,41 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       .limit(FORECAST_HORIZON_DAYS),
   ]);
 
-  if (!hourlyRaw?.length) return null;
-  // Keep only the newest batch from each table so a short latest batch
-  // never gets padded with rows (and model names) from older batches.
-  const hourly = hourlyRaw.filter((r) => r.forecast_at === hourlyRaw[0].forecast_at);
+  // forecast_daily is the source of truth for the ML pipeline. Pick exactly
+  // one newest daily batch and only use hourly rows from that same forecast_at;
+  // never pad a short latest batch with rows from older forecast_at values.
   const daily = (dailyRaw ?? []).filter((r) => r.forecast_at === dailyRaw?.[0]?.forecast_at);
+  if (!daily.length && !hourlyRaw?.length) return null;
 
-  const forecastAt = hourly[0].forecast_at;
-  // The ML pipeline writes each province's active model (from model_registry)
-  // to forecast_daily only; forecast_hourly is filled by the persist-revert
-  // SQL fallback. The daily batch therefore carries the real model name —
-  // prefer it, and fall back to the hourly batch's name if daily is missing.
-  const modelName = daily[0]?.model_name ?? hourly[0].model_name;
+  const forecastAt = daily[0]?.forecast_at ?? hourlyRaw![0].forecast_at;
+  const hourly = (hourlyRaw ?? []).filter((r) => r.forecast_at === forecastAt);
+  const modelName = daily[0]?.model_name ?? hourly[0]?.model_name ?? FORECAST_MODEL;
   const start = new Date(forecastAt).getTime();
-  const hPoints: ForecastPoint[] = hourly.map((r) => {
-    const dt = new Date(r.target_time).getTime();
-    const hAhead = Math.max(1, (dt - start) / 3600_000);
-    return {
-      t: r.target_time,
-      pm25: r.pm25_forecast,
-      confidence: +Math.max(0.35, 0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
-    };
-  });
   const dPoints: ForecastPoint[] = daily.map((r, i) => ({
     t: r.target_date,
     pm25: r.pm25_mean_forecast,
     pm25Max: r.pm25_max_forecast ?? undefined,
     confidence: +Math.max(0.4, 0.92 - (i + 1) * 0.07).toFixed(2),
   }));
+  const hPoints: ForecastPoint[] = hourly.length
+    ? hourly.map((r) => {
+        const dt = new Date(r.target_time).getTime();
+        const hAhead = Math.max(1, (dt - start) / 3600_000);
+        return {
+          t: r.target_time,
+          pm25: r.pm25_forecast,
+          confidence: +Math.max(0.35, 0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
+        };
+      })
+    : dPoints.flatMap((d, dayIndex) => Array.from({ length: 24 }, (_, hourIndex) => {
+        const hAhead = dayIndex * 24 + hourIndex + 1;
+        const target = new Date(start + hAhead * 3600_000);
+        return {
+          t: target.toISOString(),
+          pm25: +Math.max(1, d.pm25 * diurnal(target.getUTCHours())).toFixed(1),
+          confidence: +Math.max(0.35, 0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
+        };
+      }));
 
   const current = hPoints[0]?.pm25 ?? null;
   const last = dPoints[dPoints.length - 1]?.pm25 ?? current ?? 0;
