@@ -1,0 +1,93 @@
+name: Open-Meteo Historical Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run without writes first, or execute the production backfill
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - backfill
+      days:
+        description: Inclusive number of days ending yesterday in Asia/Bangkok
+        required: true
+        default: "365"
+        type: string
+      minimum_training_rows:
+        description: Fail if any province has fewer training-view rows
+        required: true
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: open-meteo-historical-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: ${{ inputs.mode }} (${{ inputs.days }} days)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+
+      - name: Install backfill dependencies
+        run: python -m pip install --requirement training/requirements.txt
+
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_URL" || { echo "::error::Missing SUPABASE_URL GitHub secret"; exit 1; }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY GitHub secret"; exit 1; }
+          [[ "${{ inputs.days }}" =~ ^[0-9]+$ ]] || { echo "::error::days must be an integer"; exit 1; }
+          [[ "${{ inputs.minimum_training_rows }}" =~ ^[0-9]+$ ]] || { echo "::error::minimum_training_rows must be an integer"; exit 1; }
+
+      - name: Run Open-Meteo backfill
+        shell: bash
+        env:
+          RUN_MODE: ${{ inputs.mode }}
+          BACKFILL_DAYS: ${{ inputs.days }}
+          MINIMUM_TRAINING_ROWS: ${{ inputs.minimum_training_rows }}
+        run: |
+          set -euo pipefail
+          args=(
+            --days "$BACKFILL_DAYS"
+            --minimum-training-rows "$MINIMUM_TRAINING_ROWS"
+          )
+          if [[ "$RUN_MODE" == "dry-run" ]]; then
+            args+=(--dry-run)
+          fi
+          python -u training/backfill_open_meteo.py "${args[@]}"
+
+      - name: Write run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Open-Meteo historical backfill"
+            echo
+            echo "- Mode: \`${{ inputs.mode }}\`"
+            echo "- Days: \`${{ inputs.days }}\`"
+            echo "- Minimum training rows: \`${{ inputs.minimum_training_rows }}\`"
+            echo "- Source lineage: \`open-meteo\`"
+            echo "- ML_SECRET used: \`no\`"
+          } >> "$GITHUB_STEP_SUMMARY"
