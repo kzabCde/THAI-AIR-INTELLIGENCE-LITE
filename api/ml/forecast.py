@@ -17,6 +17,7 @@ Query pattern (ทั้งหมด 3 queries ต่อ request):
 ไม่มี xgboost/lightgbm ใน runtime → cold start เร็ว จบใน maxDuration ของ Vercel
 """
 
+import hmac
 import json
 import os
 from datetime import date, timedelta, timezone, datetime
@@ -51,11 +52,31 @@ BASE_ML_MODELS  = {"lightgbm-v1", "xgboost-v1"}
 
 
 # ── Auth ──────────────────────────────────────────────────────────────
+def _is_production() -> bool:
+    return os.environ.get("NODE_ENV") == "production" or os.environ.get("VERCEL_ENV") == "production"
+
+
 def _authorized(headers: dict) -> bool:
     if not ML_SECRET:
-        return True
+        return not _is_production()
     auth = headers.get("Authorization") or headers.get("authorization", "")
-    return auth == f"Bearer {ML_SECRET}"
+    if not auth.lower().startswith("bearer "):
+        return False
+    token = auth.split(" ", 1)[1]
+    return hmac.compare_digest(token, ML_SECRET)
+
+
+def _parse_horizon(body: dict) -> int:
+    raw = body.get("horizon", 7)
+    if isinstance(raw, bool):
+        raise ValueError("horizon must be an integer between 1 and 14")
+    try:
+        horizon = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError("horizon must be an integer between 1 and 14")
+    if horizon < 1 or horizon > 14 or str(raw).strip() != str(horizon):
+        raise ValueError("horizon must be an integer between 1 and 14")
+    return horizon
 
 
 def get_client() -> Client:
@@ -316,14 +337,25 @@ class handler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self):
+        if _is_production() and not ML_SECRET:
+            return self._send(503, {"error": "ML_SECRET is required in production"})
         if not _authorized(dict(self.headers)):
             return self._send(401, {"error": "Unauthorized"})
         if not SUPABASE_URL or not SUPABASE_KEY:
             return self._send(500, {"error": "Supabase env vars not set"})
 
-        length  = int(self.headers.get("Content-Length", 0))
-        body    = json.loads(self.rfile.read(length)) if length else {}
-        horizon = int(body.get("horizon", 7))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length > 4096:
+                return self._send(413, {"error": "Request body too large"})
+            body = json.loads(self.rfile.read(length)) if length else {}
+            if not isinstance(body, dict):
+                return self._send(400, {"error": "JSON body must be an object"})
+            horizon = _parse_horizon(body)
+        except json.JSONDecodeError:
+            return self._send(400, {"error": "Invalid JSON body"})
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
 
         sb   = get_client()
         rows = make_forecasts(sb, horizon)
