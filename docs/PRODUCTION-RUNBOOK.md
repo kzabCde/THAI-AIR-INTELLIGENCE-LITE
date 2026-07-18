@@ -23,3 +23,29 @@
 ## Data freshness
 
 Use Asia/Bangkok for business-day reporting and UTC for stored timestamps. Alert when latest observed PM2.5 or weather rows fall behind the expected hourly cadence.
+
+## Open-Meteo historical backfill
+
+`training/backfill_open_meteo.py` retrieves 365 inclusive days ending yesterday
+in Asia/Bangkok for all 20 Isan provinces. It upserts hourly air quality and
+weather rows with source `open-meteo`, then calls `fn_build_daily_summary` one
+date at a time in chronological order. It does not use `ML_SECRET`.
+
+```bash
+pip install -r training/requirements.txt
+export SUPABASE_URL="https://<project-ref>.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="<server-side secret>"
+
+python training/backfill_open_meteo.py --dry-run
+python training/backfill_open_meteo.py
+```
+
+Use `--start-date YYYY-MM-DD --end-date YYYY-MM-DD` for an explicit inclusive
+range. The operation is idempotent because hourly rows are upserted on
+`province_id,observed_at,source`. A successful non-dry run also verifies
+`training_daily_summary_v2`; it exits with status 2 if any province has fewer
+than `--minimum-training-rows` rows (default 180).
+
+Open-Meteo air-quality history is CAMS model-derived data, and historical
+weather is reanalysis/model data. Do not describe either source as a ground
+monitoring-station observation.
