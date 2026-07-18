@@ -1,14 +1,14 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { cachedMapQuery, getLatestObservedAt, getServiceSupabase, isSupabaseConfigured } from "./_db";
+import { cachedMapQuery, getLatestObservedAt, getSupabase, isSupabaseConfigured } from "./_db";
 import type { TimePoint } from "./types";
 
 export type WeatherRow = Tables<"weather_hourly">;
 
 export async function getLatestWeather(provinceId: string): Promise<WeatherRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await getServiceSupabase()
+  const { data, error } = await getSupabase()
     .from("weather_latest")
     .select("*")
     .eq("province_id", provinceId)
@@ -22,7 +22,7 @@ export const getLatestWeatherByProvince = cachedMapQuery(
   async (): Promise<Map<string, WeatherRow>> => {
     const result = new Map<string, WeatherRow>();
     if (!isSupabaseConfigured) return result;
-    const { data, error } = await getServiceSupabase()
+    const { data, error } = await getSupabase()
       .from("weather_latest")
       .select("*");
     if (error) throw error;
@@ -39,7 +39,7 @@ export async function getWeatherHistory(provinceId: string, hours: number): Prom
   const latest = await getLatestObservedAt();
   if (!latest) return [];
   const since = new Date(new Date(latest).getTime() - hours * 3600_000).toISOString();
-  const { data, error } = await getServiceSupabase()
+  const { data, error } = await getSupabase()
     .from("weather_hourly")
     .select("observed_at, temperature, humidity, wind_speed, wind_direction, pressure, precipitation, cloud_cover, visibility")
     .eq("province_id", provinceId)

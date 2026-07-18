@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getServiceSupabase, isSupabaseConfigured, resetClients } from "@/lib/supabase/server";
+import { getSupabase, isSupabaseConfigured, resetClients } from "@/lib/supabase/server";
 
 export { getSupabase, getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
 
@@ -85,13 +85,12 @@ export function cachedMapQuery<K, V>(
   return async () => new Map(await cached());
 }
 
-/** Resolve the most recent hourly timestamp present in the dataset.
- *  Uses service-role because air_quality_hourly is an internal table (RLS USING(false) for anon). */
+/** Resolve the most recent hourly timestamp present in the public read dataset. */
 export const getLatestObservedAt = cachedQuery(
   ["latest-observed-at"],
   async (): Promise<string | null> => {
     if (!isSupabaseConfigured) return null;
-    const { data, error } = await getServiceSupabase()
+    const { data, error } = await getSupabase()
       .from("air_quality_hourly")
       .select("observed_at")
       .order("observed_at", { ascending: false })

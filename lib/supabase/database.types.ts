@@ -247,16 +247,16 @@ export type Database = {
       model_registry: {
         Row: {
           id: number;
-          run_id: string;
           model_name: string;
           province_id: string;
-          trained_at: string;
+          run_id: string;
           data_cutoff: string | null;
           train_start: string | null;
           train_end: string | null;
           test_start: string | null;
           test_end: string | null;
           source: string | null;
+          trained_at: string;
           training_rows: number | null;
           mae: number | null;
           rmse: number | null;
@@ -267,16 +267,16 @@ export type Database = {
         };
         Insert: {
           id?: number;
-          run_id?: string;
           model_name: string;
           province_id: string;
-          trained_at?: string;
+          run_id?: string;
           data_cutoff?: string | null;
           train_start?: string | null;
           train_end?: string | null;
           test_start?: string | null;
           test_end?: string | null;
           source?: string | null;
+          trained_at?: string;
           training_rows?: number | null;
           mae?: number | null;
           rmse?: number | null;
@@ -360,8 +360,13 @@ export type Database = {
     };
     Functions: {
       aqi_category: { Args: { aqi: number }; Returns: string };
+      fn_activate_model: {
+        Args: { p_province_id: string; p_model_name: string; p_run_id?: string | null };
+        Returns: Json;
+      };
       fn_cleanup_old_data: { Args: Record<string, never>; Returns: Json };
       fn_generate_forecast: { Args: { p_horizon?: number }; Returns: number };
+      fn_upsert_model_registry: { Args: { rows: Json }; Returns: Json };
       pm25_to_aqi: { Args: { pm25: number }; Returns: number };
     };
     Enums: { [_ in never]: never };

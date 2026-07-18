@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { cachedMapQuery, getLatestObservedAt, getServiceSupabase, isSupabaseConfigured } from "./_db";
+import { cachedMapQuery, getLatestObservedAt, getSupabase, isSupabaseConfigured } from "./_db";
 import type { TimePoint } from "./types";
 
 export type AirRow = Tables<"air_quality_hourly">;
@@ -9,7 +9,7 @@ export type AirRow = Tables<"air_quality_hourly">;
 /** Most recent PM2.5 reading for a single province (via air_quality_latest view). */
 export async function getLatestAir(provinceId: string): Promise<AirRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await getServiceSupabase()
+  const { data, error } = await getSupabase()
     .from("air_quality_latest")
     .select("*")
     .eq("province_id", provinceId)
@@ -24,7 +24,7 @@ export const getLatestAirByProvince = cachedMapQuery(
   async (): Promise<Map<string, AirRow>> => {
     const result = new Map<string, AirRow>();
     if (!isSupabaseConfigured) return result;
-    const { data, error } = await getServiceSupabase()
+    const { data, error } = await getSupabase()
       .from("air_quality_latest")
       .select("*");
     if (error) throw error;
@@ -42,7 +42,7 @@ export async function getAirHistory(provinceId: string, hours: number): Promise<
   const latest = await getLatestObservedAt();
   if (!latest) return [];
   const since = new Date(new Date(latest).getTime() - hours * 3600_000).toISOString();
-  const { data, error } = await getServiceSupabase()
+  const { data, error } = await getSupabase()
     .from("air_quality_hourly")
     .select("observed_at, pm25, pm10, aqi")
     .eq("province_id", provinceId)
