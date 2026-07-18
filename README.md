@@ -134,12 +134,18 @@ Backfill (one-time) → Incremental sync → Forecast generation → Dashboard r
 
 This repository is configured for Northeast/Isan Air Intelligence. Public dashboard reads should use anon/publishable credentials with RLS and read-only grants; cron, backfill, model forecast writes, and operational logging require `SUPABASE_SERVICE_ROLE_KEY` and must not fall back to anon credentials.
 
-Required production environment variables:
+Required production environment variables are configured in the deployment platform (Vercel → Project → Settings → Environment Variables) and copied to local development in an untracked `.env.local` file. Do not commit real values.
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
+Public/read variables for displaying real Supabase data:
+
+- `NEXT_PUBLIC_SUPABASE_URL` — the project URL, for example `https://qtcptorlmteydcslveqm.supabase.co`.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — browser-safe anon JWT for Realtime/browser clients. It is public by design, but must rely on RLS/read-only grants.
+- `SUPABASE_ANON_KEY` — server-side anon JWT used by API/server reads; keep this non-`NEXT_PUBLIC` when possible.
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — optional newer publishable key fallback for browser clients.
+
+Private/write and job variables for production only:
+
+- `SUPABASE_SERVICE_ROLE_KEY` — required for cron/backfill/model writes; never expose with `NEXT_PUBLIC_`.
 - `CRON_SECRET`
 - `ML_SECRET`
 
