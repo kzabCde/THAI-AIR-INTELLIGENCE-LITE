@@ -247,9 +247,16 @@ export type Database = {
       model_registry: {
         Row: {
           id: number;
+          run_id: string;
           model_name: string;
           province_id: string;
           trained_at: string;
+          data_cutoff: string | null;
+          train_start: string | null;
+          train_end: string | null;
+          test_start: string | null;
+          test_end: string | null;
+          source: string | null;
           training_rows: number | null;
           mae: number | null;
           rmse: number | null;
@@ -260,9 +267,16 @@ export type Database = {
         };
         Insert: {
           id?: number;
+          run_id?: string;
           model_name: string;
           province_id: string;
           trained_at?: string;
+          data_cutoff?: string | null;
+          train_start?: string | null;
+          train_end?: string | null;
+          test_start?: string | null;
+          test_end?: string | null;
+          source?: string | null;
           training_rows?: number | null;
           mae?: number | null;
           rmse?: number | null;

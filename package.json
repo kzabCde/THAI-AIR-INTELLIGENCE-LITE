@@ -12,7 +12,8 @@
     "ci": "npm ci && npm run lint && npm run typecheck && npm test && npm run build",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "audit:all": "npm audit --audit-level=high",
-    "pycompile": "python3 -m compileall -q api services training"
+    "pycompile": "python3 -m compileall -q api services training",
+    "test:py": "python3 -m pytest tests_py -q"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",

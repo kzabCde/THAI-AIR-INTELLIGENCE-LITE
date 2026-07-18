@@ -48,7 +48,7 @@ export async function getModelMetrics(): Promise<ModelMetric[]> {
   if (!isSupabaseConfigured) return [];
   const { data, error } = await getSupabase()
     .from("model_registry")
-    .select("model_name, province_id, trained_at, training_rows, mae, rmse, r2, is_active, model_params")
+    .select("run_id, model_name, province_id, trained_at, training_rows, mae, rmse, r2, is_active, model_params, data_cutoff, train_start, train_end, test_start, test_end, source")
     .eq("is_active", true)
     .order("model_name", { ascending: true })
     .order("province_id", { ascending: true });

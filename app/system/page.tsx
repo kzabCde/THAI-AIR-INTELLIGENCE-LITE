@@ -17,7 +17,8 @@ const MODEL_LABELS: Record<string, string> = {
   "weighted-ensemble-v1": "Weighted Ensemble (เลิกใช้)",
   "stacking-v1": "Learned Stacking (persist-revert + ML base model)",
   "lightgbm-v1": "LightGBM (feature importance weighted)",
-  "xgboost-v1": "XGBoost (feature importance weighted)",
+  "xgboost-v1": "XGBoost (legacy)",
+  "xgb-lgbm-pm25-nextday-v2": "XGBoost/LightGBM distilled Ridge surrogate",
 };
 
 const JOB_LABELS: Record<string, string> = {
