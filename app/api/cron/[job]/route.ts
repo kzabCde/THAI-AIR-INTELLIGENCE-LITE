@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
+import { isProduction, verifyBearerSecret } from "@/lib/server-auth";
 import {
   runCleanup,
   runHotspotSync,
@@ -24,21 +25,30 @@ const JOBS = {
 type JobKey = keyof typeof JOBS;
 
 function authorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // no secret configured → allow (dev)
-  const header = req.headers.get("authorization");
-  // Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`.
-  return header === `Bearer ${secret}`;
+  return verifyBearerSecret(req.headers, process.env.CRON_SECRET);
+}
+
+function validateJob(job: string): JobKey | null {
+  if (!/^[a-z0-9-]+$/.test(job)) return null;
+  return job in JOBS ? (job as JobKey) : null;
 }
 
 // POST/GET /api/cron/<job> — invoked by Vercel Cron on a schedule.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ job: string }> }) {
+  if (isProduction() && !process.env.CRON_SECRET) {
+    return fail("CRON_SECRET is required in production", 503);
+  }
   if (!authorized(req)) return fail("Unauthorized", 401);
   const { job } = await ctx.params;
-  const runner = JOBS[job as JobKey];
-  if (!runner) return fail(`Unknown cron job: ${job}`, 404);
-  const result = await runner();
-  return ok(result, 0, 0);
+  const validJob = validateJob(job);
+  if (!validJob) return fail("Unknown cron job", 404);
+  try {
+    const result = await JOBS[validJob]();
+    return ok(result, 0, 0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Cron job failed";
+    return fail(message, 500);
+  }
 }
 
 export const POST = GET;

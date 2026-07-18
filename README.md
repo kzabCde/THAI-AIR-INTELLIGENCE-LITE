@@ -129,3 +129,33 @@ Backfill (one-time) → Incremental sync → Forecast generation → Dashboard r
 ---
 
 © 2026 Isan Air Intelligence — ข้อมูลเชิงสาธิต
+
+## Production cleanup notes
+
+This repository is configured for Northeast/Isan Air Intelligence. Public dashboard reads should use anon/publishable credentials with RLS and read-only grants; cron, backfill, model forecast writes, and operational logging require `SUPABASE_SERVICE_ROLE_KEY` and must not fall back to anon credentials.
+
+Required production environment variables are configured in the deployment platform (Vercel → Project → Settings → Environment Variables) and copied to local development in an untracked `.env.local` file. Do not commit real values.
+
+Public/read variables for displaying real Supabase data:
+
+- `NEXT_PUBLIC_SUPABASE_URL` — the project URL, for example `https://qtcptorlmteydcslveqm.supabase.co`.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — browser-safe anon JWT for Realtime/browser clients. It is public by design, but must rely on RLS/read-only grants.
+- `SUPABASE_ANON_KEY` — server-side anon JWT used by API/server reads; keep this non-`NEXT_PUBLIC` when possible.
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — optional newer publishable key fallback for browser clients.
+
+Private/write and job variables for production only:
+
+- `SUPABASE_SERVICE_ROLE_KEY` — required for cron/backfill/model writes; never expose with `NEXT_PUBLIC_`.
+- `CRON_SECRET`
+- `ML_SECRET`
+
+Optional local/operational variables:
+
+- `ML_FORECAST_URL`
+- `OPEN_METEO_SYNC_URL` and `FIRMS_SYNC_URL` for the version-controlled `daily-sync` Edge Function
+
+Production cron endpoints fail closed: `/api/cron/*` requires `Authorization: Bearer <CRON_SECRET>`, and POST `/api/ml/forecast` requires `Authorization: Bearer <ML_SECRET>`. The repository does not configure automatic Vercel Cron schedules in `vercel.json`; use one scheduler source of truth and document it before enabling production writes.
+
+Synthetic data exists and must remain explicitly separated from observed data. Dashboards, production evaluation, and training should default to observed rows unless a report explicitly labels synthetic-assisted results.
+
+See `docs/PRODUCTION-RUNBOOK.md`, `docs/MODEL-METHODOLOGY.md`, and `docs/RESEARCH-EVIDENCE.md` for deployment, rollback, model, and research guidance.

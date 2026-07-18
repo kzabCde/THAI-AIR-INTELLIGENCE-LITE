@@ -24,6 +24,7 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
  * environment is not wired up yet.
  */
 export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+export const isServiceSupabaseConfigured = Boolean(SUPABASE_URL && SERVICE_ROLE_KEY);
 
 let readClient: IsanClient | null = null;
 let writeClient: IsanClient | null = null;
@@ -62,15 +63,15 @@ export function getSupabase(): IsanClient {
 }
 
 /**
- * Privileged client for cron/write jobs. Falls back to the anon client when no
- * service-role key is present (works while RLS is disabled).
+ * Privileged client for cron/write jobs. Requires the service-role key so write
+ * paths cannot silently fall back to anon permissions.
  */
 export function getServiceSupabase(): IsanClient {
-  if (!isSupabaseConfigured) {
-    throw new Error("Supabase is not configured.");
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    throw new Error("Supabase service role is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   }
   if (!writeClient) {
-    writeClient = createClient<Database>(SUPABASE_URL!, SERVICE_ROLE_KEY || SUPABASE_ANON_KEY!, {
+    writeClient = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
       global: { fetch: fetchWithTimeout },
     });
