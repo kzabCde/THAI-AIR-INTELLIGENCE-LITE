@@ -33,6 +33,7 @@ import {
 } from "@/components/province/province-charts";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
 import { isNetworkRestrictedError } from "@/services/_db";
+import { getModelDisplayName } from "@/lib/model-labels";
 
 export const revalidate = 300;
 
@@ -198,7 +199,7 @@ export default async function ProvinceDetailPage({ params }: { params: Promise<{
             label="แนวโน้ม 7 วัน"
             value={forecast.trend === "up" ? "เพิ่มขึ้น" : forecast.trend === "down" ? "ลดลง" : "คงที่"}
             icon={<TrendIcon size={16} />}
-            hint={`โมเดล ${forecast.model}`}
+            hint={`โมเดล ${getModelDisplayName(forecast.model)}`}
           />
         </div>
       </div>

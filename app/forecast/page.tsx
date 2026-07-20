@@ -12,6 +12,7 @@ import { Section } from "@/components/ui/card";
 import { ForecastCard } from "@/components/province/province-charts";
 import { ProvinceSelect } from "@/components/controls/province-select";
 import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
+import { getModelDisplayName } from "@/lib/model-labels";
 
 export const metadata: Metadata = { title: "พยากรณ์คุณภาพอากาศ" };
 export const revalidate = 300;
@@ -50,7 +51,9 @@ export default async function ForecastPage({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">พยากรณ์ PM2.5</h1>
-          <p className="muted text-sm">ขอบฟ้าพยากรณ์ 168 ชั่วโมง · โมเดล {forecast.model}</p>
+          <p className="muted text-sm">
+            ขอบฟ้าพยากรณ์ 168 ชั่วโมง · โมเดล {getModelDisplayName(forecast.model)}
+          </p>
         </div>
         <ProvinceSelect value={province.id} />
       </div>
