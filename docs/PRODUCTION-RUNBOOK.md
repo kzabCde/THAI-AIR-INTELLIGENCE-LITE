@@ -46,21 +46,6 @@ range. The operation is idempotent because hourly rows are upserted on
 `training_daily_summary_v2`; it exits with status 2 if any province has fewer
 than `--minimum-training-rows` rows (default 180).
 
-### Run from GitHub Actions
-
-After this workflow is merged into the default branch:
-
-1. Add repository or `production` environment secrets named
-   `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
-2. Open **Actions → Open-Meteo Historical Backfill → Run workflow**.
-3. Run once with mode `dry-run`, `days=365`, and
-   `minimum_training_rows=180`.
-4. Review the log, then start a second run with mode `backfill`.
-
-The workflow uses a concurrency lock so two backfills cannot run at the same
-time. The production job has a 120-minute timeout and does not read
-`ML_SECRET`.
-
 Open-Meteo air-quality history is CAMS model-derived data, and historical
 weather is reanalysis/model data. Do not describe either source as a ground
 monitoring-station observation.
