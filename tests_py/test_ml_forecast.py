@@ -2,51 +2,70 @@ import importlib.util
 from datetime import date
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 spec = importlib.util.spec_from_file_location("ml_forecast", Path("api/ml/forecast.py"))
 ml = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ml)
 
 
-def test_standardized_surrogate_uses_scaler_and_coefficients():
-    params = {
-        "feature_order": ml.FEATURE_COLS,
-        "coef": [2.0] + [0.0] * (len(ml.FEATURE_COLS) - 1),
+def surrogate_artifact():
+    size = len(ml.FEATURE_COLS)
+    return {
+        "feature_cols": ml.FEATURE_COLS,
+        "coefficients": [2.0] + [0.0] * (size - 1),
         "intercept": 10.0,
-        "scaler_mean": [5.0] + [0.0] * (len(ml.FEATURE_COLS) - 1),
-        "scaler_scale": [5.0] + [1.0] * (len(ml.FEATURE_COLS) - 1),
-        "residual_p90": 3.5,
+        "scaler_mean": [5.0] + [0.0] * (size - 1),
+        "scaler_scale": [5.0] + [1.0] * (size - 1),
     }
-    pred, p90 = ml.surrogate_forecast(params, [15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1))
-    assert pred == 14.0
-    assert p90 == 3.5
 
 
-def test_persistence_baseline_uses_current_day_pm25_mean():
+def test_standardized_surrogate_uses_scaler_and_coefficients():
+    features = np.asarray([15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1))
+    assert ml.evaluate_surrogate(features, surrogate_artifact()) == 14.0
+
+
+def test_ensemble6_uses_registered_runtime_surrogate():
+    features = np.asarray([15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1))
+    prediction = ml._predict_model(
+        ml.ENSEMBLE6_MODEL,
+        {"surrogate": surrogate_artifact()},
+        features,
+        [10.0, 15.0],
+    )
+    assert prediction == 14.0
+
+
+def test_unknown_model_falls_back_to_persist_revert():
     rolling = [10.0, 20.0, 40.0]
-    assert ml.persist_revert_forecast(rolling, 30.0, 1) == 38.5
+    features = np.zeros(len(ml.FEATURE_COLS))
+    expected = ml.persist_revert_forecast(rolling, h=1)
+    assert ml._predict_model("unknown", {}, features, rolling) == expected
 
 
-def test_duplicate_active_model_loader_keeps_one_latest_per_province():
+def test_duplicate_active_models_are_rejected():
     class Query:
         def select(self, *_args): return self
         def eq(self, *_args): return self
-        def order(self, *_args, **_kwargs): return self
         def execute(self):
             return type("Resp", (), {"data": [
-                {"province_id": "TH-30", "model_name": "new", "trained_at": "2026-01-02", "model_params": {}, "mae": 1},
-                {"province_id": "TH-30", "model_name": "old", "trained_at": "2026-01-01", "model_params": {}, "mae": 2},
+                {"province_id": "TH-30", "model_name": "new", "model_params": {}},
+                {"province_id": "TH-30", "model_name": "old", "model_params": {}},
             ]})()
+
     class SB:
         def table(self, name):
             assert name == "model_registry"
             return Query()
-    active = ml.load_active_models(SB())
-    assert list(active) == ["TH-30"]
-    assert active["TH-30"]["model_name"] == "new"
+
+    with pytest.raises(RuntimeError, match="multiple active models"):
+        ml.load_active_models(SB())
 
 
-def test_forecast_origin_uses_latest_data_date_not_runtime_today():
+def test_forecast_origin_uses_feature_date_not_runtime_today():
     row = {"date": "2026-02-01", "pm25_mean": 25, "temp_mean": 30, "humidity_mean": 60}
-    fvec = ml.build_feature_vector(row, [20, 25], date.fromisoformat(row["date"]) + ml.timedelta(days=1))
+    feature_date = date.fromisoformat(row["date"]) + ml.timedelta(days=1)
+    fvec = ml.build_feature_vector(row, [20, 25], feature_date, ml.FEATURE_COLS)
     assert fvec[ml.FEATURE_COLS.index("month")] == 2
-    assert fvec[ml.FEATURE_COLS.index("day_of_week")] == 0  # 2026-02-02 Monday
+    assert fvec[ml.FEATURE_COLS.index("day_of_week")] == 0

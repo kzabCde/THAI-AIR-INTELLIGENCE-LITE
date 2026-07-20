@@ -1,7 +1,7 @@
 """Lightweight PM2.5 inference endpoint.
 
 Production evaluates a leakage-safe linear surrogate distilled from the selected
-XGBoost/LightGBM teacher.  It never treats feature importance as coefficients.
+teacher among six tree ensembles. It never treats feature importance as coefficients.
 If an artifact is missing or invalid, the endpoint falls back to the explicit
 persist-revert model for that province.
 """
@@ -28,6 +28,7 @@ MAX_SOURCE_AGE_DAYS = 2
 OBSERVED_VIEW = "training_daily_summary_v2"
 STACKING_MODEL = "stacking-v2"
 SURROGATE_MODEL = "surrogate-v2"
+ENSEMBLE6_MODEL = "ensemble6-pm25-v3"
 PERSIST_MODEL = "persist-revert-v2"
 LEGACY_STACKING_MODEL = "stacking-v1"
 LEGACY_BASE_MODELS = {"lightgbm-v1", "xgboost-v1"}
@@ -272,14 +273,14 @@ def _predict_model(
             float(params.get("w_persist", 0.3)) * fallback
             + float(params.get("w_ml", 0.7)) * ml_prediction
         )
-    if model_name not in {STACKING_MODEL, SURROGATE_MODEL}:
+    if model_name not in {STACKING_MODEL, SURROGATE_MODEL, ENSEMBLE6_MODEL}:
         return fallback
     artifact = params.get("surrogate") or {}
     try:
         surrogate = evaluate_surrogate(features, artifact)
     except (TypeError, ValueError):
         return fallback
-    if model_name == SURROGATE_MODEL:
+    if model_name in {SURROGATE_MODEL, ENSEMBLE6_MODEL}:
         return surrogate
     stack = params.get("stacking") or {}
     baseline = rolling[-1] if stack.get("baseline") == "persistence-current-day" else fallback
@@ -372,6 +373,7 @@ class handler(BaseHTTPRequestHandler):
                 *sorted(LEGACY_BASE_MODELS),
                 LEGACY_STACKING_MODEL,
                 SURROGATE_MODEL,
+                ENSEMBLE6_MODEL,
                 STACKING_MODEL,
             ],
             "observed_view": OBSERVED_VIEW,

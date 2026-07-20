@@ -3,9 +3,10 @@
 #
 # Deliberately LIGHTWEIGHT — this is the *inference* runtime, which must
 # cold-start and finish inside Vercel's 10s limit. The heavy training
-# libraries (xgboost / lightgbm) are NOT listed here on purpose: training
-# happens offline in training/train_xgb_lgbm.ipynb (Colab) and only the
-# distilled model (linear surrogate + feature_importance) is persisted to
+# libraries (scikit-learn / xgboost / lightgbm / catboost) are NOT listed here
+# on purpose: training happens offline in training/train_all_6_models_pm25.ipynb
+# (Colab), and only the distilled model (linear surrogate + feature_importance)
+# is persisted to
 # model_registry.model_params. The endpoint just evaluates that surrogate.
 #
 # Keep this list small — every extra package inflates the bundle size and
