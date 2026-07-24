@@ -3,7 +3,7 @@ import { CheckCircle2, Clock, Database, XCircle, Timer, ArrowDownToLine, ArrowUp
 import { fmtNumber, fmtDateTimeTh } from "@/lib/format";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
-import { getCronLogs, getDataFreshness, getModelMetrics, getSyncJobs } from "@/services/system.service";
+import { getCronLogs, getDataFreshness, getModelStatuses, getSyncJobs } from "@/services/system.service";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { Section, CardHeader } from "@/components/ui/card";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState, EmptyState } from "@/components/ui/states";
@@ -39,13 +39,13 @@ function StatusDot({ status }: { status: string }) {
 
 export default async function SystemPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
-  let jobs, cronLogs, freshness, modelMetrics;
+  let jobs, cronLogs, freshness, modelStatuses;
   try {
-    [jobs, cronLogs, freshness, modelMetrics] = await Promise.all([
+    [jobs, cronLogs, freshness, modelStatuses] = await Promise.all([
       getSyncJobs(),
       getCronLogs(20),
       getDataFreshness(),
-      getModelMetrics(),
+      getModelStatuses(),
     ]);
   } catch (err) {
     console.error("[system] load error:", err);
@@ -53,11 +53,30 @@ export default async function SystemPage() {
     return <ErrorState />;
   }
 
+  const readyRegressionCount = ISAN_PROVINCES.filter((province) =>
+    modelStatuses.some((model) =>
+      model.provinceId === province.id
+      && model.taskType === "regression"
+      && model.eligible,
+    ),
+  ).length;
+  const readyClassificationCount = ISAN_PROVINCES.filter((province) =>
+    modelStatuses.some((model) =>
+      model.provinceId === province.id
+      && model.taskType === "classification"
+      && model.eligible,
+    ),
+  ).length;
+  const calculatedClassificationCount = Math.max(
+    0,
+    readyRegressionCount - readyClassificationCount,
+  );
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">สถานะระบบ</h1>
-        <p className="muted text-sm">สถานะการซิงค์ข้อมูล ความสดของข้อมูล และประวัติการล้างข้อมูล</p>
+        <p className="muted text-sm">ความพร้อมของข้อมูล โมเดลพยากรณ์ และงานอัตโนมัติ</p>
       </div>
 
       <Section title="ความสดของข้อมูล" description="ตารางหลักในฐานข้อมูล Supabase">
@@ -75,27 +94,53 @@ export default async function SystemPage() {
         </div>
       </Section>
 
-      {modelMetrics.length > 0 && (
+      {modelStatuses.length > 0 && (
         <Section
           title="สถานะโมเดลรายจังหวัด"
-          description="แต่ละจังหวัดมี Active Regression และ Active Classification แยกจากกัน; หากไม่มี Classifier ระบบใช้ Regression Threshold"
+          description="แสดงเฉพาะความพร้อมใช้งาน ส่วนผลประเมินเชิงเทคนิคจะแสดงตอนรัน Python เทรนโมเดล"
         >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="card card-pad">
+              <p className="muted text-xs">พร้อมพยากรณ์ PM2.5</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">
+                {readyRegressionCount} <span className="text-sm font-medium">จังหวัด</span>
+              </p>
+              <p className="mt-1 text-xs text-emerald-600">ระบบพยากรณ์หลักพร้อมใช้งาน</p>
+            </div>
+            <div className="card card-pad">
+              <p className="muted text-xs">จัดระดับด้วยโมเดลโดยตรง</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">
+                {readyClassificationCount} <span className="text-sm font-medium">จังหวัด</span>
+              </p>
+              <p className="muted mt-1 text-xs">ใช้ตัวจัดระดับที่ผ่านการตรวจสอบ</p>
+            </div>
+            <div className="card card-pad">
+              <p className="muted text-xs">จัดระดับจากค่า PM2.5</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">
+                {calculatedClassificationCount} <span className="text-sm font-medium">จังหวัด</span>
+              </p>
+              <p className="mt-1 text-xs text-sky-600">ยังแสดงระดับคุณภาพอากาศได้ตามปกติ</p>
+            </div>
+          </div>
+
           <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="muted border-b border-border text-left text-xs">
                   <th className="px-4 py-2.5 font-medium">จังหวัด</th>
-                  <th className="px-4 py-2.5 font-medium">Regression</th>
-                  <th className="px-4 py-2.5 font-medium">Classification</th>
-                  <th className="px-4 py-2.5 font-medium">สถานะ</th>
-                  <th className="px-4 py-2.5 text-right font-medium">เทรนล่าสุด</th>
+                  <th className="px-4 py-2.5 font-medium">การพยากรณ์ PM2.5</th>
+                  <th className="px-4 py-2.5 font-medium">การจัดระดับคุณภาพอากาศ</th>
+                  <th className="px-4 py-2.5 font-medium">ความพร้อมโดยรวม</th>
+                  <th className="px-4 py-2.5 text-right font-medium">อัปเดตโมเดลล่าสุด</th>
                 </tr>
               </thead>
               <tbody>
                 {ISAN_PROVINCES.map((province) => {
-                  const rows = modelMetrics.filter((row) => row.provinceId === province.id);
+                  const rows = modelStatuses.filter((row) => row.provinceId === province.id);
                   const regression = rows.find((row) => row.taskType === "regression");
                   const classification = rows.find((row) => row.taskType === "classification");
+                  const regressionReady = regression?.eligible === true;
+                  const classificationReady = classification?.eligible === true;
                   const latest = [...rows].sort((a, b) =>
                     b.trainedAt.localeCompare(a.trainedAt),
                   )[0]?.trainedAt ?? null;
@@ -106,23 +151,52 @@ export default async function SystemPage() {
                         <p className="muted text-xs">{province.id}</p>
                       </td>
                       <td className="px-4 py-2.5">
-                        <p className="font-mono text-xs">{regression?.modelName ?? "–"}</p>
-                        <p className="muted text-xs">
-                          {regression?.runId.slice(0, 8) ?? "ไม่มี active model"}
+                        <p className={`inline-flex items-center gap-1.5 font-medium ${
+                          regressionReady ? "text-emerald-600" : "text-red-600"
+                        }`}>
+                          {regressionReady
+                            ? <CheckCircle2 size={15} />
+                            : <XCircle size={15} />}
+                          {regressionReady ? "พร้อมใช้งาน" : "ยังไม่พร้อม"}
+                        </p>
+                        <p className="muted mt-0.5 max-w-xs text-xs">
+                          {regression
+                            ? getModelLabel(regression.modelName)
+                            : "ยังไม่มีโมเดลพยากรณ์ที่เปิดใช้งาน"}
                         </p>
                       </td>
                       <td className="px-4 py-2.5">
-                        <p className="font-mono text-xs">
-                          {classification?.modelName ?? "Regression threshold"}
+                        <p className={`inline-flex items-center gap-1.5 font-medium ${
+                          classificationReady
+                            ? "text-emerald-600"
+                            : regressionReady
+                              ? "text-sky-600"
+                              : "text-red-600"
+                        }`}>
+                          {regressionReady
+                            ? <CheckCircle2 size={15} />
+                            : <XCircle size={15} />}
+                          {classificationReady
+                            ? "โมเดลจัดระดับพร้อมใช้"
+                            : regressionReady
+                              ? "คำนวณจากค่า PM2.5"
+                              : "ยังไม่พร้อม"}
                         </p>
-                        <p className="muted text-xs">
-                          {classification?.runId.slice(0, 8) ?? "fallback"}
+                        <p className="muted mt-0.5 max-w-xs text-xs">
+                          {classificationReady && classification
+                            ? getModelLabel(classification.modelName)
+                            : regressionReady
+                              ? "แปลงค่าพยากรณ์เป็นระดับคุณภาพอากาศตามเกณฑ์"
+                              : "ต้องมีโมเดลพยากรณ์ก่อน"}
                         </p>
                       </td>
                       <td className="px-4 py-2.5">
-                        {classification?.eligible
-                          ? <span className="text-emerald-600">สองโมเดลพร้อมใช้</span>
-                          : <span className="text-amber-600">ใช้ classification fallback</span>}
+                        <span className={regressionReady ? "text-emerald-600" : "text-red-600"}>
+                          {regressionReady ? "พร้อมใช้งาน" : "ต้องตรวจสอบ"}
+                        </span>
+                        {regressionReady && !classificationReady && (
+                          <p className="muted text-xs">ใช้วิธีคำนวณระดับตามเกณฑ์ของระบบ</p>
+                        )}
                       </td>
                       <td className="muted px-4 py-2.5 text-right text-xs">
                         <RelativeTime iso={latest} />
@@ -135,103 +209,6 @@ export default async function SystemPage() {
           </div>
         </Section>
       )}
-
-      {modelMetrics.length > 0 && (() => {
-        const byModel = modelMetrics
-          .filter((m) => m.taskType === "regression")
-          .reduce<Record<string, typeof modelMetrics>>((acc, m) => {
-          (acc[m.modelName] ??= []).push(m);
-          return acc;
-          }, {});
-        return (
-          <Section
-            title="โมเดลพยากรณ์ที่ใช้งาน"
-            description="ค่าวัดประสิทธิภาพจาก model_registry — ยิ่งต่ำยิ่งดีสำหรับ MAE/RMSE; R² ใกล้ 1 = ดี"
-          >
-            {Object.entries(byModel).map(([name, rows]) => {
-              const avg = (vals: (number | null)[]) => {
-                const nums = vals.filter((v): v is number => v != null);
-                return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
-              };
-              const avgMae = avg(rows.map((r) => r.mae));
-              const avgRmse = avg(rows.map((r) => r.rmse));
-              const avgR2 = avg(rows.map((r) => r.r2));
-              const minR2 = rows.reduce<number | null>((m, r) => r.r2 != null && (m == null || r.r2 < m) ? r.r2 : m, null);
-              const trainedAt = rows[0]?.trainedAt;
-              // stacking-v1: ดึง params จากแถวแรกที่มี base_model
-              const stackingParams = name === "stacking-v1"
-                ? (rows.find((r) => r.modelParams?.base_model)?.modelParams ?? rows[0]?.modelParams ?? null)
-                : null;
-              const wPersist = stackingParams ? Number(stackingParams.w_persist ?? 0.3) : null;
-              const wMl      = stackingParams ? Number(stackingParams.w_ml      ?? 0.7) : null;
-              const baseModel = stackingParams ? String(stackingParams.base_model ?? "lightgbm-v1") : null;
-              return (
-                <div key={name} className="card card-pad space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-semibold font-mono text-sm">{name}</p>
-                      <p className="text-xs text-foreground/70">{getModelLabel(name)}</p>
-                      <p className="muted text-xs">
-                        เทรนเมื่อ <RelativeTime iso={trainedAt} /> · {rows.length} จังหวัด
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <p className="muted text-xs">MAE (เฉลี่ย)</p>
-                      <p className="text-lg font-semibold tabular-nums">
-                        {avgMae != null ? avgMae.toFixed(2) : "–"}
-                      </p>
-                      <p className="muted text-xs">µg/m³</p>
-                    </div>
-                    <div>
-                      <p className="muted text-xs">RMSE (เฉลี่ย)</p>
-                      <p className="text-lg font-semibold tabular-nums">
-                        {avgRmse != null ? avgRmse.toFixed(2) : "–"}
-                      </p>
-                      <p className="muted text-xs">µg/m³</p>
-                    </div>
-                    <div>
-                      <p className="muted text-xs">R² (เฉลี่ย / ต่ำสุด)</p>
-                      <p className="text-lg font-semibold tabular-nums">
-                        {avgR2 != null ? avgR2.toFixed(2) : "–"}
-                      </p>
-                      <p className="muted text-xs">
-                        {minR2 != null ? `min ${minR2.toFixed(2)}` : ""}
-                      </p>
-                    </div>
-                  </div>
-                  {name === "stacking-v1" && (
-                    <div className="border-t border-border/60 pt-3">
-                      <p className="muted text-xs mb-2">Stacking config</p>
-                      <div className="grid grid-cols-3 gap-3 text-center">
-                        <div>
-                          <p className="muted text-xs">Base model</p>
-                          <p className="text-sm font-semibold font-mono">
-                            {baseModel ?? "–"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="muted text-xs">w_persist</p>
-                          <p className="text-sm font-semibold tabular-nums">
-                            {wPersist != null ? wPersist.toFixed(2) : "–"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="muted text-xs">w_ml</p>
-                          <p className="text-sm font-semibold tabular-nums">
-                            {wMl != null ? wMl.toFixed(2) : "–"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </Section>
-        );
-      })()}
 
       <Section title="งานซิงค์ข้อมูล (Cron Jobs)">
         <div className="card overflow-x-auto">
