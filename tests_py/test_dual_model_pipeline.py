@@ -9,10 +9,12 @@ from sklearn.linear_model import Ridge
 from training.dual_model_config import FEATURE_COLUMNS, PipelineConfig
 from training.train_dual_models import (
     _classification_eligibility,
+    _powered_sample_weights,
     chronological_split,
     classification_metrics,
     prepare_targets,
     regression_metrics,
+    select_regression,
 )
 
 
@@ -85,9 +87,14 @@ def test_absent_rare_class_is_warning_not_automatic_failure():
         "test_rows": 30,
         "macro_f1": 0.8,
         "balanced_accuracy": 0.8,
+        "weighted_f1": 0.8,
         "per_class": per_class,
     }
-    baseline = {"macro_f1": 0.4, "balanced_accuracy": 0.4}
+    baseline = {
+        "macro_f1": 0.4,
+        "balanced_accuracy": 0.4,
+        "weighted_f1": 0.4,
+    }
     train_metrics = {"macro_f1": 0.85}
     probabilities = np.full((30, 5), 0.2)
     eligible, reasons, warnings = _classification_eligibility(
@@ -99,6 +106,40 @@ def test_absent_rare_class_is_warning_not_automatic_failure():
     assert "missing_critical_class_support:5" in warnings
 
 
+def test_classifier_cannot_pass_by_sacrificing_weighted_f1():
+    config = PipelineConfig(classifier_minimum_macro_f1=0.2)
+    per_class = {
+        str(class_id): {
+            "precision": 0.5,
+            "recall": 0.5,
+            "f1": 0.5,
+            "support": 10 if class_id <= 3 else 0,
+        }
+        for class_id in range(1, 6)
+    }
+    metrics = {
+        "test_rows": 30,
+        "macro_f1": 0.6,
+        "balanced_accuracy": 0.6,
+        "weighted_f1": 0.5,
+        "per_class": per_class,
+    }
+    baseline = {
+        "macro_f1": 0.4,
+        "balanced_accuracy": 0.4,
+        "weighted_f1": 0.55,
+    }
+    eligible, reasons, _ = _classification_eligibility(
+        {"macro_f1": 0.6},
+        metrics,
+        baseline,
+        np.full((30, 5), 0.2),
+        config,
+    )
+    assert not eligible
+    assert "weighted_f1_below_baseline" in reasons
+
+
 def test_model_serialization_and_reload(tmp_path: Path):
     model = Ridge().fit(np.array([[0.0], [1.0], [2.0]]), np.array([1.0, 2.0, 3.0]))
     path = tmp_path / "model.joblib"
@@ -106,3 +147,29 @@ def test_model_serialization_and_reload(tmp_path: Path):
     joblib.dump(model, path)
     restored = joblib.load(path)
     assert restored.predict(np.array([[3.0]])).item() == pytest.approx(expected)
+
+
+def test_partial_class_balancing_is_less_extreme_than_full_balancing():
+    labels = np.array([1] * 9 + [4])
+    unweighted = _powered_sample_weights(labels, 0.0)
+    partial = _powered_sample_weights(labels, 0.5)
+    balanced = _powered_sample_weights(labels, 1.0)
+    assert np.allclose(unweighted, 1.0)
+    assert 1.0 < partial[-1] < balanced[-1]
+    assert np.mean(partial) == pytest.approx(1.0)
+
+
+def test_regression_selection_uses_production_surrogate_metrics():
+    prepared = prepare_targets(training_frame(rows=240))
+    split = chronological_split(prepared, PipelineConfig())
+    config = PipelineConfig(
+        allowed_model_families=("random_forest",),
+        regression_surrogate_alphas=(1.0,),
+        regression_blend_weights=(0.5,),
+    )
+    selection = select_regression(split, config)
+    assert selection.test_metrics == selection.runtime_metrics
+    assert selection.tuning == {"alpha": 1.0, "model_weight": 0.5}
+    assert "production_surrogate" in selection.candidate_validation_metrics[
+        "random_forest"
+    ]

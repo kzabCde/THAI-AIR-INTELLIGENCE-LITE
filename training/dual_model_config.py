@@ -53,6 +53,21 @@ class PipelineConfig:
     classifier_minimum_critical_recall: float = 0.50
     critical_class_minimum_support: int = 5
     maximum_train_test_gap: float = 0.25
+    regression_surrogate_alphas: tuple[float, ...] = (
+        0.01, 0.1, 1.0, 10.0, 100.0, 1_000.0,
+    )
+    regression_blend_weights: tuple[float, ...] = (
+        0.1, 0.25, 0.5, 0.75, 1.0,
+    )
+    classifier_regularization_c: tuple[float, ...] = (
+        0.001, 0.01, 0.1, 1.0,
+    )
+    classifier_weight_powers: tuple[float, ...] = (
+        0.0, 0.25, 0.5, 0.75, 1.0,
+    )
+    classifier_blend_weights: tuple[float, ...] = (
+        0.25, 0.5, 0.75, 1.0,
+    )
     forecast_horizon_days: int = 7
     random_seed: int = 42
     serving_policy: str = "classifier_with_regression_fallback"
@@ -68,6 +83,31 @@ class PipelineConfig:
             raise ValueError("validation_fraction + test_fraction must be below 0.5")
         if not 2 <= self.cv_splits <= 5:
             raise ValueError("cv_splits must be between 2 and 5")
+        if (
+            not self.regression_surrogate_alphas
+            or any(value <= 0 for value in self.regression_surrogate_alphas)
+        ):
+            raise ValueError("regression surrogate alphas must be positive")
+        if (
+            not self.regression_blend_weights
+            or any(not 0 < value <= 1 for value in self.regression_blend_weights)
+        ):
+            raise ValueError("regression blend weights must be within (0, 1]")
+        if (
+            not self.classifier_regularization_c
+            or any(value <= 0 for value in self.classifier_regularization_c)
+        ):
+            raise ValueError("classifier regularization values must be positive")
+        if (
+            not self.classifier_weight_powers
+            or any(not 0 <= value <= 1 for value in self.classifier_weight_powers)
+        ):
+            raise ValueError("classifier weight powers must be within [0, 1]")
+        if (
+            not self.classifier_blend_weights
+            or any(not 0 < value <= 1 for value in self.classifier_blend_weights)
+        ):
+            raise ValueError("classifier blend weights must be within (0, 1]")
         if self.serving_policy not in SERVING_POLICIES:
             raise ValueError(f"unsupported serving policy: {self.serving_policy}")
         unsupported = set(self.allowed_model_families) - set(MODEL_FAMILIES)

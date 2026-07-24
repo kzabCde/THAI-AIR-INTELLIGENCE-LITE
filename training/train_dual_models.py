@@ -16,7 +16,7 @@ import subprocess
 import sys
 import traceback
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -105,6 +105,10 @@ class TaskSelection:
     warnings: list[str]
     runtime_artifact: dict
     runtime_metrics: dict
+    teacher_validation_metrics: dict = field(default_factory=dict)
+    teacher_test_metrics: dict = field(default_factory=dict)
+    candidate_validation_metrics: dict = field(default_factory=dict)
+    tuning: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -480,43 +484,107 @@ def _classification_baseline(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, 
     return predictions, classification_metrics(y, predictions, probabilities)
 
 
-def _portable_regression(
+def _evaluate_portable_regression(X: np.ndarray, artifact: dict) -> np.ndarray:
+    coefficients = np.asarray(artifact["coefficients"], dtype=float)
+    means = np.asarray(artifact["scaler_mean"], dtype=float)
+    scales = np.asarray(artifact["scaler_scale"], dtype=float)
+    safe_scales = np.where(np.abs(scales) > 1e-12, scales, 1.0)
+    surrogate = (
+        ((X - means) / safe_scales) @ coefficients
+        + float(artifact["intercept"])
+    )
+    persistence = X[:, FEATURE_COLUMNS.index("pm25_mean")]
+    model_weight = float(artifact.get("model_weight", 1.0))
+    return model_weight * surrogate + (1.0 - model_weight) * persistence
+
+
+def _fit_portable_regression(
     model: object,
     X_fit: np.ndarray,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
+    X_evaluate: np.ndarray,
+    y_evaluate: np.ndarray,
+    *,
+    alpha: float,
+    model_weight: float,
 ) -> tuple[dict, dict]:
+    """Distil a teacher and retain persistence as a strong one-day anchor."""
     scaler = StandardScaler().fit(X_fit)
     teacher_fit = np.asarray(model.predict(X_fit), dtype=float)
-    surrogate = Ridge(alpha=1.0).fit(scaler.transform(X_fit), teacher_fit)
-    predictions = surrogate.predict(scaler.transform(X_test))
-    return {
-        "artifact_schema": "standardized-ridge-v1",
+    surrogate = Ridge(alpha=alpha).fit(scaler.transform(X_fit), teacher_fit)
+    artifact = {
+        "artifact_schema": "standardized-ridge-blend-v2",
         "feature_cols": list(FEATURE_COLUMNS),
         "coefficients": surrogate.coef_.astype(float).tolist(),
         "intercept": float(surrogate.intercept_),
         "scaler_mean": scaler.mean_.astype(float).tolist(),
         "scaler_scale": scaler.scale_.astype(float).tolist(),
-    }, regression_metrics(y_test, predictions)
+        "alpha": float(alpha),
+        "model_weight": float(model_weight),
+        "persistence_feature": "pm25_mean",
+    }
+    predictions = _evaluate_portable_regression(X_evaluate, artifact)
+    return artifact, regression_metrics(y_evaluate, predictions)
 
 
-def _portable_classifier(
+def _powered_sample_weights(y: np.ndarray, power: float) -> np.ndarray:
+    """Interpolate between unweighted and fully balanced class weights."""
+    values, counts = np.unique(y, return_counts=True)
+    total = float(len(y))
+    classes = float(len(values))
+    by_class = {
+        int(value): (total / (classes * float(count))) ** power
+        for value, count in zip(values, counts, strict=True)
+    }
+    weights = np.asarray([by_class[int(value)] for value in y], dtype=float)
+    return weights / max(float(np.mean(weights)), 1e-12)
+
+
+def _blend_classifier_probabilities(
+    probabilities: np.ndarray,
+    X: np.ndarray,
+    model_weight: float,
+) -> np.ndarray:
+    """Anchor a portable classifier to the strong current-day class baseline."""
+    if not 0 < model_weight <= 1:
+        raise ValueError("classifier model weight must be within (0, 1]")
+    if model_weight == 1.0:
+        return probabilities
+    current_index = FEATURE_COLUMNS.index("pm25_mean")
+    persistence_classes = classes_for_pm25(X[:, current_index])
+    persistence = np.zeros_like(probabilities)
+    persistence[np.arange(len(X)), persistence_classes - 1] = 1.0
+    return model_weight * probabilities + (1.0 - model_weight) * persistence
+
+
+def _fit_portable_classifier(
     X_fit: np.ndarray,
     y_fit: np.ndarray,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
+    X_evaluate: np.ndarray,
+    y_evaluate: np.ndarray,
+    *,
     seed: int,
-) -> tuple[dict, dict]:
+    regularization_c: float,
+    weight_power: float,
+    model_weight: float,
+) -> tuple[dict, dict, object, StandardScaler]:
     scaler = StandardScaler().fit(X_fit)
     model = LogisticRegression(
+        C=regularization_c,
         max_iter=2_000,
-        class_weight="balanced",
         random_state=seed,
-    ).fit(scaler.transform(X_fit), y_fit)
-    probabilities = _aligned_probabilities(model, scaler.transform(X_test))
+    ).fit(
+        scaler.transform(X_fit),
+        y_fit,
+        sample_weight=_powered_sample_weights(y_fit, weight_power),
+    )
+    probabilities = _blend_classifier_probabilities(
+        _aligned_probabilities(model, scaler.transform(X_evaluate)),
+        X_evaluate,
+        model_weight,
+    )
     predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
-    return {
-        "artifact_schema": "standardized-logistic-v1",
+    artifact = {
+        "artifact_schema": "standardized-logistic-persistence-blend-v3",
         "feature_cols": list(FEATURE_COLUMNS),
         "classes": [int(value) for value in model.classes_],
         "coefficients": np.asarray(model.coef_, dtype=float).tolist(),
@@ -524,7 +592,17 @@ def _portable_classifier(
         "scaler_mean": scaler.mean_.astype(float).tolist(),
         "scaler_scale": scaler.scale_.astype(float).tolist(),
         "threshold_version": THRESHOLD_VERSION,
-    }, classification_metrics(y_test, predictions, probabilities)
+        "regularization_c": float(regularization_c),
+        "weight_power": float(weight_power),
+        "model_weight": float(model_weight),
+        "persistence_feature": "pm25_mean",
+    }
+    return (
+        artifact,
+        classification_metrics(y_evaluate, predictions, probabilities),
+        model,
+        scaler,
+    )
 
 
 def _regression_eligibility(
@@ -563,6 +641,8 @@ def _classification_eligibility(
         reasons.append("macro_f1_below_baseline")
     if metrics["balanced_accuracy"] <= baseline["balanced_accuracy"]:
         reasons.append("balanced_accuracy_below_baseline")
+    if metrics["weighted_f1"] <= baseline["weighted_f1"]:
+        reasons.append("weighted_f1_below_baseline")
     for class_id in (4, 5):
         per_class = metrics["per_class"][str(class_id)]
         if per_class["support"] < config.critical_class_minimum_support:
@@ -582,55 +662,122 @@ def _classification_eligibility(
 
 
 def select_regression(split: ChronologicalSplit, config: PipelineConfig) -> TaskSelection:
-    validation_baseline_predictions, validation_baseline = _regression_baseline(
+    _, validation_baseline = _regression_baseline(
         split.X_validation, split.y_reg_validation
     )
-    del validation_baseline_predictions
-    validation_results: dict[str, dict] = {}
+    teacher_validation: dict[str, dict] = {}
+    runtime_validation: dict[str, dict] = {}
+    runtime_tuning: dict[str, dict] = {}
+    candidate_metrics: dict[str, dict] = {}
     fitted: dict[str, object] = {}
     factories = regression_factories(config.random_seed)
     for family in config.allowed_model_families:
         factory = factories[family]
         model = factory().fit(split.X_train, split.y_reg_train)
         fitted[family] = model
-        validation_results[family] = regression_metrics(
+        teacher_validation[family] = regression_metrics(
             split.y_reg_validation, model.predict(split.X_validation)
         )
-        validation_results[family]["skill_vs_persistence"] = (
-            1.0 - validation_results[family]["mae"] / validation_baseline["mae"]
+        teacher_validation[family]["skill_vs_persistence"] = (
+            1.0 - teacher_validation[family]["mae"] / validation_baseline["mae"]
             if validation_baseline["mae"] > 0 else 0.0
         )
+
+        best_metrics: dict | None = None
+        best_tuning: dict | None = None
+        for alpha in config.regression_surrogate_alphas:
+            for model_weight in config.regression_blend_weights:
+                _, metrics = _fit_portable_regression(
+                    model,
+                    split.X_train,
+                    split.X_validation,
+                    split.y_reg_validation,
+                    alpha=alpha,
+                    model_weight=model_weight,
+                )
+                metrics["skill_vs_persistence"] = (
+                    1.0 - metrics["mae"] / validation_baseline["mae"]
+                    if validation_baseline["mae"] > 0 else 0.0
+                )
+                if best_metrics is None or (
+                    metrics["skill_vs_persistence"],
+                    -metrics["mae"],
+                    -metrics["rmse"],
+                ) > (
+                    best_metrics["skill_vs_persistence"],
+                    -best_metrics["mae"],
+                    -best_metrics["rmse"],
+                ):
+                    best_metrics = metrics
+                    best_tuning = {
+                        "alpha": float(alpha),
+                        "model_weight": float(model_weight),
+                    }
+        if best_metrics is None or best_tuning is None:
+            raise RuntimeError(f"no portable regression candidate for {family}")
+        runtime_validation[family] = best_metrics
+        runtime_tuning[family] = best_tuning
+        candidate_metrics[family] = {
+            "teacher": teacher_validation[family],
+            "production_surrogate": best_metrics,
+            "tuning": best_tuning,
+        }
+
     family = max(
-        validation_results,
+        runtime_validation,
         key=lambda item: (
-            validation_results[item]["skill_vs_persistence"],
-            -validation_results[item]["mae"],
-            -validation_results[item]["rmse"],
+            runtime_validation[item]["skill_vs_persistence"],
+            -runtime_validation[item]["mae"],
+            -runtime_validation[item]["rmse"],
+            teacher_validation[item]["skill_vs_persistence"],
         ),
     )
     X_fit = np.vstack([split.X_train, split.X_validation])
     y_fit = np.concatenate([split.y_reg_train, split.y_reg_validation])
     model = clone(fitted[family]).fit(X_fit, y_fit)
-    test_predictions = np.asarray(model.predict(split.X_test), dtype=float)
-    test_metrics = regression_metrics(split.y_reg_test, test_predictions)
+    teacher_test_metrics = regression_metrics(
+        split.y_reg_test,
+        np.asarray(model.predict(split.X_test), dtype=float),
+    )
     _, baseline_metrics = _regression_baseline(split.X_test, split.y_reg_test)
-    test_metrics["skill_vs_persistence"] = (
-        1.0 - test_metrics["mae"] / baseline_metrics["mae"]
+    teacher_test_metrics["skill_vs_persistence"] = (
+        1.0 - teacher_test_metrics["mae"] / baseline_metrics["mae"]
         if baseline_metrics["mae"] > 0 else 0.0
     )
-    runtime_artifact, runtime_metrics = _portable_regression(
-        model, X_fit, split.X_test, split.y_reg_test
+    tuning = runtime_tuning[family]
+    runtime_artifact, runtime_metrics = _fit_portable_regression(
+        model,
+        X_fit,
+        split.X_test,
+        split.y_reg_test,
+        alpha=tuning["alpha"],
+        model_weight=tuning["model_weight"],
+    )
+    runtime_metrics["skill_vs_persistence"] = (
+        1.0 - runtime_metrics["mae"] / baseline_metrics["mae"]
+        if baseline_metrics["mae"] > 0 else 0.0
     )
     eligible, reasons = _regression_eligibility(
-        test_metrics, baseline_metrics, validation_results[family], config
+        runtime_metrics,
+        baseline_metrics,
+        runtime_validation[family],
+        config,
     )
-    if runtime_metrics["mae"] >= baseline_metrics["mae"]:
-        eligible = False
-        reasons = [reason for reason in reasons if reason != "eligible"]
-        reasons.append("runtime_artifact_below_baseline")
     return TaskSelection(
-        family, model, validation_results[family], test_metrics,
-        baseline_metrics, eligible, reasons, [], runtime_artifact, runtime_metrics,
+        family=family,
+        model=model,
+        validation_metrics=runtime_validation[family],
+        test_metrics=runtime_metrics,
+        baseline_metrics=baseline_metrics,
+        eligible=eligible,
+        eligibility_reasons=reasons,
+        warnings=[],
+        runtime_artifact=runtime_artifact,
+        runtime_metrics=runtime_metrics,
+        teacher_validation_metrics=teacher_validation[family],
+        teacher_test_metrics=teacher_test_metrics,
+        candidate_validation_metrics=candidate_metrics,
+        tuning=tuning,
     )
 
 
@@ -638,7 +785,7 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
     _, validation_baseline = _classification_baseline(
         split.X_validation, split.y_cls_validation
     )
-    validation_results: dict[str, dict] = {}
+    teacher_validation: dict[str, dict] = {}
     fitted: dict[str, object] = {}
     factories = classification_factories(config.random_seed)
     for family in config.allowed_model_families:
@@ -647,41 +794,186 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
         fitted[family] = model
         probabilities = _aligned_probabilities(model, split.X_validation)
         predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
-        validation_results[family] = classification_metrics(
+        teacher_validation[family] = classification_metrics(
             split.y_cls_validation, predictions, probabilities
         )
     family = max(
-        validation_results,
+        teacher_validation,
         key=lambda item: (
-            validation_results[item]["macro_f1"],
-            validation_results[item]["per_class"]["5"]["recall"],
-            validation_results[item]["per_class"]["4"]["recall"],
-            validation_results[item]["balanced_accuracy"],
+            teacher_validation[item]["macro_f1"],
+            teacher_validation[item]["per_class"]["5"]["recall"],
+            teacher_validation[item]["per_class"]["4"]["recall"],
+            teacher_validation[item]["balanced_accuracy"],
         ),
     )
+
+    portable_validation: dict[str, dict] = {}
+    best_portable_metrics: dict | None = None
+    best_tuning: dict | None = None
+    for regularization_c in config.classifier_regularization_c:
+        for weight_power in config.classifier_weight_powers:
+            for model_weight in config.classifier_blend_weights:
+                _, metrics, portable_model, portable_scaler = _fit_portable_classifier(
+                    split.X_train,
+                    split.y_cls_train,
+                    split.X_validation,
+                    split.y_cls_validation,
+                    seed=config.random_seed,
+                    regularization_c=regularization_c,
+                    weight_power=weight_power,
+                    model_weight=model_weight,
+                )
+                train_probabilities = _blend_classifier_probabilities(
+                    _aligned_probabilities(
+                        portable_model,
+                        portable_scaler.transform(split.X_train),
+                    ),
+                    split.X_train,
+                    model_weight,
+                )
+                train_predictions = np.asarray(CLASS_IDS)[
+                    np.argmax(train_probabilities, axis=1)
+                ]
+                train_metrics = classification_metrics(
+                    split.y_cls_train,
+                    train_predictions,
+                    train_probabilities,
+                )
+                generalization_gap = (
+                    train_metrics["macro_f1"] - metrics["macro_f1"]
+                )
+                key = (
+                    f"C={regularization_c:g},weight_power={weight_power:g},"
+                    f"model_weight={model_weight:g}"
+                )
+                portable_validation[key] = {
+                    "train": train_metrics,
+                    "validation": metrics,
+                    "macro_f1_gap": generalization_gap,
+                }
+                supported_critical_recall = [
+                    metrics["per_class"][str(class_id)]["recall"]
+                    for class_id in (4, 5)
+                    if metrics["per_class"][str(class_id)]["support"]
+                    >= config.critical_class_minimum_support
+                ]
+                critical_recall = (
+                    min(supported_critical_recall)
+                    if supported_critical_recall else 1.0
+                )
+                if best_portable_metrics is None:
+                    is_better = True
+                else:
+                    best_supported_critical_recall = [
+                        best_portable_metrics["per_class"][str(class_id)]["recall"]
+                        for class_id in (4, 5)
+                        if best_portable_metrics["per_class"][str(class_id)]["support"]
+                        >= config.critical_class_minimum_support
+                    ]
+                    best_critical_recall = (
+                        min(best_supported_critical_recall)
+                        if best_supported_critical_recall else 1.0
+                    )
+                    is_better = (
+                        generalization_gap <= config.maximum_train_test_gap,
+                        metrics["macro_f1"],
+                        critical_recall,
+                        metrics["balanced_accuracy"],
+                        metrics["weighted_f1"],
+                        -float(metrics["log_loss"] or 1e9),
+                    ) > (
+                        best_tuning["validation_gap"] <= config.maximum_train_test_gap,
+                        best_portable_metrics["macro_f1"],
+                        best_critical_recall,
+                        best_portable_metrics["balanced_accuracy"],
+                        best_portable_metrics["weighted_f1"],
+                        -float(best_portable_metrics["log_loss"] or 1e9),
+                    )
+                if is_better:
+                    best_portable_metrics = metrics
+                    best_tuning = {
+                        "regularization_c": float(regularization_c),
+                        "weight_power": float(weight_power),
+                        "model_weight": float(model_weight),
+                        "validation_gap": float(generalization_gap),
+                    }
+    if best_portable_metrics is None or best_tuning is None:
+        raise RuntimeError("no portable classification candidate")
+
     X_fit = np.vstack([split.X_train, split.X_validation])
     y_fit = np.concatenate([split.y_cls_train, split.y_cls_validation])
     model = _fit_classifier(clone(fitted[family]), X_fit, y_fit)
-    probabilities = _aligned_probabilities(model, split.X_test)
-    predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
-    test_metrics = classification_metrics(split.y_cls_test, predictions, probabilities)
+    teacher_probabilities = _aligned_probabilities(model, split.X_test)
+    teacher_predictions = np.asarray(CLASS_IDS)[
+        np.argmax(teacher_probabilities, axis=1)
+    ]
+    teacher_test_metrics = classification_metrics(
+        split.y_cls_test,
+        teacher_predictions,
+        teacher_probabilities,
+    )
     _, baseline_metrics = _classification_baseline(split.X_test, split.y_cls_test)
-    train_probabilities = _aligned_probabilities(model, X_fit)
-    train_predictions = np.asarray(CLASS_IDS)[np.argmax(train_probabilities, axis=1)]
-    train_metrics = classification_metrics(y_fit, train_predictions, train_probabilities)
-    runtime_artifact, runtime_metrics = _portable_classifier(
-        X_fit, y_fit, split.X_test, split.y_cls_test, config.random_seed
+    runtime_artifact, runtime_metrics, runtime_model, runtime_scaler = (
+        _fit_portable_classifier(
+            X_fit,
+            y_fit,
+            split.X_test,
+            split.y_cls_test,
+            seed=config.random_seed,
+            regularization_c=best_tuning["regularization_c"],
+            weight_power=best_tuning["weight_power"],
+            model_weight=best_tuning["model_weight"],
+        )
+    )
+    runtime_train_probabilities = _blend_classifier_probabilities(
+        _aligned_probabilities(
+            runtime_model,
+            runtime_scaler.transform(X_fit),
+        ),
+        X_fit,
+        best_tuning["model_weight"],
+    )
+    runtime_train_predictions = np.asarray(CLASS_IDS)[
+        np.argmax(runtime_train_probabilities, axis=1)
+    ]
+    runtime_train_metrics = classification_metrics(
+        y_fit,
+        runtime_train_predictions,
+        runtime_train_probabilities,
+    )
+    runtime_probabilities = _blend_classifier_probabilities(
+        _aligned_probabilities(
+            runtime_model,
+            runtime_scaler.transform(split.X_test),
+        ),
+        split.X_test,
+        best_tuning["model_weight"],
     )
     eligible, reasons, warnings = _classification_eligibility(
-        train_metrics, test_metrics, baseline_metrics, probabilities, config
+        runtime_train_metrics,
+        runtime_metrics,
+        baseline_metrics,
+        runtime_probabilities,
+        config,
     )
-    if runtime_metrics["macro_f1"] <= baseline_metrics["macro_f1"]:
-        eligible = False
-        reasons = [reason for reason in reasons if reason != "eligible"]
-        reasons.append("runtime_artifact_below_baseline")
     return TaskSelection(
-        family, model, validation_results[family], test_metrics,
-        baseline_metrics, eligible, reasons, warnings, runtime_artifact, runtime_metrics,
+        family=family,
+        model=model,
+        validation_metrics=best_portable_metrics,
+        test_metrics=runtime_metrics,
+        baseline_metrics=baseline_metrics,
+        eligible=eligible,
+        eligibility_reasons=reasons,
+        warnings=warnings,
+        runtime_artifact=runtime_artifact,
+        runtime_metrics=runtime_metrics,
+        teacher_validation_metrics=teacher_validation[family],
+        teacher_test_metrics=teacher_test_metrics,
+        candidate_validation_metrics={
+            "teachers": teacher_validation,
+            "production_classifier": portable_validation,
+        },
+        tuning=best_tuning,
     )
 
 
@@ -723,6 +1015,9 @@ def _task_registry_row(
         "threshold_version": THRESHOLD_VERSION,
         "serving_policy": config.serving_policy,
         "runtime_metrics": selection.runtime_metrics,
+        "teacher_validation_metrics": selection.teacher_validation_metrics,
+        "teacher_test_metrics": selection.teacher_test_metrics,
+        "production_tuning": selection.tuning,
         "audit": audit,
     }
     if task_type == "regression":
@@ -737,7 +1032,7 @@ def _task_registry_row(
         "task_type": task_type,
         "model_name": model_name,
         "model_family": selection.family,
-        "model_version": "dual-pm25-v1",
+        "model_version": "dual-pm25-v2",
         "artifact_ref": f"artifacts/{run_id}/{province_id}/{task_type}/model.joblib",
         "feature_schema": {
             "columns": list(FEATURE_COLUMNS),
@@ -856,6 +1151,10 @@ def save_artifacts(
             "threshold_version": THRESHOLD_VERSION,
             "metrics": selection.test_metrics,
             "baseline_metrics": selection.baseline_metrics,
+            "teacher_validation_metrics": selection.teacher_validation_metrics,
+            "teacher_test_metrics": selection.teacher_test_metrics,
+            "candidate_validation_metrics": selection.candidate_validation_metrics,
+            "production_tuning": selection.tuning,
             "eligibility": {
                 "eligible": selection.eligible,
                 "reasons": selection.eligibility_reasons,
