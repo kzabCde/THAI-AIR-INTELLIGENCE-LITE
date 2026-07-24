@@ -122,8 +122,6 @@ export function buildForecast(
         runId: null,
         eligible: false,
         trainedAt: null,
-        metrics: null,
-        baselineMetrics: null,
       },
       classification: null,
     },
@@ -170,7 +168,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
     sb
       .from("forecast_daily")
       .select(
-        "target_date,pm25_mean_forecast,pm25_max_forecast,forecast_at,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_used,fallback_reason,data_freshness,feature_version",
+        "target_date,pm25_mean_forecast,pm25_max_forecast,forecast_at,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_reason,data_freshness,feature_version",
       )
       .eq("province_id", provinceId)
       .order("forecast_at", { ascending: false })
@@ -178,9 +176,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       .limit(FORECAST_HORIZON_DAYS),
     sb
       .from("model_registry")
-      .select(
-        "task_type,model_name,run_id,eligibility_status,trained_at,metrics,baseline_metrics",
-      )
+      .select("task_type,model_name,run_id,eligibility_status,trained_at")
       .eq("province_id", provinceId)
       .eq("is_active", true),
   ]);
@@ -194,6 +190,8 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
   const forecastAt = daily[0]?.forecast_at ?? hourlyRaw![0].forecast_at;
   const hourly = (hourlyRaw ?? []).filter((r) => r.forecast_at === forecastAt);
   const modelName = daily[0]?.model_name ?? hourly[0]?.model_name ?? FORECAST_MODEL;
+  const regressionRegistry = modelRows?.find((row) => row.task_type === "regression");
+  const classificationRegistry = modelRows?.find((row) => row.task_type === "classification");
   const start = new Date(forecastAt).getTime();
   const dPoints: ForecastPoint[] = daily.map((r, i) => {
     const regressionClass = (
@@ -205,6 +203,11 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       ?? Object.fromEntries(
         [1, 2, 3, 4, 5].map((id) => [id, id === displayedClass ? 1 : 0]),
       ) as Record<PM25ClassId, number>;
+    const usesDirectClassifier = Boolean(
+      classificationRegistry?.eligibility_status
+        && r.classifier_model_name
+        && r.classification_source === "active_classifier",
+    );
     return {
       t: r.target_date,
       pm25: r.pm25_mean_forecast,
@@ -218,9 +221,13 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       regressionDerivedClass: regressionClass,
       classifierPredictedClass: r.classifier_predicted_class as PM25ClassId | null,
       classAgreement: r.class_agreement,
-      classificationSource: r.classification_source ?? "regression_threshold",
-      fallbackUsed: r.fallback_used,
-      fallbackReason: r.fallback_reason,
+      classificationSource: usesDirectClassifier
+        ? "active_classifier"
+        : "regression_threshold",
+      fallbackUsed: !usesDirectClassifier,
+      fallbackReason: usesDirectClassifier
+        ? null
+        : (r.fallback_reason ?? "classifier_not_active"),
     };
   });
   const hPoints: ForecastPoint[] = hourly.length
@@ -248,8 +255,11 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
   const base = current ?? 0;
   const peak = hPoints.reduce<ForecastPoint | null>((m, p) => (!m || p.pm25 > m.pm25 ? p : m), null);
   const newest = daily[0];
-  const regressionRegistry = modelRows?.find((row) => row.task_type === "regression");
-  const classificationRegistry = modelRows?.find((row) => row.task_type === "classification");
+  const hasDirectClassification = Boolean(
+    classificationRegistry?.eligibility_status
+      && newest?.classifier_model_name
+      && newest?.classification_source === "active_classifier",
+  );
 
   return {
     provinceId,
@@ -268,9 +278,6 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
         runId: newest?.regression_run_id ?? regressionRegistry?.run_id ?? null,
         eligible: regressionRegistry?.eligibility_status ?? true,
         trainedAt: regressionRegistry?.trained_at ?? null,
-        metrics: (regressionRegistry?.metrics as Record<string, unknown> | null) ?? null,
-        baselineMetrics:
-          (regressionRegistry?.baseline_metrics as Record<string, unknown> | null) ?? null,
       },
       classification: newest?.classifier_model_name || classificationRegistry
         ? {
@@ -281,11 +288,6 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
               ?? null,
             eligible: classificationRegistry?.eligibility_status ?? false,
             trainedAt: classificationRegistry?.trained_at ?? null,
-            metrics:
-              (classificationRegistry?.metrics as Record<string, unknown> | null) ?? null,
-            baselineMetrics:
-              (classificationRegistry?.baseline_metrics as Record<string, unknown> | null)
-              ?? null,
           }
         : null,
     },
@@ -295,9 +297,11 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       agreement: dPoints[0]?.classAgreement ?? null,
     },
     fallback: {
-      used: dPoints[0]?.fallbackUsed ?? true,
-      source: dPoints[0]?.classificationSource ?? "regression_threshold",
-      reason: dPoints[0]?.fallbackReason ?? null,
+      used: !hasDirectClassification,
+      source: hasDirectClassification ? "active_classifier" : "regression_threshold",
+      reason: hasDirectClassification
+        ? null
+        : (dPoints[0]?.fallbackReason ?? "classifier_not_active"),
     },
   };
 }

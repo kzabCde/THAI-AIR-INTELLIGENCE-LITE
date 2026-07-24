@@ -12,11 +12,36 @@ import { Section } from "@/components/ui/card";
 import { ForecastCard } from "@/components/province/province-charts";
 import { ProvinceSelect } from "@/components/controls/province-select";
 import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
-import { getModelDisplayName } from "@/lib/model-labels";
-import { PM25_CLASSES, pm25ClassDefinition } from "@/lib/pm25-classification";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { pm25ClassDefinition } from "@/lib/pm25-classification";
 
 export const metadata: Metadata = { title: "พยากรณ์คุณภาพอากาศ" };
 export const revalidate = 300;
+
+function confidenceStatus(value: number | null | undefined) {
+  if (value == null) {
+    return {
+      label: "กำลังประเมิน",
+      hint: "ระบบจะแสดงสถานะเมื่อมีข้อมูลเพียงพอ",
+    };
+  }
+  if (value >= 0.8) {
+    return {
+      label: "สูง",
+      hint: "แนวโน้มช่วงใกล้มีความชัดเจน",
+    };
+  }
+  if (value >= 0.6) {
+    return {
+      label: "ปานกลาง",
+      hint: "ควรติดตามข้อมูลล่าสุดประกอบ",
+    };
+  }
+  return {
+    label: "ควรติดตาม",
+    hint: "ระยะพยากรณ์ไกลอาจเปลี่ยนแปลงได้",
+  };
+}
 
 export default async function ForecastPage({
   searchParams,
@@ -47,7 +72,15 @@ export default async function ForecastPage({
   const avg24 = next24.length ? next24.reduce((a, p) => a + p.pm25, 0) / next24.length : 0;
   const avgConfidence = forecast.daily.length
     ? forecast.daily.reduce((a, p) => a + p.confidence, 0) / forecast.daily.length
-    : 0;
+    : null;
+  const directClassification = (
+    !forecast.fallback.used
+    && forecast.fallback.source === "active_classifier"
+  );
+  const primaryConfidence = confidenceStatus(
+    primary?.classConfidence ?? primary?.confidence ?? null,
+  );
+  const averageConfidence = confidenceStatus(avgConfidence);
   const TrendIcon = forecast.trend === "up" ? TrendingUp : forecast.trend === "down" ? TrendingDown : Wind;
   const trendLabel = forecast.trend === "up" ? "แนวโน้มเพิ่มขึ้น" : forecast.trend === "down" ? "แนวโน้มลดลง" : "ทรงตัว";
 
@@ -57,7 +90,7 @@ export default async function ForecastPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">พยากรณ์ PM2.5</h1>
           <p className="muted text-sm">
-            ขอบฟ้าพยากรณ์ 168 ชั่วโมง · โมเดล {getModelDisplayName(forecast.model)}
+            พยากรณ์ล่วงหน้า 7 วัน · อัปเดต <RelativeTime iso={forecast.generatedAt} />
           </p>
         </div>
         <ProvinceSelect value={province.id} />
@@ -85,41 +118,37 @@ export default async function ForecastPage({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-border/70 bg-background/70 p-3">
-                  <p className="muted text-xs">ความมั่นใจของ Classifier</p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">
-                    {primary.classConfidence != null
-                      ? `${Math.round(primary.classConfidence * 100)}%`
-                      : "ไม่มี Classifier"}
-                  </p>
-                  <p className="muted mt-1 text-xs">
-                    ไม่ใช่ความน่าจะเป็นที่ค่า PM2.5 จะตรงแบบจุด
-                  </p>
+                  <p className="muted text-xs">ความน่าเชื่อถือของผล</p>
+                  <p className="mt-1 text-2xl font-semibold">{primaryConfidence.label}</p>
+                  <p className="muted mt-1 text-xs">{primaryConfidence.hint}</p>
                 </div>
                 <div className="rounded-xl border border-border/70 bg-background/70 p-3">
-                  <p className="muted text-xs">ความสอดคล้องของสองโมเดล</p>
+                  <p className="muted text-xs">การตรวจสอบผล</p>
                   <p className="mt-2 inline-flex items-center gap-2 font-semibold">
                     {primary.classAgreement === true
-                      ? <><CheckCircle2 size={17} className="text-emerald-500" /> ตรงกัน</>
+                      ? <><CheckCircle2 size={17} className="text-emerald-500" /> ผลสอดคล้องกัน</>
                       : primary.classAgreement === false
-                        ? <><AlertTriangle size={17} className="text-amber-500" /> ไม่ตรงกัน</>
-                        : "ใช้ Regression fallback"}
+                        ? <><AlertTriangle size={17} className="text-amber-500" /> ควรติดตามเพิ่มเติม</>
+                        : <><CheckCircle2 size={17} className="text-sky-500" /> ตรวจตามเกณฑ์ PM2.5</>}
                   </p>
                   <p className="muted mt-1 text-xs">
-                    Classifier {primary.classifierPredictedClass ?? "–"} · Regression {primary.regressionDerivedClass ?? "–"}
+                    {primary.classAgreement === false
+                      ? "ระบบเลือกผลที่เหมาะสมสำหรับการแสดงผล"
+                      : "พร้อมใช้ประกอบการวางแผนประจำวัน"}
                   </p>
                 </div>
                 <div className="col-span-2 rounded-xl border border-border/70 bg-background/70 p-3">
-                  <p className="muted text-xs">แหล่งผลการจัดระดับ</p>
+                  <p className="muted text-xs">วิธีจัดระดับคุณภาพอากาศ</p>
                   <p className="mt-1 font-semibold">
-                    {primary.classificationSource === "active_classifier"
-                      ? "Direct Classification Model"
-                      : "Regression Threshold Fallback"}
+                    {directClassification
+                      ? "ใช้โมเดลจัดระดับโดยตรง"
+                      : "คำนวณจากค่าพยากรณ์ PM2.5"}
                   </p>
-                  {primary.fallbackUsed && (
-                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-                      ใช้ fallback: {primary.fallbackReason ?? "ไม่มี classifier ที่ผ่านเกณฑ์"}
-                    </p>
-                  )}
+                  <p className="muted mt-1 text-xs">
+                    {directClassification
+                      ? "ตัวจัดระดับผ่านการตรวจสอบและเปิดใช้งานแล้ว"
+                      : "แปลงค่า PM2.5 เป็นระดับคุณภาพอากาศตามเกณฑ์ของระบบ"}
+                  </p>
                 </div>
               </div>
             </div>
@@ -132,7 +161,7 @@ export default async function ForecastPage({
         <KpiCard label="ค่าปัจจุบัน" value={fmtPm25(current)} unit="µg/m³" icon={<Gauge size={16} />} accent={bandForPm25(current).color} hint={`AQI ${pm25ToAqi(current)}`} />
         <KpiCard label="คาดการณ์ 24 ชม." value={fmtPm25(avg24)} unit="µg/m³" icon={<CalendarClock size={16} />} accent={bandForPm25(avg24).color} hint={`AQI ${pm25ToAqi(avg24)} (เฉลี่ย)`} />
         <KpiCard label="ทิศทางแนวโน้ม" value={trendLabel} icon={<TrendIcon size={16} />} hint="เทียบ 7 วันข้างหน้า" />
-        <KpiCard label="ระดับความเชื่อมั่น" value={`${Math.round(avgConfidence * 100)}`} unit="%" icon={<Target size={16} />} hint="เฉลี่ยตลอดช่วงพยากรณ์" />
+        <KpiCard label="ความน่าเชื่อถือ" value={averageConfidence.label} icon={<Target size={16} />} hint={averageConfidence.hint} />
       </div>
 
       {/* Current weather context */}
@@ -171,102 +200,54 @@ export default async function ForecastPage({
 
       <ForecastCard hourly={forecast.hourly} daily={forecast.daily} />
 
-      {primary?.probabilities && (
-        <Section
-          title="ความน่าจะเป็นของระดับคุณภาพอากาศ"
-          description="ผลจาก Classification Model; ผลรวมของทั้ง 5 ระดับเท่ากับ 100%"
-        >
-          <div className="card card-pad space-y-3">
-            {PM25_CLASSES.map((item) => {
-              const probability = primary.probabilities?.[item.id] ?? 0;
-              return (
-                <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_5rem] items-center gap-3">
-                  <div>
-                    <div className="mb-1 flex items-center justify-between gap-2 text-sm">
-                      <span className="font-medium">Class {item.id} · {item.labelTh}</span>
-                      <span className="muted hidden text-xs sm:inline">{item.labelEn}</span>
-                    </div>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-foreground/10">
-                      <div
-                        className="h-full rounded-full transition-[width]"
-                        style={{ width: `${Math.max(0, Math.min(100, probability * 100))}%`, backgroundColor: item.color }}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-right font-semibold tabular-nums">
-                    {(probability * 100).toFixed(1)}%
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-      )}
-
       <Section
-        title="โมเดลและผลประเมิน"
-        description="Regression และ Classification ถูกเลือกและประเมินแยกกันในแต่ละจังหวัด"
+        title="สถานะการทำงาน"
+        description="สรุปวิธีที่ระบบใช้สร้างค่าพยากรณ์และระดับคุณภาพอากาศ"
       >
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-3">
           <div className="card card-pad">
             <p className="inline-flex items-center gap-2 font-semibold">
-              <Gauge size={16} /> Regression
+              <Gauge size={16} /> การพยากรณ์ PM2.5
             </p>
-            <p className="mt-1 font-mono text-sm">{forecast.models.regression.name}</p>
-            <p className="muted text-xs">
-              Run {forecast.models.regression.runId?.slice(0, 8) ?? "legacy"} ·
-              {forecast.models.regression.eligible ? " ผ่านเกณฑ์" : " fallback/legacy"}
+            <p className={`mt-3 text-lg font-semibold ${
+              forecast.models.regression.eligible ? "text-emerald-600" : "text-sky-600"
+            }`}>
+              {forecast.models.regression.eligible ? "พร้อมใช้งาน" : "ใช้วิธีสำรอง"}
             </p>
-            <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
-              {(["mae", "rmse", "r2", "skill_vs_persistence"] as const).map((key) => {
-                const value = Number(forecast.models.regression.metrics?.[key]);
-                const label = key === "skill_vs_persistence" ? "Skill" : key.toUpperCase();
-                return (
-                  <div key={key} className="rounded-lg bg-foreground/5 p-2">
-                    <p className="muted">{label}</p>
-                    <p className="mt-1 font-semibold tabular-nums">
-                      {Number.isFinite(value) ? value.toFixed(3) : "–"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
+            <p className="muted mt-1 text-xs">
+              {forecast.models.regression.eligible
+                ? "โมเดลหลักผ่านการตรวจสอบและเปิดใช้งานแล้ว"
+                : "ระบบยังสร้างพยากรณ์จากข้อมูลล่าสุดได้"}
+            </p>
           </div>
           <div className="card card-pad">
             <p className="inline-flex items-center gap-2 font-semibold">
-              <BrainCircuit size={16} /> Classification
+              <BrainCircuit size={16} /> การจัดระดับคุณภาพอากาศ
             </p>
-            <p className="mt-1 font-mono text-sm">
-              {forecast.models.classification?.name ?? "Regression threshold fallback"}
+            <p className={`mt-3 text-lg font-semibold ${
+              directClassification ? "text-emerald-600" : "text-sky-600"
+            }`}>
+              {directClassification ? "โมเดลพร้อมใช้งาน" : "คำนวณจากค่า PM2.5"}
             </p>
-            <p className="muted text-xs">
-              Run {forecast.models.classification?.runId?.slice(0, 8) ?? "–"} ·
-              {forecast.models.classification?.eligible ? " ผ่านเกณฑ์" : " ยังไม่มีโมเดลที่ผ่านเกณฑ์"}
+            <p className="muted mt-1 text-xs">
+              {directClassification
+                ? "ใช้ตัวจัดระดับที่ผ่านการตรวจสอบ"
+                : "ยังแสดงระดับและคำแนะนำสุขภาพได้ตามปกติ"}
             </p>
-            <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
-              {(["accuracy", "macro_precision", "macro_recall", "macro_f1"] as const).map((key) => {
-                const value = Number(forecast.models.classification?.metrics?.[key]);
-                const labels = {
-                  accuracy: "Accuracy",
-                  macro_precision: "Macro P",
-                  macro_recall: "Macro R",
-                  macro_f1: "Macro F1",
-                };
-                return (
-                  <div key={key} className="rounded-lg bg-foreground/5 p-2">
-                    <p className="muted">{labels[key]}</p>
-                    <p className="mt-1 font-semibold tabular-nums">
-                      {Number.isFinite(value) ? value.toFixed(3) : "–"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
+          </div>
+          <div className="card card-pad">
+            <p className="inline-flex items-center gap-2 font-semibold">
+              <CalendarClock size={16} /> การอัปเดตผล
+            </p>
+            <p className="mt-3 text-lg font-semibold text-emerald-600">มีข้อมูลพยากรณ์</p>
+            <p className="muted mt-1 text-xs">
+              อัปเดต <RelativeTime iso={forecast.generatedAt} />
+            </p>
           </div>
         </div>
       </Section>
 
-      <Section title="พยากรณ์รายวัน 7 วัน" description="ค่าเฉลี่ยและช่วงความเชื่อมั่น">
+      <Section title="พยากรณ์รายวัน 7 วัน" description="ค่าเฉลี่ย ค่าสูงสุด และระดับคุณภาพอากาศ">
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -276,7 +257,7 @@ export default async function ForecastPage({
                 <th className="px-4 py-2.5 text-right font-medium">AQI</th>
                 <th className="px-4 py-2.5 text-right font-medium">สูงสุด</th>
                 <th className="px-4 py-2.5 text-center font-medium">ระดับ</th>
-                <th className="px-4 py-2.5 text-right font-medium">ความเชื่อมั่น</th>
+                <th className="px-4 py-2.5 text-right font-medium">ความน่าเชื่อถือ</th>
               </tr>
             </thead>
             <tbody>
@@ -293,7 +274,9 @@ export default async function ForecastPage({
                         {band.labelTh}
                       </span>
                     </td>
-                    <td className="muted px-4 py-2.5 text-right tabular-nums">{Math.round(d.confidence * 100)}%</td>
+                    <td className="muted px-4 py-2.5 text-right">
+                      {confidenceStatus(d.confidence).label}
+                    </td>
                   </tr>
                 );
               })}

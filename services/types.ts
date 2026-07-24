@@ -79,8 +79,6 @@ export type ForecastModelInfo = {
   runId: string | null;
   eligible: boolean;
   trainedAt: string | null;
-  metrics: Record<string, unknown> | null;
-  baselineMetrics: Record<string, unknown> | null;
 };
 
 export type ProvinceForecast = {
@@ -147,21 +145,11 @@ export type DataFreshness = {
   rowCount: number | null;
 };
 
-export type ModelMetric = {
+/** Public-facing status for an active model. Training metrics stay in Python output. */
+export type ModelStatus = {
   modelName: string;
   provinceId: string;
   taskType: "regression" | "classification";
-  runId: string;
-  modelFamily: string | null;
   trainedAt: string;
-  trainingRows: number | null;
-  mae: number | null;
-  rmse: number | null;
-  r2: number | null;
-  isActive: boolean;
   eligible: boolean;
-  eligibilityReason: string | null;
-  metrics: Record<string, unknown> | null;
-  baselineMetrics: Record<string, unknown> | null;
-  modelParams: Record<string, unknown> | null;
 };

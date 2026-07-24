@@ -1,5 +1,5 @@
 import { handle, ok } from "@/lib/api-response";
-import { getCronLogs, getDataFreshness, getModelMetrics, getSyncJobs } from "@/services/system.service";
+import { getCronLogs, getDataFreshness, getModelStatuses, getSyncJobs } from "@/services/system.service";
 
 export const revalidate = 0;
 
@@ -10,7 +10,7 @@ export async function GET() {
       getSyncJobs(),
       getCronLogs(10),
       getDataFreshness(),
-      getModelMetrics(),
+      getModelStatuses(),
     ]);
     return ok({ jobs, cronLogs, freshness, models }, 60, 120);
   });

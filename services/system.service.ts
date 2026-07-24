@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSupabase, isSupabaseConfigured } from "./_db";
-import type { CronLog, DataFreshness, ModelMetric, SyncJob } from "./types";
+import type { CronLog, DataFreshness, ModelStatus, SyncJob } from "./types";
 
 export async function getSyncJobs(): Promise<SyncJob[]> {
   if (!isSupabaseConfigured) return [];
@@ -43,35 +43,21 @@ export async function getCronLogs(limit = 20): Promise<CronLog[]> {
   }));
 }
 
-/** Active regression and classification metrics (up to two rows per province). */
-export async function getModelMetrics(): Promise<ModelMetric[]> {
+/** Active model availability only; evaluation metrics remain in Python training output. */
+export async function getModelStatuses(): Promise<ModelStatus[]> {
   if (!isSupabaseConfigured) return [];
   const { data, error } = await getSupabase()
     .from("model_registry")
-    .select(
-      "model_name,province_id,task_type,run_id,model_family,trained_at,training_rows,mae,rmse,r2,is_active,eligibility_status,eligibility_reason,metrics,baseline_metrics,model_params",
-    )
+    .select("model_name,province_id,task_type,trained_at,eligibility_status")
     .eq("is_active", true)
-    .order("model_name", { ascending: true })
     .order("province_id", { ascending: true });
   if (error) throw error;
   return (data ?? []).map((r) => ({
     modelName: r.model_name,
     provinceId: r.province_id,
     taskType: r.task_type,
-    runId: r.run_id,
-    modelFamily: r.model_family,
     trainedAt: r.trained_at,
-    trainingRows: r.training_rows,
-    mae: r.mae != null ? Number(r.mae) : null,
-    rmse: r.rmse != null ? Number(r.rmse) : null,
-    r2: r.r2 != null ? Number(r.r2) : null,
-    isActive: r.is_active,
     eligible: r.eligibility_status,
-    eligibilityReason: r.eligibility_reason,
-    metrics: (r.metrics as Record<string, unknown> | null) ?? null,
-    baselineMetrics: (r.baseline_metrics as Record<string, unknown> | null) ?? null,
-    modelParams: (r.model_params as Record<string, unknown> | null) ?? null,
   }));
 }
 
