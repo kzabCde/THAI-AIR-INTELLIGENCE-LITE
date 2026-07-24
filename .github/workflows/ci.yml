@@ -36,7 +36,9 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm audit --omit=dev --audit-level=high
       - run: pip install -r requirements.txt
+      - run: pip install -r training/requirements.txt
       - run: npm run pycompile
+      - run: python -m pytest -q tests_py
       - run: python -m unittest discover -s tests -p 'test_*.py'
       - run: python -m json.tool package.json >/dev/null
       - run: python -m json.tool package-lock.json >/dev/null

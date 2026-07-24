@@ -118,23 +118,59 @@ export type Database = {
       };
       forecast_daily: {
         Row: {
+          class_agreement: boolean | null;
+          class_label_en: string | null;
+          class_label_th: string | null;
+          class_probabilities: Json | null;
+          classification_source: string | null;
+          classifier_model_name: string | null;
+          classifier_predicted_class: number | null;
+          classifier_run_id: string | null;
+          confidence: number | null;
           created_at: string | null;
+          data_freshness: string | null;
+          displayed_class: number | null;
+          fallback_reason: string | null;
+          fallback_used: boolean;
+          feature_version: string | null;
           forecast_at: string;
+          forecast_horizon_days: number | null;
           id: number;
           model_name: string;
           pm25_max_forecast: number | null;
           pm25_mean_forecast: number;
           province_id: string;
+          regression_derived_class: number | null;
+          regression_model_name: string | null;
+          regression_run_id: string | null;
           target_date: string;
         };
         Insert: {
+          class_agreement?: boolean | null;
+          class_label_en?: string | null;
+          class_label_th?: string | null;
+          class_probabilities?: Json | null;
+          classification_source?: string | null;
+          classifier_model_name?: string | null;
+          classifier_predicted_class?: number | null;
+          classifier_run_id?: string | null;
+          confidence?: number | null;
           created_at?: string | null;
+          data_freshness?: string | null;
+          displayed_class?: number | null;
+          fallback_reason?: string | null;
+          fallback_used?: boolean;
+          feature_version?: string | null;
           forecast_at: string;
+          forecast_horizon_days?: number | null;
           id?: number;
           model_name: string;
           pm25_max_forecast?: number | null;
           pm25_mean_forecast: number;
           province_id: string;
+          regression_derived_class?: number | null;
+          regression_model_name?: string | null;
+          regression_run_id?: string | null;
           target_date: string;
         };
         Update: Partial<Database["public"]["Tables"]["forecast_daily"]["Insert"]>;
@@ -246,8 +282,19 @@ export type Database = {
       };
       model_registry: {
         Row: {
+          activated_at: string | null;
+          artifact_ref: string | null;
+          baseline_metrics: Json;
+          class_distribution: Json;
+          code_version: string | null;
+          eligibility_reason: string | null;
+          eligibility_status: boolean;
+          feature_schema: Json | null;
+          feature_version: string | null;
           id: number;
           model_name: string;
+          model_family: string | null;
+          model_version: string | null;
           province_id: string;
           run_id: string;
           data_cutoff: string | null;
@@ -256,8 +303,15 @@ export type Database = {
           test_start: string | null;
           test_end: string | null;
           source: string | null;
+          task_type: "regression" | "classification";
+          threshold_version: string | null;
           trained_at: string;
           training_rows: number | null;
+          validation_rows: number | null;
+          validation_start: string | null;
+          validation_end: string | null;
+          test_rows: number | null;
+          metrics: Json;
           mae: number | null;
           rmse: number | null;
           r2: number | null;
@@ -266,8 +320,19 @@ export type Database = {
           created_at: string | null;
         };
         Insert: {
+          activated_at?: string | null;
+          artifact_ref?: string | null;
+          baseline_metrics?: Json;
+          class_distribution?: Json;
+          code_version?: string | null;
+          eligibility_reason?: string | null;
+          eligibility_status?: boolean;
+          feature_schema?: Json | null;
+          feature_version?: string | null;
           id?: number;
           model_name: string;
+          model_family?: string | null;
+          model_version?: string | null;
           province_id: string;
           run_id?: string;
           data_cutoff?: string | null;
@@ -276,8 +341,15 @@ export type Database = {
           test_start?: string | null;
           test_end?: string | null;
           source?: string | null;
+          task_type?: "regression" | "classification";
+          threshold_version?: string | null;
           trained_at?: string;
           training_rows?: number | null;
+          validation_rows?: number | null;
+          validation_start?: string | null;
+          validation_end?: string | null;
+          test_rows?: number | null;
+          metrics?: Json;
           mae?: number | null;
           rmse?: number | null;
           r2?: number | null;
@@ -362,6 +434,16 @@ export type Database = {
       aqi_category: { Args: { aqi: number }; Returns: string };
       fn_activate_model: {
         Args: { p_province_id: string; p_model_name: string; p_run_id?: string | null };
+        Returns: Json;
+      };
+      fn_activate_model_task: {
+        Args: {
+          p_province_id: string;
+          p_task_type: string;
+          p_model_name: string;
+          p_run_id?: string | null;
+          p_allow_ineligible?: boolean;
+        };
         Returns: Json;
       };
       fn_cleanup_old_data: { Args: Record<string, never>; Returns: Json };
