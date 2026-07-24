@@ -1,5 +1,6 @@
 import type { AqiBand } from "@/lib/aqi";
 import type { IsanProvince } from "@/lib/isan";
+import type { PM25ClassId } from "@/lib/pm25-classification";
 
 /** Current snapshot for one province, merged across all measurement domains. */
 export type ProvinceSnapshot = {
@@ -58,7 +59,28 @@ export type ForecastPoint = {
   t: string;
   pm25: number;
   pm25Max?: number;
-  confidence: number; // 0–1
+  /** Horizon confidence used by the numeric forecast visualization. */
+  confidence: number;
+  airQualityClass?: PM25ClassId;
+  labelTh?: string;
+  labelEn?: string;
+  classConfidence?: number | null;
+  probabilities?: Record<PM25ClassId, number>;
+  regressionDerivedClass?: PM25ClassId;
+  classifierPredictedClass?: PM25ClassId | null;
+  classAgreement?: boolean | null;
+  classificationSource?: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string | null;
+};
+
+export type ForecastModelInfo = {
+  name: string;
+  runId: string | null;
+  eligible: boolean;
+  trainedAt: string | null;
+  metrics: Record<string, unknown> | null;
+  baselineMetrics: Record<string, unknown> | null;
 };
 
 export type ProvinceForecast = {
@@ -70,6 +92,22 @@ export type ProvinceForecast = {
   daily: ForecastPoint[]; // up to 7d
   trend: "up" | "down" | "flat";
   peak: ForecastPoint | null;
+  dataFreshness: string | null;
+  featureVersion: string | null;
+  models: {
+    regression: ForecastModelInfo;
+    classification: ForecastModelInfo | null;
+  };
+  consistency: {
+    regressionDerivedClass: PM25ClassId | null;
+    classifierPredictedClass: PM25ClassId | null;
+    agreement: boolean | null;
+  };
+  fallback: {
+    used: boolean;
+    source: string | null;
+    reason: string | null;
+  };
 };
 
 export type Paginated<T> = {
@@ -112,11 +150,18 @@ export type DataFreshness = {
 export type ModelMetric = {
   modelName: string;
   provinceId: string;
+  taskType: "regression" | "classification";
+  runId: string;
+  modelFamily: string | null;
   trainedAt: string;
   trainingRows: number | null;
   mae: number | null;
   rmse: number | null;
   r2: number | null;
   isActive: boolean;
+  eligible: boolean;
+  eligibilityReason: string | null;
+  metrics: Record<string, unknown> | null;
+  baselineMetrics: Record<string, unknown> | null;
   modelParams: Record<string, unknown> | null;
 };

@@ -1,5 +1,9 @@
 # Production Runbook
 
+For the staged dual-model rollout and non-destructive rollback, follow
+[DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md). The new workflow is manual
+and defaults to dry-run.
+
 ## Deploy
 
 1. Deploy application changes from a reviewed pull request.

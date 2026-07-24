@@ -8,6 +8,7 @@ import { isNetworkRestrictedError } from "@/services/_db";
 import { Section, CardHeader } from "@/components/ui/card";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState, EmptyState } from "@/components/ui/states";
 import { getModelLabel } from "@/lib/model-labels";
+import { ISAN_PROVINCES } from "@/lib/isan";
 
 export const metadata: Metadata = { title: "สถานะระบบ" };
 export const revalidate = 300;
@@ -74,11 +75,74 @@ export default async function SystemPage() {
         </div>
       </Section>
 
+      {modelMetrics.length > 0 && (
+        <Section
+          title="สถานะโมเดลรายจังหวัด"
+          description="แต่ละจังหวัดมี Active Regression และ Active Classification แยกจากกัน; หากไม่มี Classifier ระบบใช้ Regression Threshold"
+        >
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="muted border-b border-border text-left text-xs">
+                  <th className="px-4 py-2.5 font-medium">จังหวัด</th>
+                  <th className="px-4 py-2.5 font-medium">Regression</th>
+                  <th className="px-4 py-2.5 font-medium">Classification</th>
+                  <th className="px-4 py-2.5 font-medium">สถานะ</th>
+                  <th className="px-4 py-2.5 text-right font-medium">เทรนล่าสุด</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ISAN_PROVINCES.map((province) => {
+                  const rows = modelMetrics.filter((row) => row.provinceId === province.id);
+                  const regression = rows.find((row) => row.taskType === "regression");
+                  const classification = rows.find((row) => row.taskType === "classification");
+                  const latest = [...rows].sort((a, b) =>
+                    b.trainedAt.localeCompare(a.trainedAt),
+                  )[0]?.trainedAt ?? null;
+                  return (
+                    <tr key={province.id} className="border-b border-border/60 last:border-0">
+                      <td className="px-4 py-2.5">
+                        <p className="font-medium">{province.nameTh}</p>
+                        <p className="muted text-xs">{province.id}</p>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <p className="font-mono text-xs">{regression?.modelName ?? "–"}</p>
+                        <p className="muted text-xs">
+                          {regression?.runId.slice(0, 8) ?? "ไม่มี active model"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <p className="font-mono text-xs">
+                          {classification?.modelName ?? "Regression threshold"}
+                        </p>
+                        <p className="muted text-xs">
+                          {classification?.runId.slice(0, 8) ?? "fallback"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {classification?.eligible
+                          ? <span className="text-emerald-600">สองโมเดลพร้อมใช้</span>
+                          : <span className="text-amber-600">ใช้ classification fallback</span>}
+                      </td>
+                      <td className="muted px-4 py-2.5 text-right text-xs">
+                        <RelativeTime iso={latest} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {modelMetrics.length > 0 && (() => {
-        const byModel = modelMetrics.reduce<Record<string, typeof modelMetrics>>((acc, m) => {
+        const byModel = modelMetrics
+          .filter((m) => m.taskType === "regression")
+          .reduce<Record<string, typeof modelMetrics>>((acc, m) => {
           (acc[m.modelName] ??= []).push(m);
           return acc;
-        }, {});
+          }, {});
         return (
           <Section
             title="โมเดลพยากรณ์ที่ใช้งาน"

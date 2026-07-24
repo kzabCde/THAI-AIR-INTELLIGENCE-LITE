@@ -1,6 +1,12 @@
 import "server-only";
 
 import { ISAN_PROVINCES } from "@/lib/isan";
+import {
+  normalizeClassProbabilities,
+  pm25ClassDefinition,
+  pm25ClassForValue,
+  type PM25ClassId,
+} from "@/lib/pm25-classification";
 import type { TablesInsert } from "@/lib/supabase/database.types";
 import { getServiceSupabase, getSupabase, isSupabaseConfigured } from "./_db";
 import { getDailyHistory } from "./daily-summary.service";
@@ -56,11 +62,26 @@ export function buildForecast(
     const mean = Math.max(1, base + slope * d * damp);
     const date = new Date(generatedAt);
     date.setUTCDate(date.getUTCDate() + d);
+    const classId = pm25ClassForValue(mean);
+    const definition = pm25ClassDefinition(classId);
     daily.push({
       t: date.toISOString().slice(0, 10),
       pm25: +mean.toFixed(1),
       pm25Max: +(mean * 1.4).toFixed(1),
       confidence: +Math.max(0.4, 0.92 - d * 0.07).toFixed(2),
+      airQualityClass: classId,
+      labelTh: definition.labelTh,
+      labelEn: definition.labelEn,
+      classConfidence: null,
+      probabilities: Object.fromEntries(
+        [1, 2, 3, 4, 5].map((id) => [id, id === classId ? 1 : 0]),
+      ) as Record<PM25ClassId, number>,
+      regressionDerivedClass: classId,
+      classifierPredictedClass: null,
+      classAgreement: null,
+      classificationSource: "regression_threshold",
+      fallbackUsed: true,
+      fallbackReason: "typescript_forecast_fallback",
     });
   }
 
@@ -93,6 +114,29 @@ export function buildForecast(
     daily,
     trend,
     peak,
+    dataFreshness: null,
+    featureVersion: null,
+    models: {
+      regression: {
+        name: FORECAST_MODEL,
+        runId: null,
+        eligible: false,
+        trainedAt: null,
+        metrics: null,
+        baselineMetrics: null,
+      },
+      classification: null,
+    },
+    consistency: {
+      regressionDerivedClass: daily[0]?.regressionDerivedClass ?? null,
+      classifierPredictedClass: null,
+      agreement: null,
+    },
+    fallback: {
+      used: true,
+      source: "regression_threshold",
+      reason: "typescript_forecast_fallback",
+    },
   };
 }
 
@@ -115,7 +159,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
 
   // Both tables are queried independently — sorted by forecast_at DESC so the
   // latest model batch always wins, regardless of what model_name it carries.
-  const [{ data: hourlyRaw }, { data: dailyRaw }] = await Promise.all([
+  const [{ data: hourlyRaw }, { data: dailyRaw }, { data: modelRows }] = await Promise.all([
     sb
       .from("forecast_hourly")
       .select("target_time, pm25_forecast, forecast_at, model_name")
@@ -125,11 +169,20 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       .limit(FORECAST_HORIZON_HOURS),
     sb
       .from("forecast_daily")
-      .select("target_date, pm25_mean_forecast, pm25_max_forecast, forecast_at, model_name")
+      .select(
+        "target_date,pm25_mean_forecast,pm25_max_forecast,forecast_at,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_used,fallback_reason,data_freshness,feature_version",
+      )
       .eq("province_id", provinceId)
       .order("forecast_at", { ascending: false })
       .order("target_date", { ascending: true })
       .limit(FORECAST_HORIZON_DAYS),
+    sb
+      .from("model_registry")
+      .select(
+        "task_type,model_name,run_id,eligibility_status,trained_at,metrics,baseline_metrics",
+      )
+      .eq("province_id", provinceId)
+      .eq("is_active", true),
   ]);
 
   // forecast_daily is the source of truth for the ML pipeline. Pick exactly
@@ -142,12 +195,34 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
   const hourly = (hourlyRaw ?? []).filter((r) => r.forecast_at === forecastAt);
   const modelName = daily[0]?.model_name ?? hourly[0]?.model_name ?? FORECAST_MODEL;
   const start = new Date(forecastAt).getTime();
-  const dPoints: ForecastPoint[] = daily.map((r, i) => ({
-    t: r.target_date,
-    pm25: r.pm25_mean_forecast,
-    pm25Max: r.pm25_max_forecast ?? undefined,
-    confidence: +Math.max(0.4, 0.92 - (i + 1) * 0.07).toFixed(2),
-  }));
+  const dPoints: ForecastPoint[] = daily.map((r, i) => {
+    const regressionClass = (
+      r.regression_derived_class ?? pm25ClassForValue(r.pm25_mean_forecast)
+    ) as PM25ClassId;
+    const displayedClass = (r.displayed_class ?? regressionClass) as PM25ClassId;
+    const definition = pm25ClassDefinition(displayedClass);
+    const probabilities = normalizeClassProbabilities(r.class_probabilities)
+      ?? Object.fromEntries(
+        [1, 2, 3, 4, 5].map((id) => [id, id === displayedClass ? 1 : 0]),
+      ) as Record<PM25ClassId, number>;
+    return {
+      t: r.target_date,
+      pm25: r.pm25_mean_forecast,
+      pm25Max: r.pm25_max_forecast ?? undefined,
+      confidence: +Math.max(0.4, 0.92 - (i + 1) * 0.07).toFixed(2),
+      airQualityClass: displayedClass,
+      labelTh: r.class_label_th ?? definition.labelTh,
+      labelEn: r.class_label_en ?? definition.labelEn,
+      classConfidence: r.confidence != null ? Number(r.confidence) : null,
+      probabilities,
+      regressionDerivedClass: regressionClass,
+      classifierPredictedClass: r.classifier_predicted_class as PM25ClassId | null,
+      classAgreement: r.class_agreement,
+      classificationSource: r.classification_source ?? "regression_threshold",
+      fallbackUsed: r.fallback_used,
+      fallbackReason: r.fallback_reason,
+    };
+  });
   const hPoints: ForecastPoint[] = hourly.length
     ? hourly.map((r) => {
         const dt = new Date(r.target_time).getTime();
@@ -172,6 +247,9 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
   const last = dPoints[dPoints.length - 1]?.pm25 ?? current ?? 0;
   const base = current ?? 0;
   const peak = hPoints.reduce<ForecastPoint | null>((m, p) => (!m || p.pm25 > m.pm25 ? p : m), null);
+  const newest = daily[0];
+  const regressionRegistry = modelRows?.find((row) => row.task_type === "regression");
+  const classificationRegistry = modelRows?.find((row) => row.task_type === "classification");
 
   return {
     provinceId,
@@ -182,6 +260,45 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
     daily: dPoints,
     trend: last > base + 2 ? "up" : last < base - 2 ? "down" : "flat",
     peak,
+    dataFreshness: newest?.data_freshness ?? null,
+    featureVersion: newest?.feature_version ?? null,
+    models: {
+      regression: {
+        name: newest?.regression_model_name ?? modelName,
+        runId: newest?.regression_run_id ?? regressionRegistry?.run_id ?? null,
+        eligible: regressionRegistry?.eligibility_status ?? true,
+        trainedAt: regressionRegistry?.trained_at ?? null,
+        metrics: (regressionRegistry?.metrics as Record<string, unknown> | null) ?? null,
+        baselineMetrics:
+          (regressionRegistry?.baseline_metrics as Record<string, unknown> | null) ?? null,
+      },
+      classification: newest?.classifier_model_name || classificationRegistry
+        ? {
+            name: newest?.classifier_model_name
+              ?? classificationRegistry!.model_name,
+            runId: newest?.classifier_run_id
+              ?? classificationRegistry?.run_id
+              ?? null,
+            eligible: classificationRegistry?.eligibility_status ?? false,
+            trainedAt: classificationRegistry?.trained_at ?? null,
+            metrics:
+              (classificationRegistry?.metrics as Record<string, unknown> | null) ?? null,
+            baselineMetrics:
+              (classificationRegistry?.baseline_metrics as Record<string, unknown> | null)
+              ?? null,
+          }
+        : null,
+    },
+    consistency: {
+      regressionDerivedClass: dPoints[0]?.regressionDerivedClass ?? null,
+      classifierPredictedClass: dPoints[0]?.classifierPredictedClass ?? null,
+      agreement: dPoints[0]?.classAgreement ?? null,
+    },
+    fallback: {
+      used: dPoints[0]?.fallbackUsed ?? true,
+      source: dPoints[0]?.classificationSource ?? "regression_threshold",
+      reason: dPoints[0]?.fallbackReason ?? null,
+    },
   };
 }
 
@@ -208,6 +325,8 @@ export async function generateAndStoreForecasts(): Promise<number> {
       });
     }
     for (const p of f.daily) {
+      const classId = pm25ClassForValue(p.pm25);
+      const definition = pm25ClassDefinition(classId);
       dailyRows.push({
         province_id: province.id,
         forecast_at: f.generatedAt,
@@ -215,6 +334,17 @@ export async function generateAndStoreForecasts(): Promise<number> {
         pm25_mean_forecast: p.pm25,
         pm25_max_forecast: p.pm25Max ?? null,
         model_name: FORECAST_MODEL,
+        regression_model_name: FORECAST_MODEL,
+        regression_derived_class: classId,
+        displayed_class: classId,
+        class_label_th: definition.labelTh,
+        class_label_en: definition.labelEn,
+        class_probabilities: Object.fromEntries(
+          [1, 2, 3, 4, 5].map((id) => [id, id === classId ? 1 : 0]),
+        ),
+        classification_source: "regression_threshold",
+        fallback_used: true,
+        fallback_reason: "typescript_forecast_fallback",
       });
     }
   }

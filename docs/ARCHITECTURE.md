@@ -1,5 +1,7 @@
 # Architecture — Isan Air Intelligence
 
+> Regression + classification design: [DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md)
+
 ## Overview
 
 A server-rendered Next.js dashboard for the 20 Northeastern Thailand (Isan)

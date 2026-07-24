@@ -9,6 +9,18 @@ export const MODEL_LABELS: Record<string, string> = {
   "surrogate-v2": "Validated Ridge surrogate",
   "stacking-v2": "Validated stacking ensemble",
   "ensemble6-pm25-v3": "Ensemble 6 โมเดล: RF, AdaBoost, GBM, XGBoost, LightGBM และ CatBoost",
+  "random-forest-regressor": "Random Forest Regressor",
+  "adaboost-regressor": "AdaBoost Regressor",
+  "gradient-boosting-regressor": "Gradient Boosting Regressor",
+  "xgboost-regressor": "XGBoost Regressor",
+  "lightgbm-regressor": "LightGBM Regressor",
+  "catboost-regressor": "CatBoost Regressor",
+  "random-forest-classifier": "Random Forest Classifier",
+  "adaboost-classifier": "AdaBoost Classifier",
+  "gradient-boosting-classifier": "Gradient Boosting Classifier",
+  "xgboost-classifier": "XGBoost Classifier",
+  "lightgbm-classifier": "LightGBM Classifier",
+  "catboost-classifier": "CatBoost Classifier",
 };
 
 export function getModelLabel(modelName: string): string {

@@ -1,5 +1,8 @@
 # Model Methodology
 
+The staged upgrade trains numeric regression and five-class classification
+independently. See [DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md).
+
 This project serves PM2.5 forecasts through a lightweight production-safe surrogate. Training selects an XGBoost or LightGBM teacher with rolling-origin validation, then distils its predictions into a standardized Ridge artifact. Runtime evaluates the stored scaler, coefficients, intercept, and feature order from `model_registry`; feature importance is never used as a prediction coefficient.
 
 ## Production guardrails

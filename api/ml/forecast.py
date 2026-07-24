@@ -19,6 +19,14 @@ from zoneinfo import ZoneInfo
 import numpy as np
 from supabase import Client, create_client
 
+from training.pm25_classes import (
+    CLASS_IDS,
+    THRESHOLD_VERSION,
+    class_definition,
+    class_for_pm25,
+    normalize_probabilities,
+)
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 ML_SECRET = os.environ.get("ML_SECRET", "")
@@ -32,6 +40,15 @@ ENSEMBLE6_MODEL = "ensemble6-pm25-v3"
 PERSIST_MODEL = "persist-revert-v2"
 LEGACY_STACKING_MODEL = "stacking-v1"
 LEGACY_BASE_MODELS = {"lightgbm-v1", "xgboost-v1"}
+SERVING_POLICY = os.environ.get(
+    "PM25_SERVING_POLICY",
+    "classifier_with_regression_fallback",
+)
+SUPPORTED_SERVING_POLICIES = {
+    "direct_classifier",
+    "regression_threshold",
+    "classifier_with_regression_fallback",
+}
 
 FEATURE_COLS = [
     "pm25_mean",
@@ -91,23 +108,39 @@ def get_client() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def load_active_models(sb: Client) -> dict[str, dict]:
-    """Load exactly one active model per province; duplicates are a hard error."""
+def load_active_task_models(sb: Client) -> dict[str, dict[str, dict]]:
+    """Load at most one active model per province and task."""
     resp = (
         sb.table("model_registry")
-        .select("province_id,model_name,model_params,mae,rmse,r2")
+        .select(
+            "province_id,task_type,model_name,model_params,run_id,"
+            "mae,rmse,r2,metrics,baseline_metrics,eligibility_status"
+        )
         .eq("is_active", True)
         .execute()
     )
-    result: dict[str, dict] = {}
+    result: dict[str, dict[str, dict]] = {
+        "regression": {},
+        "classification": {},
+    }
     for row in resp.data or []:
         province_id = row.get("province_id")
         if not province_id:
             continue
-        if province_id in result:
-            raise RuntimeError(f"multiple active models for {province_id}")
-        result[province_id] = row
+        task_type = row.get("task_type") or "regression"
+        if task_type not in result:
+            raise RuntimeError(f"unsupported active model task {task_type}")
+        if province_id in result[task_type]:
+            raise RuntimeError(
+                f"multiple active models for {province_id} task {task_type}"
+            )
+        result[task_type][province_id] = row
     return result
+
+
+def load_active_models(sb: Client) -> dict[str, dict]:
+    """Backward-compatible regression-only loader used by existing tests."""
+    return load_active_task_models(sb)["regression"]
 
 
 def load_recent_features(sb: Client) -> dict[str, list[dict]]:
@@ -213,6 +246,53 @@ def evaluate_surrogate(features: np.ndarray, artifact: dict) -> float:
     return float(np.dot((features - means) / safe_scales, coefficients) + float(artifact.get("intercept", 0.0)))
 
 
+def evaluate_portable_classifier(features: np.ndarray, artifact: dict) -> dict[str, float]:
+    """Evaluate the standardized logistic artifact saved by dual training."""
+    cols = artifact.get("feature_cols") or []
+    classes = [int(value) for value in artifact.get("classes") or []]
+    coefficients = np.asarray(artifact.get("coefficients") or [], dtype=float)
+    intercepts = np.asarray(artifact.get("intercepts") or [], dtype=float)
+    means = np.asarray(artifact.get("scaler_mean") or [], dtype=float)
+    scales = np.asarray(artifact.get("scaler_scale") or [], dtype=float)
+    if (
+        artifact.get("threshold_version") != THRESHOLD_VERSION
+        or not cols
+        or len(cols) != len(features)
+        or len(means) != len(features)
+        or len(scales) != len(features)
+        or not classes
+        or any(class_id not in CLASS_IDS for class_id in classes)
+    ):
+        raise ValueError("invalid portable classifier schema")
+    safe_scales = np.where(
+        np.isfinite(scales) & (np.abs(scales) > 1e-12),
+        scales,
+        1.0,
+    )
+    scaled = (features - means) / safe_scales
+    if coefficients.ndim != 2 or coefficients.shape[1] != len(features):
+        raise ValueError("invalid portable classifier coefficient dimensions")
+    if len(classes) == 2 and coefficients.shape[0] == 1 and len(intercepts) == 1:
+        decision = float(np.dot(coefficients[0], scaled) + intercepts[0])
+        logits = np.asarray([0.0, decision], dtype=float)
+    elif coefficients.shape[0] == len(classes) and len(intercepts) == len(classes):
+        logits = coefficients @ scaled + intercepts
+    else:
+        raise ValueError("invalid portable classifier class dimensions")
+    if not np.all(np.isfinite(logits)):
+        raise ValueError("non-finite portable classifier output")
+    shifted = logits - np.max(logits)
+    compact = np.exp(shifted) / np.exp(shifted).sum()
+    aligned = np.zeros(len(CLASS_IDS), dtype=float)
+    for index, class_id in enumerate(classes):
+        aligned[class_id - 1] = compact[index]
+    normalized = normalize_probabilities(aligned)
+    return {
+        str(class_id): float(normalized[class_id - 1])
+        for class_id in CLASS_IDS
+    }
+
+
 def persist_revert_forecast(rolling: list[float], h: int, alpha: float = 0.85) -> float:
     current = rolling[-1] if rolling else 20.0
     roll7 = float(np.mean(rolling[-7:])) if rolling else current
@@ -273,14 +353,20 @@ def _predict_model(
             float(params.get("w_persist", 0.3)) * fallback
             + float(params.get("w_ml", 0.7)) * ml_prediction
         )
-    if model_name not in {STACKING_MODEL, SURROGATE_MODEL, ENSEMBLE6_MODEL}:
+    if (
+        model_name not in {STACKING_MODEL, SURROGATE_MODEL, ENSEMBLE6_MODEL}
+        and not params.get("surrogate")
+    ):
         return fallback
     artifact = params.get("surrogate") or {}
     try:
         surrogate = evaluate_surrogate(features, artifact)
     except (TypeError, ValueError):
         return fallback
-    if model_name in {SURROGATE_MODEL, ENSEMBLE6_MODEL}:
+    if (
+        model_name in {SURROGATE_MODEL, ENSEMBLE6_MODEL}
+        or not params.get("stacking")
+    ):
         return surrogate
     stack = params.get("stacking") or {}
     baseline = rolling[-1] if stack.get("baseline") == "persistence-current-day" else fallback
@@ -292,7 +378,9 @@ def _predict_model(
 
 
 def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
-    active_models = load_active_models(sb)
+    active_tasks = load_active_task_models(sb)
+    active_models = active_tasks["regression"]
+    active_classifiers = active_tasks["classification"]
     recent = load_recent_features(sb)
     needs_legacy = any(
         row.get("model_name") in LEGACY_BASE_MODELS | {LEGACY_STACKING_MODEL}
@@ -306,7 +394,7 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
     for province_id in PROVINCE_IDS:
         model_row = active_models.get(province_id)
         history = recent.get(province_id, [])
-        if not model_row or not history:
+        if not history:
             continue
 
         last_row = history[-1]
@@ -317,8 +405,19 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
         if not rolling:
             continue
 
-        model_name = model_row["model_name"]
-        params = model_row.get("model_params") or {}
+        fallback_regression = model_row is None
+        model_name = model_row["model_name"] if model_row else PERSIST_MODEL
+        params = model_row.get("model_params") or {} if model_row else {}
+        regression_run_id = model_row.get("run_id") if model_row else None
+        classifier_row = active_classifiers.get(province_id)
+        classifier_params = (
+            classifier_row.get("model_params") or {}
+            if classifier_row else {}
+        )
+        classifier_artifact = classifier_params.get("portable_classifier") or {}
+        serving_policy = classifier_params.get("serving_policy") or SERVING_POLICY
+        if serving_policy not in SUPPORTED_SERVING_POLICIES:
+            serving_policy = "classifier_with_regression_fallback"
         artifact = params.get("surrogate") or {}
         feature_cols = artifact.get("feature_cols") or FEATURE_COLS
         upper_q90 = max(0.0, float(params.get("upper_residual_q90", 0.0)))
@@ -343,6 +442,40 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 else prediction * 1.35
             )
             upper = float(np.clip(upper, prediction, 500.0))
+            regression_class = class_for_pm25(prediction)
+            classifier_class = None
+            probabilities = None
+            confidence = None
+            classification_source = "regression_threshold"
+            fallback_used = True
+            fallback_reason = "no_eligible_active_classifier"
+            if classifier_row and serving_policy != "regression_threshold":
+                try:
+                    probabilities = evaluate_portable_classifier(
+                        features,
+                        classifier_artifact,
+                    )
+                    classifier_class = max(
+                        CLASS_IDS,
+                        key=lambda class_id: probabilities[str(class_id)],
+                    )
+                    confidence = probabilities[str(classifier_class)]
+                    classification_source = "active_classifier"
+                    fallback_used = False
+                    fallback_reason = None
+                except (TypeError, ValueError):
+                    fallback_reason = "invalid_classifier_artifact"
+            displayed_class = (
+                classifier_class
+                if classification_source == "active_classifier"
+                else regression_class
+            )
+            if probabilities is None:
+                probabilities = {
+                    str(class_id): 1.0 if class_id == displayed_class else 0.0
+                    for class_id in CLASS_IDS
+                }
+            definition = class_definition(displayed_class)
             rows_out.append({
                 "province_id": province_id,
                 "forecast_at": forecast_at,
@@ -350,6 +483,41 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 "pm25_mean_forecast": round(prediction, 2),
                 "pm25_max_forecast": round(upper, 2),
                 "model_name": model_name,
+                "regression_model_name": model_name,
+                "regression_run_id": regression_run_id,
+                "regression_derived_class": regression_class,
+                "classifier_predicted_class": classifier_class,
+                "displayed_class": displayed_class,
+                "class_label_th": definition.label_th,
+                "class_label_en": definition.label_en,
+                "classifier_model_name": (
+                    classifier_row.get("model_name") if classifier_row else None
+                ),
+                "classifier_run_id": (
+                    classifier_row.get("run_id") if classifier_row else None
+                ),
+                "confidence": (
+                    round(float(confidence), 6)
+                    if confidence is not None else None
+                ),
+                "class_probabilities": probabilities,
+                "class_agreement": (
+                    classifier_class == regression_class
+                    if classifier_class is not None else None
+                ),
+                "classification_source": classification_source,
+                "fallback_used": fallback_used or fallback_regression,
+                "fallback_reason": (
+                    "persistence_regression_fallback"
+                    if fallback_regression else fallback_reason
+                ),
+                "data_freshness": f"{as_of.isoformat()}T23:59:59+07:00",
+                "feature_version": (
+                    params.get("feature_version")
+                    or classifier_params.get("feature_version")
+                    or "daily-observed-v3"
+                ),
+                "forecast_horizon_days": h,
             })
             rolling.append(prediction)
 
