@@ -36,6 +36,15 @@ def test_standardized_surrogate_can_blend_with_persistence():
     assert ml.evaluate_surrogate(features, artifact) == pytest.approx(14.75)
 
 
+def test_legacy_surrogate_does_not_require_a_persistence_feature():
+    artifact = surrogate_artifact()
+    artifact["feature_cols"] = ["legacy"] + artifact["feature_cols"][1:]
+    assert ml.evaluate_surrogate(
+        np.asarray([15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1)),
+        artifact,
+    ) == 14.0
+
+
 def test_ensemble6_uses_registered_runtime_surrogate():
     features = np.asarray([15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1))
     prediction = ml._predict_model(
@@ -104,6 +113,26 @@ def test_portable_classifier_returns_five_normalized_probabilities():
     assert sum(probabilities.values()) == pytest.approx(1.0)
     assert probabilities["2"] == 0
     assert probabilities["4"] == 0
+
+
+def test_portable_classifier_can_blend_with_current_day_class():
+    size = len(ml.FEATURE_COLS)
+    artifact = {
+        "threshold_version": ml.THRESHOLD_VERSION,
+        "feature_cols": ml.FEATURE_COLS,
+        "classes": [1, 2],
+        "coefficients": [[0.0] * size],
+        "intercepts": [10.0],
+        "scaler_mean": [0.0] * size,
+        "scaler_scale": [1.0] * size,
+        "model_weight": 0.25,
+        "persistence_feature": "pm25_mean",
+    }
+    features = np.zeros(size)
+    features[ml.FEATURE_COLS.index("pm25_mean")] = 60.0
+    probabilities = ml.evaluate_portable_classifier(features, artifact)
+    assert probabilities["4"] == pytest.approx(0.75)
+    assert probabilities["2"] == pytest.approx(0.25, abs=1e-4)
 
 
 def test_portable_classifier_rejects_threshold_version_mismatch():

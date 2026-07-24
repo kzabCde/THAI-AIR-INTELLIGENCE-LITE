@@ -539,6 +539,23 @@ def _powered_sample_weights(y: np.ndarray, power: float) -> np.ndarray:
     return weights / max(float(np.mean(weights)), 1e-12)
 
 
+def _blend_classifier_probabilities(
+    probabilities: np.ndarray,
+    X: np.ndarray,
+    model_weight: float,
+) -> np.ndarray:
+    """Anchor a portable classifier to the strong current-day class baseline."""
+    if not 0 < model_weight <= 1:
+        raise ValueError("classifier model weight must be within (0, 1]")
+    if model_weight == 1.0:
+        return probabilities
+    current_index = FEATURE_COLUMNS.index("pm25_mean")
+    persistence_classes = classes_for_pm25(X[:, current_index])
+    persistence = np.zeros_like(probabilities)
+    persistence[np.arange(len(X)), persistence_classes - 1] = 1.0
+    return model_weight * probabilities + (1.0 - model_weight) * persistence
+
+
 def _fit_portable_classifier(
     X_fit: np.ndarray,
     y_fit: np.ndarray,
@@ -548,6 +565,7 @@ def _fit_portable_classifier(
     seed: int,
     regularization_c: float,
     weight_power: float,
+    model_weight: float,
 ) -> tuple[dict, dict, object, StandardScaler]:
     scaler = StandardScaler().fit(X_fit)
     model = LogisticRegression(
@@ -559,10 +577,14 @@ def _fit_portable_classifier(
         y_fit,
         sample_weight=_powered_sample_weights(y_fit, weight_power),
     )
-    probabilities = _aligned_probabilities(model, scaler.transform(X_evaluate))
+    probabilities = _blend_classifier_probabilities(
+        _aligned_probabilities(model, scaler.transform(X_evaluate)),
+        X_evaluate,
+        model_weight,
+    )
     predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
     artifact = {
-        "artifact_schema": "standardized-logistic-tuned-v2",
+        "artifact_schema": "standardized-logistic-persistence-blend-v3",
         "feature_cols": list(FEATURE_COLUMNS),
         "classes": [int(value) for value in model.classes_],
         "coefficients": np.asarray(model.coef_, dtype=float).tolist(),
@@ -572,6 +594,8 @@ def _fit_portable_classifier(
         "threshold_version": THRESHOLD_VERSION,
         "regularization_c": float(regularization_c),
         "weight_power": float(weight_power),
+        "model_weight": float(model_weight),
+        "persistence_feature": "pm25_mean",
     }
     return (
         artifact,
@@ -617,6 +641,8 @@ def _classification_eligibility(
         reasons.append("macro_f1_below_baseline")
     if metrics["balanced_accuracy"] <= baseline["balanced_accuracy"]:
         reasons.append("balanced_accuracy_below_baseline")
+    if metrics["weighted_f1"] <= baseline["weighted_f1"]:
+        reasons.append("weighted_f1_below_baseline")
     for class_id in (4, 5):
         per_class = metrics["per_class"][str(class_id)]
         if per_class["support"] < config.critical_class_minimum_support:
@@ -786,81 +812,91 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
     best_tuning: dict | None = None
     for regularization_c in config.classifier_regularization_c:
         for weight_power in config.classifier_weight_powers:
-            _, metrics, portable_model, portable_scaler = _fit_portable_classifier(
-                split.X_train,
-                split.y_cls_train,
-                split.X_validation,
-                split.y_cls_validation,
-                seed=config.random_seed,
-                regularization_c=regularization_c,
-                weight_power=weight_power,
-            )
-            train_probabilities = _aligned_probabilities(
-                portable_model,
-                portable_scaler.transform(split.X_train),
-            )
-            train_predictions = np.asarray(CLASS_IDS)[
-                np.argmax(train_probabilities, axis=1)
-            ]
-            train_metrics = classification_metrics(
-                split.y_cls_train,
-                train_predictions,
-                train_probabilities,
-            )
-            generalization_gap = (
-                train_metrics["macro_f1"] - metrics["macro_f1"]
-            )
-            key = f"C={regularization_c:g},weight_power={weight_power:g}"
-            portable_validation[key] = {
-                "train": train_metrics,
-                "validation": metrics,
-                "macro_f1_gap": generalization_gap,
-            }
-            supported_critical_recall = [
-                metrics["per_class"][str(class_id)]["recall"]
-                for class_id in (4, 5)
-                if metrics["per_class"][str(class_id)]["support"]
-                >= config.critical_class_minimum_support
-            ]
-            critical_recall = (
-                min(supported_critical_recall)
-                if supported_critical_recall else 1.0
-            )
-            if best_portable_metrics is None:
-                is_better = True
-            else:
-                best_supported_critical_recall = [
-                    best_portable_metrics["per_class"][str(class_id)]["recall"]
+            for model_weight in config.classifier_blend_weights:
+                _, metrics, portable_model, portable_scaler = _fit_portable_classifier(
+                    split.X_train,
+                    split.y_cls_train,
+                    split.X_validation,
+                    split.y_cls_validation,
+                    seed=config.random_seed,
+                    regularization_c=regularization_c,
+                    weight_power=weight_power,
+                    model_weight=model_weight,
+                )
+                train_probabilities = _blend_classifier_probabilities(
+                    _aligned_probabilities(
+                        portable_model,
+                        portable_scaler.transform(split.X_train),
+                    ),
+                    split.X_train,
+                    model_weight,
+                )
+                train_predictions = np.asarray(CLASS_IDS)[
+                    np.argmax(train_probabilities, axis=1)
+                ]
+                train_metrics = classification_metrics(
+                    split.y_cls_train,
+                    train_predictions,
+                    train_probabilities,
+                )
+                generalization_gap = (
+                    train_metrics["macro_f1"] - metrics["macro_f1"]
+                )
+                key = (
+                    f"C={regularization_c:g},weight_power={weight_power:g},"
+                    f"model_weight={model_weight:g}"
+                )
+                portable_validation[key] = {
+                    "train": train_metrics,
+                    "validation": metrics,
+                    "macro_f1_gap": generalization_gap,
+                }
+                supported_critical_recall = [
+                    metrics["per_class"][str(class_id)]["recall"]
                     for class_id in (4, 5)
-                    if best_portable_metrics["per_class"][str(class_id)]["support"]
+                    if metrics["per_class"][str(class_id)]["support"]
                     >= config.critical_class_minimum_support
                 ]
-                best_critical_recall = (
-                    min(best_supported_critical_recall)
-                    if best_supported_critical_recall else 1.0
+                critical_recall = (
+                    min(supported_critical_recall)
+                    if supported_critical_recall else 1.0
                 )
-                is_better = (
-                    generalization_gap <= config.maximum_train_test_gap,
-                    metrics["macro_f1"],
-                    critical_recall,
-                    metrics["balanced_accuracy"],
-                    metrics["weighted_f1"],
-                    -float(metrics["log_loss"] or 1e9),
-                ) > (
-                    best_tuning["validation_gap"] <= config.maximum_train_test_gap,
-                    best_portable_metrics["macro_f1"],
-                    best_critical_recall,
-                    best_portable_metrics["balanced_accuracy"],
-                    best_portable_metrics["weighted_f1"],
-                    -float(best_portable_metrics["log_loss"] or 1e9),
-                )
-            if is_better:
-                best_portable_metrics = metrics
-                best_tuning = {
-                    "regularization_c": float(regularization_c),
-                    "weight_power": float(weight_power),
-                    "validation_gap": float(generalization_gap),
-                }
+                if best_portable_metrics is None:
+                    is_better = True
+                else:
+                    best_supported_critical_recall = [
+                        best_portable_metrics["per_class"][str(class_id)]["recall"]
+                        for class_id in (4, 5)
+                        if best_portable_metrics["per_class"][str(class_id)]["support"]
+                        >= config.critical_class_minimum_support
+                    ]
+                    best_critical_recall = (
+                        min(best_supported_critical_recall)
+                        if best_supported_critical_recall else 1.0
+                    )
+                    is_better = (
+                        generalization_gap <= config.maximum_train_test_gap,
+                        metrics["macro_f1"],
+                        critical_recall,
+                        metrics["balanced_accuracy"],
+                        metrics["weighted_f1"],
+                        -float(metrics["log_loss"] or 1e9),
+                    ) > (
+                        best_tuning["validation_gap"] <= config.maximum_train_test_gap,
+                        best_portable_metrics["macro_f1"],
+                        best_critical_recall,
+                        best_portable_metrics["balanced_accuracy"],
+                        best_portable_metrics["weighted_f1"],
+                        -float(best_portable_metrics["log_loss"] or 1e9),
+                    )
+                if is_better:
+                    best_portable_metrics = metrics
+                    best_tuning = {
+                        "regularization_c": float(regularization_c),
+                        "weight_power": float(weight_power),
+                        "model_weight": float(model_weight),
+                        "validation_gap": float(generalization_gap),
+                    }
     if best_portable_metrics is None or best_tuning is None:
         raise RuntimeError("no portable classification candidate")
 
@@ -886,11 +922,16 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
             seed=config.random_seed,
             regularization_c=best_tuning["regularization_c"],
             weight_power=best_tuning["weight_power"],
+            model_weight=best_tuning["model_weight"],
         )
     )
-    runtime_train_probabilities = _aligned_probabilities(
-        runtime_model,
-        runtime_scaler.transform(X_fit),
+    runtime_train_probabilities = _blend_classifier_probabilities(
+        _aligned_probabilities(
+            runtime_model,
+            runtime_scaler.transform(X_fit),
+        ),
+        X_fit,
+        best_tuning["model_weight"],
     )
     runtime_train_predictions = np.asarray(CLASS_IDS)[
         np.argmax(runtime_train_probabilities, axis=1)
@@ -900,9 +941,13 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
         runtime_train_predictions,
         runtime_train_probabilities,
     )
-    runtime_probabilities = _aligned_probabilities(
-        runtime_model,
-        runtime_scaler.transform(split.X_test),
+    runtime_probabilities = _blend_classifier_probabilities(
+        _aligned_probabilities(
+            runtime_model,
+            runtime_scaler.transform(split.X_test),
+        ),
+        split.X_test,
+        best_tuning["model_weight"],
     )
     eligible, reasons, warnings = _classification_eligibility(
         runtime_train_metrics,

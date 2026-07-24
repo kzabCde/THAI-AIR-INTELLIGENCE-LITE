@@ -87,9 +87,14 @@ def test_absent_rare_class_is_warning_not_automatic_failure():
         "test_rows": 30,
         "macro_f1": 0.8,
         "balanced_accuracy": 0.8,
+        "weighted_f1": 0.8,
         "per_class": per_class,
     }
-    baseline = {"macro_f1": 0.4, "balanced_accuracy": 0.4}
+    baseline = {
+        "macro_f1": 0.4,
+        "balanced_accuracy": 0.4,
+        "weighted_f1": 0.4,
+    }
     train_metrics = {"macro_f1": 0.85}
     probabilities = np.full((30, 5), 0.2)
     eligible, reasons, warnings = _classification_eligibility(
@@ -99,6 +104,40 @@ def test_absent_rare_class_is_warning_not_automatic_failure():
     assert reasons == ["eligible"]
     assert "missing_critical_class_support:4" in warnings
     assert "missing_critical_class_support:5" in warnings
+
+
+def test_classifier_cannot_pass_by_sacrificing_weighted_f1():
+    config = PipelineConfig(classifier_minimum_macro_f1=0.2)
+    per_class = {
+        str(class_id): {
+            "precision": 0.5,
+            "recall": 0.5,
+            "f1": 0.5,
+            "support": 10 if class_id <= 3 else 0,
+        }
+        for class_id in range(1, 6)
+    }
+    metrics = {
+        "test_rows": 30,
+        "macro_f1": 0.6,
+        "balanced_accuracy": 0.6,
+        "weighted_f1": 0.5,
+        "per_class": per_class,
+    }
+    baseline = {
+        "macro_f1": 0.4,
+        "balanced_accuracy": 0.4,
+        "weighted_f1": 0.55,
+    }
+    eligible, reasons, _ = _classification_eligibility(
+        {"macro_f1": 0.6},
+        metrics,
+        baseline,
+        np.full((30, 5), 0.2),
+        config,
+    )
+    assert not eligible
+    assert "weighted_f1_below_baseline" in reasons
 
 
 def test_model_serialization_and_reload(tmp_path: Path):

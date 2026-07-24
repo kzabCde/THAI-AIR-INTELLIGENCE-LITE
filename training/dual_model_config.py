@@ -65,6 +65,9 @@ class PipelineConfig:
     classifier_weight_powers: tuple[float, ...] = (
         0.0, 0.25, 0.5, 0.75, 1.0,
     )
+    classifier_blend_weights: tuple[float, ...] = (
+        0.25, 0.5, 0.75, 1.0,
+    )
     forecast_horizon_days: int = 7
     random_seed: int = 42
     serving_policy: str = "classifier_with_regression_fallback"
@@ -100,6 +103,11 @@ class PipelineConfig:
             or any(not 0 <= value <= 1 for value in self.classifier_weight_powers)
         ):
             raise ValueError("classifier weight powers must be within [0, 1]")
+        if (
+            not self.classifier_blend_weights
+            or any(not 0 < value <= 1 for value in self.classifier_blend_weights)
+        ):
+            raise ValueError("classifier blend weights must be within (0, 1]")
         if self.serving_policy not in SERVING_POLICIES:
             raise ValueError(f"unsupported serving policy: {self.serving_policy}")
         unsupported = set(self.allowed_model_families) - set(MODEL_FAMILIES)

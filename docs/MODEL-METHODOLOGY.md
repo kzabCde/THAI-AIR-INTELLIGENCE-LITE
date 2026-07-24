@@ -8,7 +8,8 @@ artifacts. Training compares Random Forest, AdaBoost, Gradient Boosting,
 XGBoost, LightGBM and CatBoost teachers on chronological validation data. It
 then tunes a standardized Ridge surrogate with a validation-selected
 persistence blend for regression, and a regularized standardized Logistic
-artifact with validation-selected partial class weighting for classification.
+artifact with validation-selected partial class weighting and a current-day
+class probability blend for classification.
 Runtime evaluates the stored scaler, coefficients, intercept and feature order
 from `model_registry`; feature importance is never used as a prediction
 coefficient.
@@ -19,6 +20,7 @@ coefficient.
 - Exclude `synthetic`, `mock`, and `demo` sources from production accuracy metrics.
 - Select teachers and production-artifact tuning only on chronological validation data, and reserve the final 20% (at least 30 rows) as an untouched final test.
 - Report teacher metrics separately from the production artifact's MAE, RMSE, R², skill, classification metrics and persistence baseline.
+- Require classifiers to beat the persistence baseline on macro F1, balanced accuracy and weighted F1.
 - Register candidates as inactive. Promotion requires an explicit `fn_activate_model` call and at least 5% skill versus current-day persistence.
 - Determine promotion from the production artifact's final-holdout metrics, not from an unserved teacher score.
 
