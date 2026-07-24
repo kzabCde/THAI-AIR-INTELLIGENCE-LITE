@@ -9,10 +9,12 @@ from sklearn.linear_model import Ridge
 from training.dual_model_config import FEATURE_COLUMNS, PipelineConfig
 from training.train_dual_models import (
     _classification_eligibility,
+    _powered_sample_weights,
     chronological_split,
     classification_metrics,
     prepare_targets,
     regression_metrics,
+    select_regression,
 )
 
 
@@ -106,3 +108,29 @@ def test_model_serialization_and_reload(tmp_path: Path):
     joblib.dump(model, path)
     restored = joblib.load(path)
     assert restored.predict(np.array([[3.0]])).item() == pytest.approx(expected)
+
+
+def test_partial_class_balancing_is_less_extreme_than_full_balancing():
+    labels = np.array([1] * 9 + [4])
+    unweighted = _powered_sample_weights(labels, 0.0)
+    partial = _powered_sample_weights(labels, 0.5)
+    balanced = _powered_sample_weights(labels, 1.0)
+    assert np.allclose(unweighted, 1.0)
+    assert 1.0 < partial[-1] < balanced[-1]
+    assert np.mean(partial) == pytest.approx(1.0)
+
+
+def test_regression_selection_uses_production_surrogate_metrics():
+    prepared = prepare_targets(training_frame(rows=240))
+    split = chronological_split(prepared, PipelineConfig())
+    config = PipelineConfig(
+        allowed_model_families=("random_forest",),
+        regression_surrogate_alphas=(1.0,),
+        regression_blend_weights=(0.5,),
+    )
+    selection = select_regression(split, config)
+    assert selection.test_metrics == selection.runtime_metrics
+    assert selection.tuning == {"alpha": 1.0, "model_weight": 0.5}
+    assert "production_surrogate" in selection.candidate_validation_metrics[
+        "random_forest"
+    ]

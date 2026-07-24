@@ -81,6 +81,15 @@ Balanced Accuracy, Log Loss, per-class metrics/support and confusion matrix.
 Missing Class 4/5 support in a small test is a warning, not an automatic
 failure. With sufficient support, critical-class Recall gates apply.
 
+Teacher models and production artifacts are evaluated separately. Selection
+compares all six teacher families, then tunes the lightweight artifact on the
+chronological validation split:
+
+- Ridge distillation searches regularization strength and a persistence blend.
+- Logistic classification searches regularization and partial class weighting.
+- Final eligibility uses the reloaded production artifact's holdout metrics,
+  because that artifact—not the heavy teacher—is what Vercel serves.
+
 Registration never activates. `fn_activate_model_task` validates province,
 task, eligibility, feature schema and portable artifact atomically. Existing
 `fn_activate_model` remains a regression-only compatibility wrapper.

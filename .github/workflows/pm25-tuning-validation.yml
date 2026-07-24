@@ -1,0 +1,55 @@
+name: PM2.5 Tuning Validation
+
+on:
+  pull_request:
+    paths:
+      - "training/**"
+      - "api/ml/forecast.py"
+      - ".github/workflows/pm25-tuning-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pm25-tuning-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'agent/tune-dual-models-20260724'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MPLCONFIGDIR: /tmp/matplotlib
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+      - run: python -m pip install --requirement training/requirements.txt
+      - name: Validate configured training access
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_URL" || {
+            echo "::error::Missing SUPABASE_URL"; exit 1;
+          }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || {
+            echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1;
+          }
+      - name: Tune all provinces without database writes
+        run: python -u -m training.train_dual_models --dry-run
+      - name: Upload tuning evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pm25-tuning-${{ github.run_id }}
+          path: training/artifacts/
+          if-no-files-found: warn
+          retention-days: 7

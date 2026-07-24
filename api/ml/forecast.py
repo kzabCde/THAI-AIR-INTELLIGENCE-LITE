@@ -233,7 +233,7 @@ def build_feature_vector(
 
 
 def evaluate_surrogate(features: np.ndarray, artifact: dict) -> float:
-    """Evaluate a standardized Ridge artifact produced by the training job."""
+    """Evaluate a standardized Ridge artifact and its persistence blend."""
     cols = artifact.get("feature_cols") or []
     coefficients = np.asarray(artifact.get("coefficients") or [], dtype=float)
     means = np.asarray(artifact.get("scaler_mean") or [], dtype=float)
@@ -243,7 +243,18 @@ def evaluate_surrogate(features: np.ndarray, artifact: dict) -> float:
     if not np.all(np.isfinite(coefficients)) or not np.all(np.isfinite(means)):
         raise ValueError("surrogate artifact contains non-finite values")
     safe_scales = np.where(np.isfinite(scales) & (np.abs(scales) > 1e-12), scales, 1.0)
-    return float(np.dot((features - means) / safe_scales, coefficients) + float(artifact.get("intercept", 0.0)))
+    surrogate = float(
+        np.dot((features - means) / safe_scales, coefficients)
+        + float(artifact.get("intercept", 0.0))
+    )
+    model_weight = float(artifact.get("model_weight", 1.0))
+    if not 0 < model_weight <= 1:
+        raise ValueError("invalid surrogate model weight")
+    persistence_feature = artifact.get("persistence_feature", "pm25_mean")
+    if persistence_feature not in cols:
+        raise ValueError("invalid surrogate persistence feature")
+    persistence = float(features[cols.index(persistence_feature)])
+    return model_weight * surrogate + (1.0 - model_weight) * persistence
 
 
 def evaluate_portable_classifier(features: np.ndarray, artifact: dict) -> dict[str, float]:

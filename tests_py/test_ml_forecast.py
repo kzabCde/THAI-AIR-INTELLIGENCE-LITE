@@ -26,6 +26,16 @@ def test_standardized_surrogate_uses_scaler_and_coefficients():
     assert ml.evaluate_surrogate(features, surrogate_artifact()) == 14.0
 
 
+def test_standardized_surrogate_can_blend_with_persistence():
+    features = np.asarray([15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1))
+    artifact = {
+        **surrogate_artifact(),
+        "model_weight": 0.25,
+        "persistence_feature": "pm25_mean",
+    }
+    assert ml.evaluate_surrogate(features, artifact) == pytest.approx(14.75)
+
+
 def test_ensemble6_uses_registered_runtime_surrogate():
     features = np.asarray([15.0] + [0.0] * (len(ml.FEATURE_COLS) - 1))
     prediction = ml._predict_model(
