@@ -10,6 +10,9 @@ const migration = readFileSync(
   "utf8",
 );
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
+const vercelConfig = JSON.parse(
+  readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
+);
 
 test("migration supports one active model per province and task", () => {
   assert.match(migration, /unique index[\s\S]+\(province_id, task_type\)/i);
@@ -41,4 +44,10 @@ test("privileged RPCs are not executable by browser roles", () => {
     migration,
     /grant execute on function public\.fn_activate_model_task[\s\S]+to service_role/i,
   );
+});
+
+test("Vercel bundles the shared PM2.5 classification runtime", () => {
+  assert.match(runtime, /from training\.pm25_classes import/);
+  const excludeFiles = vercelConfig.functions["api/ml/forecast.py"].excludeFiles;
+  assert.doesNotMatch(excludeFiles, /(?:^|[,{}])training(?:[,{}]|$)/);
 });
