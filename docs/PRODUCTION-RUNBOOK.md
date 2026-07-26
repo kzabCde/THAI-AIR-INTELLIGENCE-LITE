@@ -10,6 +10,19 @@ and defaults to dry-run.
 2. Apply forward-only Supabase migrations in order.
 3. Confirm environment variables are present in production: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ML_SECRET`, and optional `ML_FORECAST_URL`.
 4. Verify data freshness and cron status read-only before enabling traffic.
+5. Confirm `research_hardening_v4_contract.sql` passes and that any legacy
+   classifier without Class 4/5 evidence is inactive.
+6. Apply the advisor follow-up after v4; it adds the stations FK index and
+   explicit service-role-only RLS policies without granting browser access.
+7. Apply the forecast evaluation lifecycle migration. Each ML forecast batch
+   then records a `forecast_runs` row, links its forecasts by foreign key and
+   evaluates forecasts whose trusted actual daily value has arrived.
+
+The historical production migration inventory is pinned in
+`supabase/production-migration-baseline.json`. It reconciles the 65 remote
+migration identifiers that predate the repository hardening migration. It is
+an audit record, not executable SQL; the numbered repository migrations remain
+the bootstrap/squash baseline.
 
 ## Rollback
 
@@ -23,6 +36,11 @@ and defaults to dry-run.
 - `/api/cron/*` requires `Authorization: Bearer <CRON_SECRET>` in production.
 - `/api/ml/forecast` POST requires `Authorization: Bearer <ML_SECRET>` in production.
 - Check `sync_state` and `cron_log` with read-only SQL; do not write production data during diagnostics.
+- Scheduled ML/upstream calls retry transient failures three times with capped
+  exponential backoff. Unresolved failures are deduplicated in
+  `pipeline_alerts`; a successful subsequent run resolves the alert.
+- Treat D+2–D+7 rows as experimental. A healthy pipeline does not change that
+  model-evidence boundary.
 
 ## Data freshness
 
@@ -53,3 +71,18 @@ than `--minimum-training-rows` rows (default 180).
 Open-Meteo air-quality history is CAMS model-derived data, and historical
 weather is reanalysis/model data. Do not describe either source as a ground
 monitoring-station observation.
+
+## Dual-model safe workflow
+
+```bash
+python training/train_dual_models.py --dry-run --province TH-30
+python training/train_dual_models.py --register --province TH-30
+# Review run_summary.json, evidence_status, checksums and shadow output.
+python training/train_dual_models.py --register --activate --province TH-30
+```
+
+Registration uploads immutable native artifacts and always inserts candidates
+inactive. Activation is a separate RPC gate. Classifiers cannot activate
+without fixed-five-class metrics and at least five final-test samples in both
+critical classes. The Colab notebooks default to no registration and no
+activation and check out an approved immutable commit.

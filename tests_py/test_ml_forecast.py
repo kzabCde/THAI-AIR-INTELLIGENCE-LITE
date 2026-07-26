@@ -167,6 +167,7 @@ def _forecast_sb(include_classifier=True):
             "task_type": "classification",
             "model_name": "lightgbm-classifier",
             "run_id": "22222222-2222-4222-8222-222222222222",
+            "eligibility_status": True,
             "model_params": {
                 "serving_policy": "classifier_with_regression_fallback",
                 "portable_classifier": {
@@ -188,6 +189,7 @@ def _forecast_sb(include_classifier=True):
         "pm25_lag_1d": 30.0,
         "pm25_lag_3d": 25.0,
         "pm25_lag_7d": 20.0,
+        "pm25_roll3": 32.0,
         "pm25_roll7": 27.0,
         "neighbor_pm25_avg": 30.0,
         "regional_pm25_avg": 29.0,
@@ -240,3 +242,137 @@ def test_missing_classifier_uses_explicit_regression_fallback():
     assert row["classification_source"] == "regression_threshold"
     assert row["fallback_used"] is True
     assert row["fallback_reason"] == "no_eligible_active_classifier"
+
+
+def test_only_d1_uses_classifier_and_later_horizons_are_experimental():
+    rows = ml.make_forecasts(_forecast_sb(), horizon=2)
+    assert rows[0]["classification_source"] == "active_classifier"
+    assert rows[0]["horizon_reliability"] == "validated_d1"
+    assert rows[0]["is_experimental"] is False
+    assert rows[1]["classifier_predicted_class"] is None
+    assert rows[1]["classification_source"] == "regression_threshold"
+    assert rows[1]["horizon_reliability"] == "experimental_recursive"
+    assert rows[1]["is_experimental"] is True
+    assert (
+        rows[1]["fallback_reason"]
+        == "experimental_horizon_regression_threshold"
+    )
+
+
+def test_forecast_run_lifecycle_links_rows_and_closes_success(monkeypatch):
+    calls = []
+
+    class Query:
+        def __init__(self, table):
+            self.table = table
+
+        def insert(self, payload):
+            calls.append(("insert", self.table, payload))
+            return self
+
+        def update(self, payload):
+            calls.append(("update", self.table, payload))
+            return self
+
+        def eq(self, column, value):
+            calls.append(("eq", self.table, column, value))
+            return self
+
+        def execute(self):
+            return type("Resp", (), {"data": {}})()
+
+    class RPC:
+        def execute(self):
+            return type("Resp", (), {"data": {"evaluated": 7}})()
+
+    class SB:
+        def table(self, name):
+            return Query(name)
+
+        def rpc(self, name, *_args, **_kwargs):
+            assert name == "fn_evaluate_due_forecasts"
+            return RPC()
+
+    rows = [{
+        "province_id": "TH-30",
+        "forecast_at": "2026-07-26T00:00:00+00:00",
+        "data_freshness": "2026-07-25T23:59:59+07:00",
+    }]
+    monkeypatch.setattr(ml, "make_forecasts", lambda _sb, _horizon: rows)
+    monkeypatch.setattr(ml, "upsert_forecasts", lambda _sb, _rows: 1)
+
+    output, count, evaluated = ml.execute_forecast_run(SB(), 1)
+
+    assert output == rows
+    assert count == 1
+    assert evaluated == 7
+    assert len(rows[0]["forecast_run_id"]) == 36
+    assert any(
+        call[0:2] == ("update", "forecast_runs")
+        and call[2]["status"] == "partial"
+        for call in calls
+    )
+
+
+def test_forecast_run_lifecycle_records_error(monkeypatch):
+    calls = []
+
+    class Query:
+        def __init__(self, table):
+            self.table = table
+
+        def insert(self, payload):
+            calls.append(("insert", self.table, payload))
+            return self
+
+        def update(self, payload):
+            calls.append(("update", self.table, payload))
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def execute(self):
+            return type("Resp", (), {"data": {}})()
+
+    class RPC:
+        def execute(self):
+            return type("Resp", (), {"data": {"evaluated": 0}})()
+
+    class SB:
+        def table(self, name):
+            return Query(name)
+
+        def rpc(self, *_args, **_kwargs):
+            return RPC()
+
+    def fail_forecast(_sb, _horizon):
+        raise RuntimeError("test failure")
+
+    monkeypatch.setattr(ml, "make_forecasts", fail_forecast)
+    with pytest.raises(RuntimeError, match="test failure"):
+        ml.execute_forecast_run(SB(), 1)
+    assert any(
+        call[0:2] == ("update", "forecast_runs")
+        and call[2]["status"] == "error"
+        for call in calls
+    )
+
+
+def test_calibrated_prediction_interval_uses_registered_residual_quantiles():
+    p10, p50, p90, method = ml.prediction_interval(
+        40.0,
+        1,
+        {
+            "surrogate": {
+                "residual_quantiles": {
+                    "p10": -5.0,
+                    "p50": 1.0,
+                    "p90": 8.0,
+                },
+            },
+        },
+        [30.0, 35.0, 40.0],
+    )
+    assert (p10, p50, p90) == (35.0, 41.0, 48.0)
+    assert method == "calibrated_chronological_residual"

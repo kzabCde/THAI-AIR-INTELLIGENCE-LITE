@@ -27,7 +27,7 @@ export const getLatestWeatherByProvince = cachedMapQuery(
       .select("*");
     if (error) throw error;
     for (const row of data ?? []) {
-      result.set(row.province_id, row as WeatherRow);
+      if (row.province_id) result.set(row.province_id, row as WeatherRow);
     }
     return result;
   },

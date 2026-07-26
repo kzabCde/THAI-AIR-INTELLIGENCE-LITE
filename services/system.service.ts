@@ -52,13 +52,18 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
     .eq("is_active", true)
     .order("province_id", { ascending: true });
   if (error) throw error;
-  return (data ?? []).map((r) => ({
-    modelName: r.model_name,
-    provinceId: r.province_id,
-    taskType: r.task_type,
-    trainedAt: r.trained_at,
-    eligible: r.eligibility_status,
-  }));
+  return (data ?? []).flatMap((r) =>
+    r.province_id &&
+    (r.task_type === "regression" || r.task_type === "classification")
+      ? [{
+          modelName: r.model_name,
+          provinceId: r.province_id,
+          taskType: r.task_type,
+          trainedAt: r.trained_at,
+          eligible: r.eligibility_status,
+        }]
+      : [],
+  );
 }
 
 /** Latest timestamp + row count for each core data table. */

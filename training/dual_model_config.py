@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-FEATURE_VERSION = "daily-observed-v3"
+FEATURE_VERSION = "daily-observed-v4"
 FEATURE_COLUMNS = (
     "pm25_mean",
     "pm25_lag_1d",
     "pm25_lag_3d",
+    "pm25_lag_6d",
     "pm25_lag_7d",
+    "pm25_roll3",
     "pm25_roll7",
     "neighbor_pm25_avg",
     "regional_pm25_avg",
@@ -18,13 +20,31 @@ FEATURE_COLUMNS = (
     "humidity_mean",
     "wind_speed_mean",
     "precip_total",
-    "hotspot_count",
-    "total_frp",
     "month",
     "day_of_week",
+    "day_of_year_sin",
+    "day_of_year_cos",
     "is_burning_season",
     "is_dry_season",
 )
+DERIVED_FEATURE_COLUMNS = (
+    "pm25_lag_6d",
+    "day_of_year_sin",
+    "day_of_year_cos",
+)
+SOURCE_FEATURE_COLUMNS = tuple(
+    column for column in FEATURE_COLUMNS if column not in DERIVED_FEATURE_COLUMNS
+)
+FEATURE_PROVENANCE = {
+    "pm25": "trusted non-synthetic air_quality_hourly observations",
+    "weather": "weather_hourly observations joined into daily_summary",
+    "spatial": "daily_summary province-neighbour and regional aggregates",
+    "calendar": "derived deterministically from the Bangkok business date",
+    "excluded_until_backfilled": (
+        "hotspot_count",
+        "total_frp",
+    ),
+}
 MODEL_FAMILIES = (
     "random_forest",
     "adaboost",
@@ -68,6 +88,9 @@ class PipelineConfig:
     classifier_blend_weights: tuple[float, ...] = (
         0.25, 0.5, 0.75, 1.0,
     )
+    classifier_temperatures: tuple[float, ...] = (
+        0.75, 1.0, 1.25,
+    )
     forecast_horizon_days: int = 7
     random_seed: int = 42
     serving_policy: str = "classifier_with_regression_fallback"
@@ -108,6 +131,11 @@ class PipelineConfig:
             or any(not 0 < value <= 1 for value in self.classifier_blend_weights)
         ):
             raise ValueError("classifier blend weights must be within (0, 1]")
+        if (
+            not self.classifier_temperatures
+            or any(value <= 0 for value in self.classifier_temperatures)
+        ):
+            raise ValueError("classifier temperatures must be positive")
         if self.serving_policy not in SERVING_POLICIES:
             raise ValueError(f"unsupported serving policy: {self.serving_policy}")
         unsupported = set(self.allowed_model_families) - set(MODEL_FAMILIES)

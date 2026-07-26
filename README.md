@@ -5,7 +5,9 @@
 
 แพลตฟอร์มติดตามคุณภาพอากาศ **PM2.5 / AQI** แบบเรียลไทม์ ครอบคลุม **20 จังหวัดภาคตะวันออกเฉียงเหนือ (อีสาน)** เท่านั้น — ออกแบบให้คล้ายระบบเฝ้าระวังคุณภาพอากาศระดับหน่วยงานราชการ พร้อมพยากรณ์ 168 ชั่วโมงและการวิเคราะห์ย้อนหลัง
 
-ข้อมูลทั้งหมดเชื่อมต่อกับฐานข้อมูล **Supabase (PostgreSQL)** ระดับจังหวัด ไม่มีข้อมูลจำลอง (mock) อีกต่อไป
+ข้อมูลที่แสดงผล production เชื่อมต่อกับ **Supabase (PostgreSQL)** ระดับจังหวัด
+ข้อมูล synthetic เดิมยังอาจคงอยู่เพื่อการทดสอบ แต่ถูกแยกออกจาก training/evaluation
+contract สำหรับ production
 
 ---
 
@@ -123,11 +125,12 @@ Backfill (one-time) → Incremental sync → Forecast generation → Dashboard r
 2. ตั้งค่า Environment Variables ข้างต้น
 3. `vercel.json` จะตั้ง Cron Jobs ให้อัตโนมัติ (ต้องตั้ง `CRON_SECRET`)
 
-## ⚠️ หมายเหตุด้านความปลอดภัย (RLS)
+## หมายเหตุด้านความปลอดภัย (RLS)
 
-ปัจจุบันตารางทั้งหมดใน Supabase **ปิด Row Level Security (RLS)** — anon key สามารถอ่าน/เขียนได้ทุกแถว
-สำหรับแดชบอร์ดสาธารณะแบบอ่านอย่างเดียว แนะนำให้รัน `supabase/migrations/0002_rls_readonly_policies.sql`
-เพื่อเปิด RLS + อนุญาตเฉพาะ `SELECT` (การเขียนทำผ่าน service-role ใน cron เท่านั้น) — ตรวจสอบก่อนรันเสมอ
+ตาราง production เปิด RLS แล้ว โดย browser roles อ่านได้เฉพาะข้อมูลสาธารณะที่
+จำเป็น ส่วน training artifacts, evaluations, drift และ operational alerts จำกัด
+ไว้ที่ service role การเขียน forecast/registry ทำผ่าน RPC ที่ปิดสิทธิ์
+public/anon/authenticated
 
 ---
 

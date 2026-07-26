@@ -3,6 +3,27 @@ import "server-only";
 import { getServiceSupabase, isSupabaseConfigured } from "./_db";
 
 type SyncResult = { job: string; status: "success" | "error"; records: number; message?: string };
+const FAILURE_FINGERPRINT = "scheduled-job-failure";
+
+async function retryTransient<T>(
+  operation: () => Promise<T>,
+  attempts = 3,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(500 * 2 ** (attempt - 1), 2_000)),
+        );
+      }
+    }
+  }
+  throw lastError;
+}
 
 async function markStart(job: string) {
   if (!isSupabaseConfigured) return;
@@ -32,6 +53,20 @@ async function markDone(job: string, records: number, durationMs: number, error?
       },
       { onConflict: "job_name" },
     );
+  if (error) {
+    await getServiceSupabase().rpc("fn_record_pipeline_alert", {
+      p_job_name: job,
+      p_fingerprint: FAILURE_FINGERPRINT,
+      p_message: error,
+      p_severity: "warning",
+      p_details: { duration_ms: durationMs, records_processed: records },
+    });
+  } else {
+    await getServiceSupabase().rpc("fn_resolve_pipeline_alert", {
+      p_job_name: job,
+      p_fingerprint: FAILURE_FINGERPRINT,
+    });
+  }
 }
 
 /** Incremental "sync" for an hourly source: advances the cursor + record count. */
@@ -150,10 +185,16 @@ export async function runMlForecast(): Promise<SyncResult> {
   await markStart("ml_forecast");
   try {
     const secret = process.env.ML_SECRET;
-    const res = await fetch(`${selfBaseUrl()}/api/ml/forecast`, {
-      method: "POST",
-      headers: secret ? { Authorization: `Bearer ${secret}` } : {},
-      cache: "no-store",
+    const res = await retryTransient(async () => {
+      const response = await fetch(`${selfBaseUrl()}/api/ml/forecast`, {
+        method: "POST",
+        headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+        cache: "no-store",
+      });
+      if (response.status >= 500) {
+        throw new Error(`ML endpoint returned HTTP ${response.status}`);
+      }
+      return response;
     });
     const body = (await res.json().catch(() => ({}))) as {
       ok?: boolean;

@@ -12,6 +12,7 @@ import hmac
 import json
 import math
 import os
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from zoneinfo import ZoneInfo
@@ -54,7 +55,9 @@ FEATURE_COLS = [
     "pm25_mean",
     "pm25_lag_1d",
     "pm25_lag_3d",
+    "pm25_lag_6d",
     "pm25_lag_7d",
+    "pm25_roll3",
     "pm25_roll7",
     "neighbor_pm25_avg",
     "regional_pm25_avg",
@@ -62,10 +65,10 @@ FEATURE_COLS = [
     "humidity_mean",
     "wind_speed_mean",
     "precip_total",
-    "hotspot_count",
-    "total_frp",
     "month",
     "day_of_week",
+    "day_of_year_sin",
+    "day_of_year_cos",
     "is_burning_season",
     "is_dry_season",
 ]
@@ -150,7 +153,8 @@ def load_recent_features(sb: Client) -> dict[str, list[dict]]:
         sb.table(OBSERVED_VIEW)
         .select(
             "province_id,date,pm25_mean,pm25_lag_1d,pm25_lag_3d,"
-            "pm25_lag_7d,pm25_roll7,neighbor_pm25_avg,regional_pm25_avg,"
+            "pm25_lag_7d,pm25_roll3,pm25_roll7,"
+            "neighbor_pm25_avg,regional_pm25_avg,"
             "temp_mean,humidity_mean,wind_speed_mean,precip_total,"
             "hotspot_count,total_frp,month,day_of_week,"
             "is_burning_season,is_dry_season,trusted_hours"
@@ -211,7 +215,9 @@ def build_feature_vector(
         "pm25_mean": current,
         "pm25_lag_1d": _at(rolling, 1),
         "pm25_lag_3d": _at(rolling, 3),
+        "pm25_lag_6d": _at(rolling, 6),
         "pm25_lag_7d": _at(rolling, 7),
+        "pm25_roll3": float(np.mean(rolling[-3:])),
         "pm25_roll7": float(np.mean(rolling[-7:])),
         "neighbor_pm25_avg": _fval(last_row, "neighbor_pm25_avg", current),
         "regional_pm25_avg": _fval(last_row, "regional_pm25_avg", current),
@@ -223,6 +229,12 @@ def build_feature_vector(
         "total_frp": _fval(last_row, "total_frp", 0.0),
         "month": float(feature_date.month),
         "day_of_week": float(feature_date.weekday()),
+        "day_of_year_sin": math.sin(
+            2.0 * math.pi * feature_date.timetuple().tm_yday / 365.25
+        ),
+        "day_of_year_cos": math.cos(
+            2.0 * math.pi * feature_date.timetuple().tm_yday / 365.25
+        ),
         "is_burning_season": 1.0 if feature_date.month in (1, 2, 3, 4) else 0.0,
         "is_dry_season": 1.0 if feature_date.month in (11, 12, 1, 2, 3, 4) else 0.0,
     }
@@ -294,7 +306,10 @@ def evaluate_portable_classifier(features: np.ndarray, artifact: dict) -> dict[s
         raise ValueError("invalid portable classifier class dimensions")
     if not np.all(np.isfinite(logits)):
         raise ValueError("non-finite portable classifier output")
-    shifted = logits - np.max(logits)
+    temperature = float(artifact.get("temperature", 1.0))
+    if not np.isfinite(temperature) or temperature <= 0:
+        raise ValueError("invalid portable classifier temperature")
+    shifted = logits / temperature - np.max(logits / temperature)
     compact = np.exp(shifted) / np.exp(shifted).sum()
     aligned = np.zeros(len(CLASS_IDS), dtype=float)
     for index, class_id in enumerate(classes):
@@ -408,6 +423,40 @@ def _predict_model(
     )
 
 
+def prediction_interval(
+    prediction: float,
+    horizon: int,
+    params: dict,
+    rolling: list[float],
+) -> tuple[float, float, float, str]:
+    """Return ordered P10/P50/P90 values and the uncertainty method."""
+    artifact = params.get("surrogate") or {}
+    quantiles = (
+        artifact.get("residual_quantiles")
+        or params.get("residual_quantiles")
+        or {}
+    )
+    try:
+        offsets = [
+            float(quantiles[name]) * math.sqrt(horizon)
+            for name in ("p10", "p50", "p90")
+        ]
+        if not all(math.isfinite(value) for value in offsets):
+            raise ValueError("non-finite residual quantile")
+        method = "calibrated_chronological_residual"
+    except (KeyError, TypeError, ValueError):
+        recent = np.asarray(rolling[-7:], dtype=float)
+        spread = float(np.std(recent, ddof=1)) if len(recent) > 1 else 0.0
+        spread = max(spread, prediction * 0.10, 1.0) * math.sqrt(horizon)
+        offsets = [-1.2816 * spread, 0.0, 1.2816 * spread]
+        method = "uncalibrated_recent_variability"
+    values = sorted(
+        float(np.clip(prediction + offset, 0.0, 500.0))
+        for offset in offsets
+    )
+    return values[0], values[1], values[2], method
+
+
 def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
     active_tasks = load_active_task_models(sb)
     active_models = active_tasks["regression"]
@@ -451,8 +500,6 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             serving_policy = "classifier_with_regression_fallback"
         artifact = params.get("surrogate") or {}
         feature_cols = artifact.get("feature_cols") or FEATURE_COLS
-        upper_q90 = max(0.0, float(params.get("upper_residual_q90", 0.0)))
-
         for h in range(1, horizon + 1):
             feature_date = as_of + timedelta(days=h - 1)
             target_date = as_of + timedelta(days=h)
@@ -467,12 +514,12 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 feature_date=feature_date,
                 legacy_base_models=legacy_base_models,
             ), 1.0, 500.0))
-            upper = (
-                prediction + upper_q90 * math.sqrt(h)
-                if upper_q90 > 0
-                else prediction * 1.35
+            p10, p50, p90, uncertainty_method = prediction_interval(
+                prediction,
+                h,
+                params,
+                rolling,
             )
-            upper = float(np.clip(upper, prediction, 500.0))
             regression_class = class_for_pm25(prediction)
             classifier_class = None
             probabilities = None
@@ -480,7 +527,12 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             classification_source = "regression_threshold"
             fallback_used = True
             fallback_reason = "no_eligible_active_classifier"
-            if classifier_row and serving_policy != "regression_threshold":
+            if (
+                h == 1
+                and classifier_row
+                and classifier_row.get("eligibility_status") is True
+                and serving_policy != "regression_threshold"
+            ):
                 try:
                     probabilities = evaluate_portable_classifier(
                         features,
@@ -496,6 +548,8 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     fallback_reason = None
                 except (TypeError, ValueError):
                     fallback_reason = "invalid_classifier_artifact"
+            elif h > 1:
+                fallback_reason = "experimental_horizon_regression_threshold"
             displayed_class = (
                 classifier_class
                 if classification_source == "active_classifier"
@@ -512,7 +566,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 "forecast_at": forecast_at,
                 "target_date": target_date.isoformat(),
                 "pm25_mean_forecast": round(prediction, 2),
-                "pm25_max_forecast": round(upper, 2),
+                "pm25_max_forecast": round(p90, 2),
+                "pm25_p10_forecast": round(p10, 2),
+                "pm25_p50_forecast": round(p50, 2),
+                "pm25_p90_forecast": round(p90, 2),
                 "model_name": model_name,
                 "regression_model_name": model_name,
                 "regression_run_id": regression_run_id,
@@ -546,9 +603,14 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 "feature_version": (
                     params.get("feature_version")
                     or classifier_params.get("feature_version")
-                    or "daily-observed-v3"
+                    or "daily-observed-v4"
                 ),
                 "forecast_horizon_days": h,
+                "horizon_reliability": (
+                    "validated_d1" if h == 1 else "experimental_recursive"
+                ),
+                "is_experimental": h > 1,
+                "uncertainty_method": uncertainty_method,
             })
             rolling.append(prediction)
 
@@ -560,6 +622,61 @@ def upsert_forecasts(sb: Client, rows: list[dict]) -> int:
         return 0
     resp = sb.rpc("fn_upsert_forecast_daily", {"rows": rows}).execute()
     return (resp.data or {}).get("upserted", len(rows))
+
+
+def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int]:
+    """Evaluate due forecasts, generate a new auditable batch and close its run."""
+    run_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
+    sb.table("forecast_runs").insert({
+        "run_id": run_id,
+        "forecast_at": started_at,
+        "feature_version": "daily-observed-v4",
+        "code_version": os.environ.get("VERCEL_GIT_COMMIT_SHA") or "unversioned",
+        "serving_policy": SERVING_POLICY,
+        "horizon_days": horizon,
+        "status": "running",
+        "configuration": {
+            "validated_horizons": [1],
+            "experimental_horizons": list(range(2, horizon + 1)),
+        },
+    }).execute()
+    try:
+        evaluation_response = sb.rpc("fn_evaluate_due_forecasts").execute()
+        evaluated = int((evaluation_response.data or {}).get("evaluated", 0))
+        rows = make_forecasts(sb, horizon)
+        for row in rows:
+            row["forecast_run_id"] = run_id
+        count = upsert_forecasts(sb, rows)
+        if rows:
+            sb.table("forecast_daily").update({
+                "forecast_run_id": run_id,
+            }).eq("forecast_at", rows[0]["forecast_at"]).execute()
+        province_count = len({row["province_id"] for row in rows})
+        status = "success" if province_count == len(PROVINCE_IDS) else "partial"
+        sb.table("forecast_runs").update({
+            "status": status,
+            "source_as_of": max(
+                (row["data_freshness"] for row in rows),
+                default=None,
+            ),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "configuration": {
+                "validated_horizons": [1],
+                "experimental_horizons": list(range(2, horizon + 1)),
+                "province_count": province_count,
+                "forecast_rows": count,
+                "evaluated_previous_rows": evaluated,
+            },
+        }).eq("run_id", run_id).execute()
+        return rows, count, evaluated
+    except Exception as exc:
+        sb.table("forecast_runs").update({
+            "status": "error",
+            "error_message": f"{type(exc).__name__}: {exc}"[:1000],
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("run_id", run_id).execute()
+        raise
 
 
 class handler(BaseHTTPRequestHandler):
@@ -594,8 +711,7 @@ class handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "JSON body must be an object"})
             horizon = _parse_horizon(body)
             sb = get_client()
-            rows = make_forecasts(sb, horizon)
-            count = upsert_forecasts(sb, rows)
+            rows, count, evaluated = execute_forecast_run(sb, horizon)
         except json.JSONDecodeError:
             return self._send(400, {"error": "Invalid JSON body"})
         except ValueError as exc:
@@ -611,6 +727,7 @@ class handler(BaseHTTPRequestHandler):
             "upserted": count,
             "provinces": len({row["province_id"] for row in rows}),
             "horizon": horizon,
+            "evaluated_previous_rows": evaluated,
             "model_counts": model_counts,
         })
 
