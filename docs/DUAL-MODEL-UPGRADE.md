@@ -17,8 +17,8 @@ paths, old-row compatibility, RLS, and service-role-only write RPCs.
 |---|---|---|
 | Training | Numeric next-day target | Independent regression and classification targets |
 | Registry | One active model per province | One active model per province and task |
-| Inference | Portable Ridge regression | Portable Ridge + portable logistic classification |
-| Storage | Numeric PM2.5 | Both classes, probabilities, agreement and fallback evidence |
+| Inference | Portable Ridge regression | Portable Ridge + temperature-calibrated portable logistic classification |
+| Storage | Numeric PM2.5 | Classes, probabilities, calibrated interval, horizon and fallback evidence |
 | API/UI | PM2.5-derived band | Direct class, confidence, probabilities and task metrics |
 | Operations | Manual backfill | Manual dry-run/register/forecast dual-model workflow |
 
@@ -52,42 +52,45 @@ Python uses `training/pm25_classes.py`; TypeScript uses
 
 ## Features and leakage controls
 
-Feature version `daily-observed-v3` contains current PM2.5, 1/3/7-day lags,
-seven-day rolling mean, neighboring/regional PM2.5, temperature, humidity,
-wind, rain, hotspots, FRP and calendar/season indicators. All are available at
-forecast origin.
+Feature version `daily-observed-v4` contains current PM2.5, 1/3/6/7-day lags,
+three/seven-day rolling means, neighboring/regional PM2.5, temperature,
+humidity, wind, rain, cyclic day-of-year encoding and calendar/season
+indicators. Hotspot and FRP are excluded from the production contract because
+the audited historical lineage was predominantly synthetic.
 
 - At least 18 trusted observed hours are required.
 - Allowed source defaults to `open-meteo`.
 - Target date must be exactly one day after feature date.
 - Missing feature/target rows are removed before splitting.
-- Train, validation and test partitions remain chronological.
+- Train, validation and test partitions remain chronological; five
+  expanding-window folds run inside the development period.
 - Scaling is fit only on training/development data.
 - Ordered features are stored in artifacts and registry metadata.
 
-The read-only production audit on 24 July 2026 found 368 strict consecutive-day
-rows per province (19 July 2025–22 July 2026). Class 5 was absent in 17 of 20
-provinces and sparse in two others; only TH-38 and TH-43 had material Class 5
-support. This is why absent critical-class support is recorded as a warning
-rather than automatically failing a province.
+The production audit on 26 July 2026 found about one year of eligible history.
+Class 5 had only 37 province-days across three provinces. A classifier is
+therefore ineligible whenever either Class 4 or Class 5 has fewer than five
+final-test samples. This cannot be bypassed by the activation override.
 
 ## Evaluation and eligibility
 
 Regression stores MAE, RMSE, R², MAPE, sMAPE, Bias, persistence metrics and
 Skill Score. These are numeric-error metrics, not classification accuracy.
 
-Classification stores Accuracy, Macro and Weighted Precision/Recall/F1,
-Balanced Accuracy, Log Loss, per-class metrics/support and confusion matrix.
-Missing Class 4/5 support in a small test is a warning, not an automatic
-failure. With sufficient support, critical-class Recall gates apply.
+Classification stores Accuracy, fixed-five-class Macro and Weighted
+Precision/Recall/F1, fixed-five-class Balanced Accuracy, Log Loss, Brier score,
+expected calibration error, per-class PR-AUC, recall confidence intervals,
+support and confusion matrix. Missing Class 4/5 support is an automatic
+`insufficient_evidence` failure.
 
 Teacher models and production artifacts are evaluated separately. Selection
 compares all six teacher families, then tunes the lightweight artifact on the
 chronological validation split:
 
 - Ridge distillation searches regularization strength and a persistence blend.
-- Logistic classification searches regularization, partial class weighting and
-  a probability blend with the current-day PM2.5 class.
+- Logistic classification searches regularization, partial class weighting,
+  temperature scaling and a probability blend with the current-day PM2.5
+  class.
 - Final eligibility uses the reloaded production artifact's holdout metrics,
   because that artifact—not the heavy teacher—is what Vercel serves.
 - Classification promotion requires macro F1, balanced accuracy and weighted
@@ -102,9 +105,11 @@ task, eligibility, feature schema and portable artifact atomically. Existing
 
 Default policy: `classifier_with_regression_fallback`.
 
-1. Use an eligible active classifier and preserve five probabilities.
-2. Otherwise derive class from the numeric regression result.
-3. If no active regressor exists, use the persistence fallback.
+1. At D+1, use an eligible active classifier and preserve five probabilities.
+2. Otherwise derive class from the numeric regression result and state why.
+3. At D+2–D+7, always label recursive output as experimental and use the
+   regression threshold rather than presenting an unvalidated classifier.
+4. If no active regressor exists, use the persistence fallback.
 
 The database/API preserve classifier class, regression-derived class and
 `class_agreement`; disagreement is never hidden.
@@ -124,8 +129,10 @@ training/artifacts/<run_id>/<province_id>/
     class_mapping.json
 ```
 
-Saved models are immediately reloaded for a sample prediction. Production uses
-compact portable artifacts in `model_params`; private paths are not exposed.
+Saved models are immediately reloaded for a sample prediction. Native artifacts
+are uploaded to a private bucket with SHA-256 and dependency metadata.
+Production uses compact portable artifacts in `model_params`; private paths are
+not exposed.
 
 ## API and frontend
 
@@ -146,14 +153,16 @@ Use **Actions → PM2.5 Dual-Model Pipeline → Run workflow**.
 2. Inspect `run_summary.json` and artifacts.
 3. Apply the migration to staging and run SQL contract/query-plan tests.
 4. Run `mode=register`, `activate=false`; inspect eligibility reasons.
-5. Only after approval, run `mode=register`, `activate=true`.
+5. Only after review, run `mode=register`, `activate=true`.
 6. Generate forecasts and verify API/UI output.
 
 `forecast-only` skips training and uses currently active models. Forecast
 generation runs only after successful training or an explicit skip.
 
-Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ML_FORECAST_URL`, and
-`ML_SECRET`. Secret values are never printed.
+Both Colab notebooks default to `REGISTER=False` and `ACTIVATE=False`, clone an
+immutable approved commit SHA, and require the promotion cell to be changed
+deliberately. Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+`ML_FORECAST_URL`, and `ML_SECRET`. Secret values are never printed.
 
 ## Production checklist
 
@@ -163,6 +172,7 @@ Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ML_FORECAST_URL`, and
 - validate notebook JSON and all Python cells
 - apply migration on staging
 - run `supabase/tests/dual_model_contract.sql`
+- run `supabase/tests/research_hardening_v4_contract.sql`
 - inspect Supabase security/performance advisors
 - run one-province training dry-run
 - verify probability sums and fallback cases
@@ -184,5 +194,5 @@ active regression models.
 - The source is daily, so the trained target is next-day PM2.5.
 - Heavy teachers stay in job/Colab artifacts; Vercel serves validated portable
   surrogates to preserve cold-start limits.
-- This pull request does not activate classifiers, apply production migration,
-  merge itself, or deploy production.
+- Station, satellite/AOD, multi-year and national pooled-model tables/tracks do
+  not imply that those sources are already ingested or validated.

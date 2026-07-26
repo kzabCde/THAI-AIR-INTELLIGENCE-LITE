@@ -90,10 +90,18 @@ export default async function ForecastPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">พยากรณ์ PM2.5</h1>
           <p className="muted text-sm">
-            พยากรณ์ล่วงหน้า 7 วัน · อัปเดต <RelativeTime iso={forecast.generatedAt} />
+            D+1 ผ่านการประเมิน · D+2 ถึง D+7 เป็นผลทดลอง · อัปเดต <RelativeTime iso={forecast.generatedAt} />
           </p>
         </div>
         <ProvinceSelect value={province.id} />
+      </div>
+
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+        <p className="font-semibold">ขอบเขตความน่าเชื่อถือของระบบ</p>
+        <p className="muted mt-1">
+          ใช้ผลวันถัดไป (D+1) เป็นผลหลัก ส่วนวันที่ไกลกว่านั้นเกิดจากการพยากรณ์ต่อเนื่อง
+          และควรใช้ดูแนวโน้มเบื้องต้นเท่านั้น
+        </p>
       </div>
 
       {primary && primaryClass && (
@@ -247,7 +255,7 @@ export default async function ForecastPage({
         </div>
       </Section>
 
-      <Section title="พยากรณ์รายวัน 7 วัน" description="ค่าเฉลี่ย ค่าสูงสุด และระดับคุณภาพอากาศ">
+      <Section title="พยากรณ์รายวัน 7 วัน" description="ค่ากลาง ช่วงคาดการณ์ ระดับคุณภาพอากาศ และสถานะรายขอบฟ้า">
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -255,9 +263,10 @@ export default async function ForecastPage({
                 <th className="px-4 py-2.5 font-medium">วันที่</th>
                 <th className="px-4 py-2.5 text-right font-medium">PM2.5 เฉลี่ย</th>
                 <th className="px-4 py-2.5 text-right font-medium">AQI</th>
-                <th className="px-4 py-2.5 text-right font-medium">สูงสุด</th>
+                <th className="px-4 py-2.5 text-right font-medium">ช่วง P10–P90</th>
                 <th className="px-4 py-2.5 text-center font-medium">ระดับ</th>
                 <th className="px-4 py-2.5 text-right font-medium">ความน่าเชื่อถือ</th>
+                <th className="px-4 py-2.5 text-center font-medium">สถานะ</th>
               </tr>
             </thead>
             <tbody>
@@ -268,7 +277,11 @@ export default async function ForecastPage({
                     <td className="px-4 py-2.5">{fmtDateTh(d.t)}</td>
                     <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{fmtPm25(d.pm25)}</td>
                     <td className="muted px-4 py-2.5 text-right tabular-nums">{pm25ToAqi(d.pm25)}</td>
-                    <td className="muted px-4 py-2.5 text-right tabular-nums">{fmtPm25(d.pm25Max ?? null)}</td>
+                    <td className="muted px-4 py-2.5 text-right tabular-nums">
+                      {d.pm25P10 != null && d.pm25P90 != null
+                        ? `${fmtPm25(d.pm25P10)}–${fmtPm25(d.pm25P90)}`
+                        : "กำลังประเมิน"}
+                    </td>
                     <td className="px-4 py-2.5 text-center">
                       <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold text-white" style={{ background: band.color }}>
                         {band.labelTh}
@@ -276,6 +289,17 @@ export default async function ForecastPage({
                     </td>
                     <td className="muted px-4 py-2.5 text-right">
                       {confidenceStatus(d.confidence).label}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        d.horizonReliability === "validated_d1"
+                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                          : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                      }`}>
+                        {d.horizonReliability === "validated_d1"
+                          ? "ผ่านการประเมิน D+1"
+                          : "ผลทดลอง"}
+                      </span>
                     </td>
                   </tr>
                 );

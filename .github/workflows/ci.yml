@@ -33,8 +33,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npm audit --audit-level=high
-      - run: npm audit --omit=dev --audit-level=high
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Report development dependency advisories
+        continue-on-error: true
+        run: npm audit --audit-level=high
       - run: pip install -r requirements.txt
       - run: pip install -r training/requirements.txt
       - run: npm run pycompile

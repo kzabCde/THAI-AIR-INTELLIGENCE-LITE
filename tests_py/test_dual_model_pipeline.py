@@ -12,9 +12,11 @@ from training.train_dual_models import (
     _powered_sample_weights,
     chronological_split,
     classification_metrics,
+    expanding_window_indices,
     prepare_targets,
     regression_metrics,
     select_regression,
+    train_province,
 )
 
 
@@ -56,6 +58,19 @@ def test_chronological_split_never_moves_future_rows_into_training():
     assert len(split.y_reg_test) >= 30
 
 
+def test_expanding_window_validation_is_ordered_and_covers_latest_development():
+    folds = expanding_window_indices(180, 5)
+    assert len(folds) == 5
+    for train_index, validation_index in folds:
+        assert len(train_index) >= 90
+        assert train_index.max() < validation_index.min()
+    assert folds[-1][1].max() == 179
+    assert all(
+        len(folds[index][0]) < len(folds[index + 1][0])
+        for index in range(len(folds) - 1)
+    )
+
+
 def test_metric_functions_keep_regression_and_classification_separate():
     regression = regression_metrics(np.array([10, 20]), np.array([11, 19]))
     classification = classification_metrics(
@@ -69,7 +84,7 @@ def test_metric_functions_keep_regression_and_classification_separate():
     assert "mae" not in classification
 
 
-def test_absent_rare_class_is_warning_not_automatic_failure():
+def test_absent_critical_classes_block_public_classifier_promotion():
     config = PipelineConfig(
         classifier_minimum_macro_f1=0.2,
         classifier_minimum_critical_recall=0.5,
@@ -100,10 +115,36 @@ def test_absent_rare_class_is_warning_not_automatic_failure():
     eligible, reasons, warnings = _classification_eligibility(
         train_metrics, metrics, baseline, probabilities, config
     )
-    assert eligible
-    assert reasons == ["eligible"]
+    assert not eligible
+    assert "insufficient_evidence_class:4" in reasons
+    assert "insufficient_evidence_class:5" in reasons
     assert "missing_critical_class_support:4" in warnings
     assert "missing_critical_class_support:5" in warnings
+
+
+def test_macro_f1_always_uses_the_fixed_five_class_contract():
+    metrics = classification_metrics(
+        np.array([1, 1, 2, 2]),
+        np.array([1, 1, 2, 2]),
+        np.array([
+            [1, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+        ]),
+    )
+    assert metrics["observed_macro_f1"] == pytest.approx(1.0)
+    assert metrics["macro_f1"] == pytest.approx(0.4)
+    assert metrics["balanced_accuracy"] == pytest.approx(0.4)
+    assert metrics["metric_class_contract"] == [1, 2, 3, 4, 5]
+
+
+def test_synthetic_hotspot_features_are_not_in_production_feature_contract():
+    assert "hotspot_count" not in FEATURE_COLUMNS
+    assert "total_frp" not in FEATURE_COLUMNS
+    assert {"pm25_roll3", "day_of_year_sin", "day_of_year_cos"} <= set(
+        FEATURE_COLUMNS
+    )
 
 
 def test_classifier_cannot_pass_by_sacrificing_weighted_f1():
@@ -173,3 +214,37 @@ def test_regression_selection_uses_production_surrogate_metrics():
     assert "production_surrogate" in selection.candidate_validation_metrics[
         "random_forest"
     ]
+
+
+def test_end_to_end_training_records_expanding_cv_and_artifact_contract():
+    config = PipelineConfig(
+        cv_splits=2,
+        allowed_model_families=("random_forest",),
+        regression_surrogate_alphas=(1.0,),
+        regression_blend_weights=(0.5,),
+        classifier_regularization_c=(0.1,),
+        classifier_weight_powers=(0.5,),
+        classifier_blend_weights=(0.75,),
+        classifier_temperatures=(1.0,),
+    )
+    result = train_province(
+        "TH-30",
+        training_frame(rows=240),
+        "11111111-1111-4111-8111-111111111111",
+        config,
+    )
+    cv = result.audit["expanding_window_validation"]
+    assert cv["folds"] == 2
+    assert cv["final_test_excluded"] is True
+    assert len(cv["regression"]["fold_metrics"]) == 2
+    assert (
+        result.regression.runtime_artifact["calibration_method"]
+        == "expanding_window_out_of_fold_residual"
+    )
+    for row in result.registry_rows:
+        assert row["teacher_model_family"] == "random_forest"
+        assert row["serving_model_family"] in {
+            "standardized_ridge",
+            "standardized_logistic",
+        }
+        assert len(row["model_params"]["portable_artifact_sha256"]) == 64

@@ -39,5 +39,18 @@ test('forecast runtime remains compatible with active v1 models during v2 migrat
   for (const model of ['stacking-v1', 'lightgbm-v1', 'xgboost-v1', 'stacking-v2']) {
     assert.ok(source.includes(model), `missing runtime support for ${model}`);
   }
-  assert.match(source, /prediction \* 1\.35/);
+  assert.match(source, /def prediction_interval/);
+  assert.match(source, /calibrated_chronological_residual/);
+  assert.doesNotMatch(source, /prediction \* 1\.35/);
+});
+
+test('scheduled sync retries transient failures and records operational alerts', () => {
+  const sync = readFileSync(new URL('../services/sync.service.ts', import.meta.url), 'utf8');
+  const edge = readFileSync(new URL('../supabase/functions/daily-sync/index.ts', import.meta.url), 'utf8');
+  assert.match(sync, /retryTransient/);
+  assert.match(edge, /fetchWithRetry/);
+  for (const source of [sync, edge]) {
+    assert.match(source, /fn_record_pipeline_alert/);
+    assert.match(source, /fn_resolve_pipeline_alert/);
+  }
 });

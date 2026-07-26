@@ -30,12 +30,14 @@ FK → `isan_provinces`).
 | `hotspot_daily` | daily | FIRMS fire hotspot counts/FRP |
 | `daily_summary` | daily | aggregated + feature-engineered daily stats |
 | `forecast_hourly` | hourly | PM2.5 forecast (≤168h horizon) |
-| `forecast_daily` | daily | PM2.5 forecast (7-day) |
+| `forecast_daily` | daily | D+1 assessed forecast plus experimental D+2–D+7 rows |
 | `sync_state` | — | pipeline job status / cursors |
 | `cleanup_logs` | — | retention-cleanup audit trail |
 
-Supporting tables retained for the ML pipeline: `province_neighbours`,
-`training_arima`, `training_tabular`, `training_lstm`, `backfill_checkpoints`.
+Supporting ML/operations tables include `model_registry`, `model_artifacts`,
+`stations`, `station_observations`, `feature_snapshots`, `forecast_runs`,
+`forecast_evaluations`, `model_drift_metrics`, `region_membership`,
+`pipeline_alerts`, `province_neighbours` and `backfill_checkpoints`.
 
 ### Indexes
 
@@ -60,11 +62,12 @@ queries.
 
 ## Forecasting
 
-`buildForecast()` is a deterministic EWMA + damped-trend model with a diurnal
-PM2.5 curve. It produces a 168-hour hourly series and a 7-day daily series with
-horizon-decaying confidence. The read path (`getProvinceForecast`) serves stored
-rows from `forecast_*` when present, otherwise computes on the fly. The
-`/api/cron/retrain` job regenerates and upserts forecasts for all provinces.
+The Python ML endpoint evaluates the active lightweight serving artifact from
+`model_registry` and writes daily forecasts. Training compares six teacher
+families but reports the deployed Ridge/Logistic family separately. D+1 uses
+the validated next-day contract; recursive D+2–D+7 rows are explicitly
+experimental. Each row records provenance/fallback status and P10/P50/P90
+uncertainty where calibrated residuals exist.
 
 ## Caching strategy
 
@@ -75,6 +78,6 @@ rows from `forecast_*` when present, otherwise computes on the fly. The
 
 ## Security note
 
-All tables currently have RLS disabled. See
-`supabase/migrations/0002_rls_readonly_policies.sql` for the recommended
-read-only hardening (enable RLS + anon `SELECT`; writes via service role).
+Production tables use RLS and browser roles are read-only where public access is
+required. Sensitive training, artifact, evaluation, drift and alert tables are
+service-role only. Write RPCs revoke public/anon/authenticated execution.

@@ -16,6 +16,23 @@ import type { ForecastPoint, ProvinceForecast } from "./types";
 export const FORECAST_MODEL = "ewma-diurnal-v1";
 export const FORECAST_HORIZON_HOURS = 168;
 const FORECAST_HORIZON_DAYS = 7;
+const HORIZON_RELIABILITY_VALUES = new Set([
+  "validated_d1",
+  "experimental_recursive",
+  "legacy_unverified_d1",
+  "legacy_unverified",
+  "typescript_fallback",
+]);
+
+function normalizeHorizonReliability(
+  value: string | null,
+  horizonDays: number,
+): ForecastPoint["horizonReliability"] {
+  if (value && HORIZON_RELIABILITY_VALUES.has(value)) {
+    return value as ForecastPoint["horizonReliability"];
+  }
+  return horizonDays === 1 ? "legacy_unverified_d1" : "legacy_unverified";
+}
 
 /** Diurnal PM2.5 multiplier — higher overnight/early morning, lower midday. */
 function diurnal(hour: number): number {
@@ -68,6 +85,9 @@ export function buildForecast(
       t: date.toISOString().slice(0, 10),
       pm25: +mean.toFixed(1),
       pm25Max: +(mean * 1.4).toFixed(1),
+      pm25P10: +Math.max(0, mean * 0.75).toFixed(1),
+      pm25P50: +mean.toFixed(1),
+      pm25P90: +(mean * 1.4).toFixed(1),
       confidence: +Math.max(0.4, 0.92 - d * 0.07).toFixed(2),
       airQualityClass: classId,
       labelTh: definition.labelTh,
@@ -82,6 +102,10 @@ export function buildForecast(
       classificationSource: "regression_threshold",
       fallbackUsed: true,
       fallbackReason: "typescript_forecast_fallback",
+      horizonDays: d,
+      horizonReliability: "typescript_fallback",
+      experimental: true,
+      uncertaintyMethod: "uncalibrated_typescript_fallback",
     });
   }
 
@@ -168,7 +192,7 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
     sb
       .from("forecast_daily")
       .select(
-        "target_date,pm25_mean_forecast,pm25_max_forecast,forecast_at,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_reason,data_freshness,feature_version",
+        "target_date,pm25_mean_forecast,pm25_max_forecast,pm25_p10_forecast,pm25_p50_forecast,pm25_p90_forecast,forecast_at,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_reason,data_freshness,feature_version,forecast_horizon_days,horizon_reliability,is_experimental,uncertainty_method",
       )
       .eq("province_id", provinceId)
       .order("forecast_at", { ascending: false })
@@ -212,6 +236,9 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       t: r.target_date,
       pm25: r.pm25_mean_forecast,
       pm25Max: r.pm25_max_forecast ?? undefined,
+      pm25P10: r.pm25_p10_forecast ?? undefined,
+      pm25P50: r.pm25_p50_forecast ?? undefined,
+      pm25P90: r.pm25_p90_forecast ?? undefined,
       confidence: +Math.max(0.4, 0.92 - (i + 1) * 0.07).toFixed(2),
       airQualityClass: displayedClass,
       labelTh: r.class_label_th ?? definition.labelTh,
@@ -228,6 +255,15 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       fallbackReason: usesDirectClassifier
         ? null
         : (r.fallback_reason ?? "classifier_not_active"),
+      horizonDays: r.forecast_horizon_days ?? i + 1,
+      horizonReliability: normalizeHorizonReliability(
+        r.horizon_reliability,
+        r.forecast_horizon_days ?? i + 1,
+      ),
+      experimental: r.is_experimental ?? (
+        (r.forecast_horizon_days ?? i + 1) !== 1
+      ),
+      uncertaintyMethod: r.uncertainty_method,
     };
   });
   const hPoints: ForecastPoint[] = hourly.length
@@ -337,6 +373,9 @@ export async function generateAndStoreForecasts(): Promise<number> {
         target_date: p.t,
         pm25_mean_forecast: p.pm25,
         pm25_max_forecast: p.pm25Max ?? null,
+        pm25_p10_forecast: p.pm25P10 ?? null,
+        pm25_p50_forecast: p.pm25P50 ?? p.pm25,
+        pm25_p90_forecast: p.pm25P90 ?? p.pm25Max ?? null,
         model_name: FORECAST_MODEL,
         regression_model_name: FORECAST_MODEL,
         regression_derived_class: classId,
@@ -349,6 +388,10 @@ export async function generateAndStoreForecasts(): Promise<number> {
         classification_source: "regression_threshold",
         fallback_used: true,
         fallback_reason: "typescript_forecast_fallback",
+        forecast_horizon_days: p.horizonDays ?? null,
+        horizon_reliability: "typescript_fallback",
+        is_experimental: true,
+        uncertainty_method: p.uncertaintyMethod ?? "uncalibrated_typescript_fallback",
       });
     }
   }

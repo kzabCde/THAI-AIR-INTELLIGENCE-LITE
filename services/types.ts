@@ -59,6 +59,9 @@ export type ForecastPoint = {
   t: string;
   pm25: number;
   pm25Max?: number;
+  pm25P10?: number;
+  pm25P50?: number;
+  pm25P90?: number;
   /** Horizon confidence used by the numeric forecast visualization. */
   confidence: number;
   airQualityClass?: PM25ClassId;
@@ -72,6 +75,15 @@ export type ForecastPoint = {
   classificationSource?: string;
   fallbackUsed?: boolean;
   fallbackReason?: string | null;
+  horizonDays?: number;
+  horizonReliability?:
+    | "validated_d1"
+    | "experimental_recursive"
+    | "legacy_unverified_d1"
+    | "legacy_unverified"
+    | "typescript_fallback";
+  experimental?: boolean;
+  uncertaintyMethod?: string | null;
 };
 
 export type ForecastModelInfo = {

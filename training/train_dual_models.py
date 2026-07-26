@@ -9,8 +9,10 @@ remains untouched until final evaluation. Registration is inactive by default.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import subprocess
 import sys
@@ -39,7 +41,7 @@ from sklearn.ensemble import (
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import (
     accuracy_score,
-    balanced_accuracy_score,
+    average_precision_score,
     confusion_matrix,
     log_loss,
     mean_absolute_error,
@@ -52,10 +54,12 @@ from sklearn.utils.class_weight import compute_sample_weight
 from supabase import Client, create_client
 
 from training.dual_model_config import (
+    FEATURE_PROVENANCE,
     FEATURE_COLUMNS,
     FEATURE_VERSION,
     MODEL_FAMILIES,
     PipelineConfig,
+    SOURCE_FEATURE_COLUMNS,
 )
 from training.pm25_classes import (
     CLASS_IDS,
@@ -193,6 +197,19 @@ def _json_safe(value):
     return value
 
 
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _sha256_json(value: object) -> str:
+    payload = json.dumps(
+        _json_safe(value),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return _sha256_bytes(payload)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", action="store_true", help="register inactive candidates")
@@ -235,7 +252,7 @@ def get_client() -> Client:
 def fetch_observed_rows(sb: Client, province_ids: tuple[str, ...]) -> pd.DataFrame:
     columns = [
         "province_id", "date", "trusted_hours", "trusted_sources",
-        *FEATURE_COLUMNS,
+        *SOURCE_FEATURE_COLUMNS,
     ]
     rows: list[dict] = []
     start = 0
@@ -258,8 +275,15 @@ def fetch_observed_rows(sb: Client, province_ids: tuple[str, ...]) -> pd.DataFra
         raise RuntimeError(f"{OBSERVED_VIEW} returned no usable rows")
     frame = pd.DataFrame(rows)
     frame["date"] = pd.to_datetime(frame["date"], errors="raise")
-    for column in (*FEATURE_COLUMNS, "trusted_hours"):
+    for column in (*SOURCE_FEATURE_COLUMNS, "trusted_hours"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame = frame.sort_values(["province_id", "date"]).reset_index(drop=True)
+    frame["pm25_lag_6d"] = (
+        frame.groupby("province_id", sort=False)["pm25_mean"].shift(6)
+    )
+    day_of_year = frame["date"].dt.dayofyear.to_numpy(dtype=float)
+    frame["day_of_year_sin"] = np.sin(2.0 * np.pi * day_of_year / 365.25)
+    frame["day_of_year_cos"] = np.cos(2.0 * np.pi * day_of_year / 365.25)
     return frame
 
 
@@ -319,6 +343,88 @@ def chronological_split(frame: pd.DataFrame, config: PipelineConfig) -> Chronolo
         X_test, y_reg_test, y_cls_test,
         train_rows, validation_rows, test_rows,
     )
+
+
+def expanding_window_indices(
+    row_count: int,
+    splits: int,
+    *,
+    minimum_train_rows: int = 90,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Build deterministic expanding folds inside the development period."""
+    available = row_count - minimum_train_rows
+    if available < splits:
+        raise ValueError(
+            "insufficient development rows for expanding-window validation"
+        )
+    fold_size = max(1, available // splits)
+    first_validation_start = row_count - fold_size * splits
+    if first_validation_start < minimum_train_rows:
+        raise ValueError("expanding-window initial training period is too short")
+    folds: list[tuple[np.ndarray, np.ndarray]] = []
+    for fold_index in range(splits):
+        validation_start = first_validation_start + fold_index * fold_size
+        validation_end = (
+            row_count
+            if fold_index == splits - 1
+            else validation_start + fold_size
+        )
+        folds.append((
+            np.arange(0, validation_start, dtype=np.int64),
+            np.arange(validation_start, validation_end, dtype=np.int64),
+        ))
+    return folds
+
+
+def _mean_numeric_metrics(rows: list[dict]) -> dict[str, float]:
+    keys = sorted({
+        key
+        for row in rows
+        for key, value in row.items()
+        if isinstance(value, (int, float)) and value is not None
+    })
+    return {
+        key: float(np.mean([row[key] for row in rows if row.get(key) is not None]))
+        for key in keys
+    }
+
+
+def evaluate_sarimax_baseline(split: ChronologicalSplit) -> dict:
+    """Evaluate a weekly SARIMAX research baseline on the final holdout."""
+    try:
+        from statsmodels.tsa.statespace.sarimax import SARIMAX
+    except ImportError:
+        return {
+            "status": "unavailable",
+            "reason": "statsmodels_not_installed",
+        }
+    development = np.concatenate([
+        split.y_reg_train,
+        split.y_reg_validation,
+    ])
+    try:
+        fitted = SARIMAX(
+            development,
+            order=(1, 0, 1),
+            seasonal_order=(1, 0, 1, 7),
+            enforce_stationarity=False,
+            enforce_invertibility=False,
+        ).fit(disp=False, maxiter=200)
+        predictions = np.asarray(
+            fitted.forecast(steps=len(split.y_reg_test)),
+            dtype=float,
+        )
+        return {
+            "status": "evaluated",
+            "order": [1, 0, 1],
+            "seasonal_order": [1, 0, 1, 7],
+            **regression_metrics(split.y_reg_test, predictions),
+        }
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def regression_factories(seed: int) -> dict[str, Callable[[], object]]:
@@ -423,10 +529,34 @@ def classification_metrics(
     y_pred: np.ndarray,
     probabilities: np.ndarray | None,
 ) -> dict:
+    def wilson_interval(successes: float, total: int) -> list[float] | None:
+        if total <= 0:
+            return None
+        z = 1.959963984540054
+        proportion = successes / total
+        denominator = 1.0 + z * z / total
+        center = (proportion + z * z / (2.0 * total)) / denominator
+        margin = (
+            z
+            * math.sqrt(
+                proportion * (1.0 - proportion) / total
+                + z * z / (4.0 * total * total)
+            )
+            / denominator
+        )
+        return [max(0.0, center - margin), min(1.0, center + margin)]
+
     precision, recall, f1, support = precision_recall_fscore_support(
         y_true, y_pred, labels=CLASS_IDS, zero_division=0
     )
     macro = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=CLASS_IDS,
+        average="macro",
+        zero_division=0,
+    )
+    observed_macro = precision_recall_fscore_support(
         y_true, y_pred, average="macro", zero_division=0
     )
     weighted = precision_recall_fscore_support(
@@ -434,10 +564,18 @@ def classification_metrics(
     )
     result = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
-        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+        # Fixed-five balanced accuracy is the mean recall over the complete
+        # public class contract. Absent classes therefore contribute zero
+        # instead of silently disappearing from the score.
+        "balanced_accuracy": float(macro[1]),
+        "observed_balanced_accuracy": float(observed_macro[1]),
         "macro_precision": float(macro[0]),
         "macro_recall": float(macro[1]),
         "macro_f1": float(macro[2]),
+        "observed_macro_precision": float(observed_macro[0]),
+        "observed_macro_recall": float(observed_macro[1]),
+        "observed_macro_f1": float(observed_macro[2]),
+        "metric_class_contract": [int(value) for value in CLASS_IDS],
         "weighted_precision": float(weighted[0]),
         "weighted_recall": float(weighted[1]),
         "weighted_f1": float(weighted[2]),
@@ -447,6 +585,10 @@ def classification_metrics(
                 "recall": float(recall[index]),
                 "f1": float(f1[index]),
                 "support": int(support[index]),
+                "recall_ci95": wilson_interval(
+                    float(recall[index]) * int(support[index]),
+                    int(support[index]),
+                ),
             }
             for index, class_id in enumerate(CLASS_IDS)
         },
@@ -454,11 +596,69 @@ def classification_metrics(
             y_true, y_pred, labels=CLASS_IDS
         ).astype(int).tolist(),
         "test_rows": int(len(y_true)),
+        "accuracy_ci95": wilson_interval(
+            float(np.sum(np.asarray(y_true) == np.asarray(y_pred))),
+            int(len(y_true)),
+        ),
     }
     result["log_loss"] = (
         float(log_loss(y_true, probabilities, labels=CLASS_IDS))
         if probabilities is not None else None
     )
+    if probabilities is not None:
+        one_hot = np.zeros_like(probabilities, dtype=float)
+        one_hot[np.arange(len(y_true)), np.asarray(y_true, dtype=int) - 1] = 1.0
+        result["brier_score"] = float(
+            np.mean(np.sum((probabilities - one_hot) ** 2, axis=1))
+        )
+        confidence = np.max(probabilities, axis=1)
+        predicted = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
+        correct = (predicted == y_true).astype(float)
+        ece = 0.0
+        for lower in np.linspace(0.0, 0.9, 10):
+            upper = lower + 0.1
+            in_bin = (confidence >= lower) & (
+                confidence <= upper if upper >= 1.0 else confidence < upper
+            )
+            if np.any(in_bin):
+                ece += (
+                    float(np.mean(in_bin))
+                    * abs(
+                        float(np.mean(correct[in_bin]))
+                        - float(np.mean(confidence[in_bin]))
+                    )
+                )
+        result["expected_calibration_error"] = float(ece)
+        per_class_pr_auc: dict[str, float | None] = {}
+        for class_id in CLASS_IDS:
+            binary_truth = (np.asarray(y_true) == class_id).astype(int)
+            per_class_pr_auc[str(class_id)] = (
+                float(
+                    average_precision_score(
+                        binary_truth,
+                        probabilities[:, class_id - 1],
+                    )
+                )
+                if np.any(binary_truth)
+                else None
+            )
+        supported_pr_auc = [
+            value
+            for value in per_class_pr_auc.values()
+            if value is not None
+        ]
+        result["per_class_pr_auc"] = per_class_pr_auc
+        result["macro_pr_auc_supported"] = (
+            float(np.mean(supported_pr_auc))
+            if supported_pr_auc else None
+        )
+    else:
+        result["brier_score"] = None
+        result["expected_calibration_error"] = None
+        result["per_class_pr_auc"] = {
+            str(class_id): None for class_id in CLASS_IDS
+        }
+        result["macro_pr_auc_supported"] = None
     return result
 
 
@@ -473,6 +673,16 @@ def _fit_classifier(model: object, X: np.ndarray, y: np.ndarray) -> object:
 def _regression_baseline(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, dict]:
     current_index = FEATURE_COLUMNS.index("pm25_mean")
     predictions = X[:, current_index]
+    return predictions, regression_metrics(y, predictions)
+
+
+def _seasonal_naive_regression_baseline(
+    X: np.ndarray,
+    y: np.ndarray,
+) -> tuple[np.ndarray, dict]:
+    """Seven-day seasonal-naive baseline for the next-day target."""
+    seasonal_index = FEATURE_COLUMNS.index("pm25_lag_6d")
+    predictions = X[:, seasonal_index]
     return predictions, regression_metrics(y, predictions)
 
 
@@ -556,6 +766,18 @@ def _blend_classifier_probabilities(
     return model_weight * probabilities + (1.0 - model_weight) * persistence
 
 
+def _temperature_scale_probabilities(
+    probabilities: np.ndarray,
+    temperature: float,
+) -> np.ndarray:
+    if temperature <= 0:
+        raise ValueError("classifier temperature must be positive")
+    if temperature == 1.0:
+        return probabilities
+    powered = np.power(np.clip(probabilities, 1e-12, 1.0), 1.0 / temperature)
+    return powered / powered.sum(axis=1, keepdims=True)
+
+
 def _fit_portable_classifier(
     X_fit: np.ndarray,
     y_fit: np.ndarray,
@@ -566,6 +788,7 @@ def _fit_portable_classifier(
     regularization_c: float,
     weight_power: float,
     model_weight: float,
+    temperature: float,
 ) -> tuple[dict, dict, object, StandardScaler]:
     scaler = StandardScaler().fit(X_fit)
     model = LogisticRegression(
@@ -578,7 +801,10 @@ def _fit_portable_classifier(
         sample_weight=_powered_sample_weights(y_fit, weight_power),
     )
     probabilities = _blend_classifier_probabilities(
-        _aligned_probabilities(model, scaler.transform(X_evaluate)),
+        _temperature_scale_probabilities(
+            _aligned_probabilities(model, scaler.transform(X_evaluate)),
+            temperature,
+        ),
         X_evaluate,
         model_weight,
     )
@@ -595,6 +821,7 @@ def _fit_portable_classifier(
         "regularization_c": float(regularization_c),
         "weight_power": float(weight_power),
         "model_weight": float(model_weight),
+        "temperature": float(temperature),
         "persistence_feature": "pm25_mean",
     }
     return (
@@ -646,6 +873,8 @@ def _classification_eligibility(
     for class_id in (4, 5):
         per_class = metrics["per_class"][str(class_id)]
         if per_class["support"] < config.critical_class_minimum_support:
+            reason = f"insufficient_evidence_class:{class_id}"
+            reasons.append(reason)
             warnings.append(f"missing_critical_class_support:{class_id}")
         elif per_class["recall"] < config.classifier_minimum_critical_recall:
             reasons.append(f"critical_class_recall_too_low:{class_id}")
@@ -732,6 +961,27 @@ def select_regression(split: ChronologicalSplit, config: PipelineConfig) -> Task
             teacher_validation[item]["skill_vs_persistence"],
         ),
     )
+    calibration_artifact, _ = _fit_portable_regression(
+        fitted[family],
+        split.X_train,
+        split.X_validation,
+        split.y_reg_validation,
+        alpha=runtime_tuning[family]["alpha"],
+        model_weight=runtime_tuning[family]["model_weight"],
+    )
+    calibration_predictions = _evaluate_portable_regression(
+        split.X_validation,
+        calibration_artifact,
+    )
+    calibration_residuals = split.y_reg_validation - calibration_predictions
+    residual_quantiles = {
+        name: float(value)
+        for name, value in zip(
+            ("p10", "p50", "p90"),
+            np.quantile(calibration_residuals, (0.10, 0.50, 0.90)),
+            strict=True,
+        )
+    }
     X_fit = np.vstack([split.X_train, split.X_validation])
     y_fit = np.concatenate([split.y_reg_train, split.y_reg_validation])
     model = clone(fitted[family]).fit(X_fit, y_fit)
@@ -740,6 +990,11 @@ def select_regression(split: ChronologicalSplit, config: PipelineConfig) -> Task
         np.asarray(model.predict(split.X_test), dtype=float),
     )
     _, baseline_metrics = _regression_baseline(split.X_test, split.y_reg_test)
+    _, seasonal_baseline_metrics = _seasonal_naive_regression_baseline(
+        split.X_test,
+        split.y_reg_test,
+    )
+    baseline_metrics["seasonal_naive"] = seasonal_baseline_metrics
     teacher_test_metrics["skill_vs_persistence"] = (
         1.0 - teacher_test_metrics["mae"] / baseline_metrics["mae"]
         if baseline_metrics["mae"] > 0 else 0.0
@@ -757,6 +1012,14 @@ def select_regression(split: ChronologicalSplit, config: PipelineConfig) -> Task
         1.0 - runtime_metrics["mae"] / baseline_metrics["mae"]
         if baseline_metrics["mae"] > 0 else 0.0
     )
+    runtime_metrics["skill_vs_seasonal_naive"] = (
+        1.0
+        - runtime_metrics["mae"] / seasonal_baseline_metrics["mae"]
+        if seasonal_baseline_metrics["mae"] > 0 else 0.0
+    )
+    runtime_artifact["residual_quantiles"] = residual_quantiles
+    runtime_artifact["calibration_rows"] = int(len(calibration_residuals))
+    runtime_artifact["calibration_method"] = "chronological_holdout_residual"
     eligible, reasons = _regression_eligibility(
         runtime_metrics,
         baseline_metrics,
@@ -813,90 +1076,102 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
     for regularization_c in config.classifier_regularization_c:
         for weight_power in config.classifier_weight_powers:
             for model_weight in config.classifier_blend_weights:
-                _, metrics, portable_model, portable_scaler = _fit_portable_classifier(
-                    split.X_train,
-                    split.y_cls_train,
-                    split.X_validation,
-                    split.y_cls_validation,
-                    seed=config.random_seed,
-                    regularization_c=regularization_c,
-                    weight_power=weight_power,
-                    model_weight=model_weight,
-                )
-                train_probabilities = _blend_classifier_probabilities(
-                    _aligned_probabilities(
-                        portable_model,
-                        portable_scaler.transform(split.X_train),
-                    ),
-                    split.X_train,
-                    model_weight,
-                )
-                train_predictions = np.asarray(CLASS_IDS)[
-                    np.argmax(train_probabilities, axis=1)
-                ]
-                train_metrics = classification_metrics(
-                    split.y_cls_train,
-                    train_predictions,
-                    train_probabilities,
-                )
-                generalization_gap = (
-                    train_metrics["macro_f1"] - metrics["macro_f1"]
-                )
-                key = (
-                    f"C={regularization_c:g},weight_power={weight_power:g},"
-                    f"model_weight={model_weight:g}"
-                )
-                portable_validation[key] = {
-                    "train": train_metrics,
-                    "validation": metrics,
-                    "macro_f1_gap": generalization_gap,
-                }
-                supported_critical_recall = [
-                    metrics["per_class"][str(class_id)]["recall"]
-                    for class_id in (4, 5)
-                    if metrics["per_class"][str(class_id)]["support"]
-                    >= config.critical_class_minimum_support
-                ]
-                critical_recall = (
-                    min(supported_critical_recall)
-                    if supported_critical_recall else 1.0
-                )
-                if best_portable_metrics is None:
-                    is_better = True
-                else:
-                    best_supported_critical_recall = [
-                        best_portable_metrics["per_class"][str(class_id)]["recall"]
+                for temperature in config.classifier_temperatures:
+                    _, metrics, portable_model, portable_scaler = _fit_portable_classifier(
+                        split.X_train,
+                        split.y_cls_train,
+                        split.X_validation,
+                        split.y_cls_validation,
+                        seed=config.random_seed,
+                        regularization_c=regularization_c,
+                        weight_power=weight_power,
+                        model_weight=model_weight,
+                        temperature=temperature,
+                    )
+                    train_probabilities = _blend_classifier_probabilities(
+                        _temperature_scale_probabilities(
+                            _aligned_probabilities(
+                                portable_model,
+                                portable_scaler.transform(split.X_train),
+                            ),
+                            temperature,
+                        ),
+                        split.X_train,
+                        model_weight,
+                    )
+                    train_predictions = np.asarray(CLASS_IDS)[
+                        np.argmax(train_probabilities, axis=1)
+                    ]
+                    train_metrics = classification_metrics(
+                        split.y_cls_train,
+                        train_predictions,
+                        train_probabilities,
+                    )
+                    generalization_gap = (
+                        train_metrics["macro_f1"] - metrics["macro_f1"]
+                    )
+                    key = (
+                        f"C={regularization_c:g},weight_power={weight_power:g},"
+                        f"model_weight={model_weight:g},temperature={temperature:g}"
+                    )
+                    portable_validation[key] = {
+                        "train": train_metrics,
+                        "validation": metrics,
+                        "macro_f1_gap": generalization_gap,
+                    }
+                    supported_critical_recall = [
+                        metrics["per_class"][str(class_id)]["recall"]
                         for class_id in (4, 5)
-                        if best_portable_metrics["per_class"][str(class_id)]["support"]
+                        if metrics["per_class"][str(class_id)]["support"]
                         >= config.critical_class_minimum_support
                     ]
-                    best_critical_recall = (
-                        min(best_supported_critical_recall)
-                        if best_supported_critical_recall else 1.0
+                    critical_recall = (
+                        min(supported_critical_recall)
+                        if len(supported_critical_recall) == 2 else 0.0
                     )
-                    is_better = (
-                        generalization_gap <= config.maximum_train_test_gap,
-                        metrics["macro_f1"],
-                        critical_recall,
-                        metrics["balanced_accuracy"],
-                        metrics["weighted_f1"],
-                        -float(metrics["log_loss"] or 1e9),
-                    ) > (
-                        best_tuning["validation_gap"] <= config.maximum_train_test_gap,
-                        best_portable_metrics["macro_f1"],
-                        best_critical_recall,
-                        best_portable_metrics["balanced_accuracy"],
-                        best_portable_metrics["weighted_f1"],
-                        -float(best_portable_metrics["log_loss"] or 1e9),
-                    )
-                if is_better:
-                    best_portable_metrics = metrics
-                    best_tuning = {
-                        "regularization_c": float(regularization_c),
-                        "weight_power": float(weight_power),
-                        "model_weight": float(model_weight),
-                        "validation_gap": float(generalization_gap),
-                    }
+                    if best_portable_metrics is None:
+                        is_better = True
+                    else:
+                        best_supported_critical_recall = [
+                            best_portable_metrics["per_class"][str(class_id)]["recall"]
+                            for class_id in (4, 5)
+                            if best_portable_metrics["per_class"][str(class_id)]["support"]
+                            >= config.critical_class_minimum_support
+                        ]
+                        best_critical_recall = (
+                            min(best_supported_critical_recall)
+                            if len(best_supported_critical_recall) == 2 else 0.0
+                        )
+                        is_better = (
+                            generalization_gap <= config.maximum_train_test_gap,
+                            metrics["macro_f1"],
+                            critical_recall,
+                            metrics["balanced_accuracy"],
+                            metrics["weighted_f1"],
+                            -float(metrics["log_loss"] or 1e9),
+                            -float(metrics["expected_calibration_error"] or 1e9),
+                        ) > (
+                            best_tuning["validation_gap"] <= config.maximum_train_test_gap,
+                            best_portable_metrics["macro_f1"],
+                            best_critical_recall,
+                            best_portable_metrics["balanced_accuracy"],
+                            best_portable_metrics["weighted_f1"],
+                            -float(best_portable_metrics["log_loss"] or 1e9),
+                            -float(
+                                best_portable_metrics[
+                                    "expected_calibration_error"
+                                ] or 1e9
+                            ),
+                        )
+                    if is_better:
+                        best_portable_metrics = metrics
+                        best_tuning = {
+                            "regularization_c": float(regularization_c),
+                            "weight_power": float(weight_power),
+                            "model_weight": float(model_weight),
+                            "temperature": float(temperature),
+                            "validation_gap": float(generalization_gap),
+                        }
     if best_portable_metrics is None or best_tuning is None:
         raise RuntimeError("no portable classification candidate")
 
@@ -923,12 +1198,16 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
             regularization_c=best_tuning["regularization_c"],
             weight_power=best_tuning["weight_power"],
             model_weight=best_tuning["model_weight"],
+            temperature=best_tuning["temperature"],
         )
     )
     runtime_train_probabilities = _blend_classifier_probabilities(
-        _aligned_probabilities(
-            runtime_model,
-            runtime_scaler.transform(X_fit),
+        _temperature_scale_probabilities(
+            _aligned_probabilities(
+                runtime_model,
+                runtime_scaler.transform(X_fit),
+            ),
+            best_tuning["temperature"],
         ),
         X_fit,
         best_tuning["model_weight"],
@@ -942,9 +1221,12 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
         runtime_train_probabilities,
     )
     runtime_probabilities = _blend_classifier_probabilities(
-        _aligned_probabilities(
-            runtime_model,
-            runtime_scaler.transform(split.X_test),
+        _temperature_scale_probabilities(
+            _aligned_probabilities(
+                runtime_model,
+                runtime_scaler.transform(split.X_test),
+            ),
+            best_tuning["temperature"],
         ),
         split.X_test,
         best_tuning["model_weight"],
@@ -975,6 +1257,228 @@ def select_classification(split: ChronologicalSplit, config: PipelineConfig) -> 
         },
         tuning=best_tuning,
     )
+
+
+def apply_expanding_window_validation(
+    split: ChronologicalSplit,
+    regression: TaskSelection,
+    classification: TaskSelection,
+    config: PipelineConfig,
+) -> dict:
+    """Validate the selected serving artifacts across expanding time folds.
+
+    The final test split is deliberately excluded. Fold metrics are recorded
+    and act as an additional promotion gate.
+    """
+    X_development = np.vstack([split.X_train, split.X_validation])
+    y_reg_development = np.concatenate([
+        split.y_reg_train,
+        split.y_reg_validation,
+    ])
+    y_cls_development = np.concatenate([
+        split.y_cls_train,
+        split.y_cls_validation,
+    ])
+    folds = expanding_window_indices(
+        len(X_development),
+        config.cv_splits,
+    )
+
+    regression_folds: list[dict] = []
+    regression_residuals: list[float] = []
+    regression_factory = regression_factories(config.random_seed)[
+        regression.family
+    ]
+    classifier_probabilities: list[np.ndarray] = []
+    classifier_truth: list[np.ndarray] = []
+    classifier_baseline_predictions: list[np.ndarray] = []
+    classification_folds: list[dict] = []
+
+    for fold_number, (train_index, validation_index) in enumerate(folds, 1):
+        X_train = X_development[train_index]
+        X_validation = X_development[validation_index]
+        y_reg_train = y_reg_development[train_index]
+        y_reg_validation = y_reg_development[validation_index]
+        y_cls_train = y_cls_development[train_index]
+        y_cls_validation = y_cls_development[validation_index]
+
+        teacher = regression_factory().fit(X_train, y_reg_train)
+        artifact, reg_metrics = _fit_portable_regression(
+            teacher,
+            X_train,
+            X_validation,
+            y_reg_validation,
+            alpha=regression.tuning["alpha"],
+            model_weight=regression.tuning["model_weight"],
+        )
+        reg_predictions = _evaluate_portable_regression(
+            X_validation,
+            artifact,
+        )
+        _, reg_baseline = _regression_baseline(
+            X_validation,
+            y_reg_validation,
+        )
+        reg_metrics["skill_vs_persistence"] = (
+            1.0 - reg_metrics["mae"] / reg_baseline["mae"]
+            if reg_baseline["mae"] > 0 else 0.0
+        )
+        regression_residuals.extend(
+            (y_reg_validation - reg_predictions).astype(float).tolist()
+        )
+        regression_folds.append({
+            "fold": fold_number,
+            "train_rows": int(len(train_index)),
+            "validation_rows": int(len(validation_index)),
+            **reg_metrics,
+        })
+
+        try:
+            _, cls_metrics, cls_model, cls_scaler = _fit_portable_classifier(
+                X_train,
+                y_cls_train,
+                X_validation,
+                y_cls_validation,
+                seed=config.random_seed,
+                regularization_c=classification.tuning["regularization_c"],
+                weight_power=classification.tuning["weight_power"],
+                model_weight=classification.tuning["model_weight"],
+                temperature=classification.tuning["temperature"],
+            )
+            probabilities = _blend_classifier_probabilities(
+                _temperature_scale_probabilities(
+                    _aligned_probabilities(
+                        cls_model,
+                        cls_scaler.transform(X_validation),
+                    ),
+                    classification.tuning["temperature"],
+                ),
+                X_validation,
+                classification.tuning["model_weight"],
+            )
+            classifier_probabilities.append(probabilities)
+            classifier_truth.append(y_cls_validation)
+            classifier_baseline_predictions.append(
+                classes_for_pm25(
+                    X_validation[:, FEATURE_COLUMNS.index("pm25_mean")]
+                )
+            )
+            classification_folds.append({
+                "fold": fold_number,
+                "train_rows": int(len(train_index)),
+                "validation_rows": int(len(validation_index)),
+                **cls_metrics,
+            })
+        except ValueError as exc:
+            classification_folds.append({
+                "fold": fold_number,
+                "train_rows": int(len(train_index)),
+                "validation_rows": int(len(validation_index)),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+
+    regression_aggregate = _mean_numeric_metrics(regression_folds)
+    if (
+        len(regression_folds) != config.cv_splits
+        or regression_aggregate.get("skill_vs_persistence", -1.0)
+        < config.regression_minimum_skill
+    ):
+        regression.eligible = False
+        if "expanding_cv_skill_below_threshold" not in regression.eligibility_reasons:
+            regression.eligibility_reasons.append(
+                "expanding_cv_skill_below_threshold"
+            )
+    residual_quantiles = {
+        name: float(value)
+        for name, value in zip(
+            ("p10", "p50", "p90"),
+            np.quantile(regression_residuals, (0.10, 0.50, 0.90)),
+            strict=True,
+        )
+    }
+    regression.runtime_artifact["residual_quantiles"] = residual_quantiles
+    regression.runtime_artifact["calibration_rows"] = len(regression_residuals)
+    regression.runtime_artifact[
+        "calibration_method"
+    ] = "expanding_window_out_of_fold_residual"
+
+    classification_aggregate: dict = {}
+    classification_baseline: dict = {}
+    if len(classifier_probabilities) == config.cv_splits:
+        combined_probabilities = np.vstack(classifier_probabilities)
+        combined_truth = np.concatenate(classifier_truth)
+        combined_predictions = np.asarray(CLASS_IDS)[
+            np.argmax(combined_probabilities, axis=1)
+        ]
+        classification_aggregate = classification_metrics(
+            combined_truth,
+            combined_predictions,
+            combined_probabilities,
+        )
+        combined_baseline_predictions = np.concatenate(
+            classifier_baseline_predictions
+        )
+        combined_baseline_probabilities = np.zeros(
+            (len(combined_truth), len(CLASS_IDS)),
+            dtype=float,
+        )
+        combined_baseline_probabilities[
+            np.arange(len(combined_truth)),
+            combined_baseline_predictions - 1,
+        ] = 1.0
+        classification_baseline = classification_metrics(
+            combined_truth,
+            combined_baseline_predictions,
+            combined_baseline_probabilities,
+        )
+        cv_eligible, cv_reasons, cv_warnings = _classification_eligibility(
+            classification_aggregate,
+            classification_aggregate,
+            classification_baseline,
+            combined_probabilities,
+            config,
+        )
+        classification.warnings.extend(
+            warning
+            for warning in cv_warnings
+            if warning not in classification.warnings
+        )
+        if not cv_eligible:
+            classification.eligible = False
+            classification.eligibility_reasons.extend(
+                f"expanding_cv:{reason}"
+                for reason in cv_reasons
+                if f"expanding_cv:{reason}"
+                not in classification.eligibility_reasons
+            )
+    else:
+        classification.eligible = False
+        classification.eligibility_reasons.append(
+            "expanding_cv_incomplete"
+        )
+
+    audit = {
+        "strategy": "expanding_window",
+        "folds": config.cv_splits,
+        "final_test_excluded": True,
+        "regression": {
+            "fold_metrics": regression_folds,
+            "aggregate": regression_aggregate,
+            "residual_quantiles": residual_quantiles,
+        },
+        "classification": {
+            "fold_metrics": classification_folds,
+            "aggregate": classification_aggregate,
+            "baseline": classification_baseline,
+        },
+    }
+    regression.candidate_validation_metrics[
+        "expanding_window_cv"
+    ] = audit["regression"]
+    classification.candidate_validation_metrics[
+        "expanding_window_cv"
+    ] = audit["classification"]
+    return audit
 
 
 def _period(rows: pd.DataFrame) -> tuple[str, str]:
@@ -1009,9 +1513,17 @@ def _task_registry_row(
     params = {
         "task_type": task_type,
         "teacher_model": selection.family,
+        "teacher_model_family": selection.family,
+        "serving_model_family": (
+            "standardized_ridge"
+            if task_type == "regression"
+            else "standardized_logistic"
+        ),
         "runtime_kind": selection.runtime_artifact["artifact_schema"],
+        "portable_artifact_sha256": _sha256_json(selection.runtime_artifact),
         "feature_cols": list(FEATURE_COLUMNS),
         "feature_version": FEATURE_VERSION,
+        "feature_provenance": FEATURE_PROVENANCE,
         "threshold_version": THRESHOLD_VERSION,
         "serving_policy": config.serving_policy,
         "runtime_metrics": selection.runtime_metrics,
@@ -1022,17 +1534,26 @@ def _task_registry_row(
     }
     if task_type == "regression":
         params["surrogate"] = selection.runtime_artifact
-        params["upper_residual_q90"] = 0.0
+        params["residual_quantiles"] = selection.runtime_artifact[
+            "residual_quantiles"
+        ]
     else:
         params["portable_classifier"] = selection.runtime_artifact
         params["class_mapping"] = class_mapping()
+        params["evidence_status"] = (
+            "validated_five_class"
+            if selection.eligible
+            else "insufficient_evidence"
+        )
     return {
         "run_id": run_id,
         "province_id": province_id,
         "task_type": task_type,
         "model_name": model_name,
         "model_family": selection.family,
-        "model_version": "dual-pm25-v2",
+        "teacher_model_family": selection.family,
+        "serving_model_family": params["serving_model_family"],
+        "model_version": "dual-pm25-v4",
         "artifact_ref": f"artifacts/{run_id}/{province_id}/{task_type}/model.joblib",
         "feature_schema": {
             "columns": list(FEATURE_COLUMNS),
@@ -1064,6 +1585,19 @@ def _task_registry_row(
         ),
         "eligibility_status": selection.eligible,
         "eligibility_reason": ",".join(selection.eligibility_reasons),
+        "evidence_status": (
+            "validated"
+            if selection.eligible
+            else (
+                "insufficient_evidence"
+                if task_type == "classification"
+                and any(
+                    reason.startswith("insufficient_evidence_class:")
+                    for reason in selection.eligibility_reasons
+                )
+                else "ineligible"
+            )
+        ),
         "is_active": False,
         "trained_at": now,
         "source": OBSERVED_VIEW,
@@ -1089,6 +1623,8 @@ def train_province(
         ),
         "feature_count": len(FEATURE_COLUMNS),
         "feature_order": list(FEATURE_COLUMNS),
+        "feature_provenance": FEATURE_PROVENANCE,
+        "synthetic_lineage_allowed": False,
         "threshold_version": THRESHOLD_VERSION,
         "train_period": _period(split.train_rows),
         "validation_period": _period(split.validation_rows),
@@ -1101,9 +1637,16 @@ def train_province(
             "validation": _class_distribution(split.y_cls_validation),
             "test": _class_distribution(split.y_cls_test),
         },
+        "sarimax_baseline": evaluate_sarimax_baseline(split),
     }
     regression = select_regression(split, config)
     classification = select_classification(split, config)
+    audit["expanding_window_validation"] = apply_expanding_window_validation(
+        split,
+        regression,
+        classification,
+        config,
+    )
     registry_rows = [
         _task_registry_row(
             province_id, run_id, "regression", regression, split, config, audit
@@ -1130,6 +1673,7 @@ def save_artifacts(
         target.mkdir(parents=True, exist_ok=True)
         model_path = target / "model.joblib"
         joblib.dump(selection.model, model_path)
+        native_artifact_sha256 = _sha256_bytes(model_path.read_bytes())
         reloaded = joblib.load(model_path)
         sample = np.zeros((1, len(FEATURE_COLUMNS)), dtype=float)
         prediction = reloaded.predict(sample)
@@ -1164,6 +1708,10 @@ def save_artifacts(
             "libraries": _library_versions(),
             "python": sys.version.split()[0],
             "git_sha": _git_sha(),
+            "native_artifact_sha256": native_artifact_sha256,
+            "portable_artifact_sha256": _sha256_json(
+                selection.runtime_artifact
+            ),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "configuration": {
                 **asdict(config),
@@ -1189,13 +1737,64 @@ def save_artifacts(
                 json.dumps(class_mapping(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        registry_row = next(
+            row
+            for row in result.registry_rows
+            if row["task_type"] == task_type
+        )
+        registry_row["artifact_sha256"] = native_artifact_sha256
+        registry_row["model_params"][
+            "native_artifact_sha256"
+        ] = native_artifact_sha256
+
+
+def upload_artifacts(
+    sb: Client,
+    result: ProvinceResult,
+    output_root: Path,
+) -> None:
+    """Upload immutable teacher artifacts before registry registration."""
+    bucket = sb.storage.from_("model-artifacts")
+    dependency_lock = _library_versions()
+    for row in result.registry_rows:
+        if row.get("artifact_uri"):
+            continue
+        task_type = row["task_type"]
+        local_path = (
+            output_root
+            / result.run_id
+            / result.province_id
+            / task_type
+            / "model.joblib"
+        )
+        if not local_path.is_file():
+            raise RuntimeError(f"artifact is missing: {local_path}")
+        remote_path = (
+            f"{result.run_id}/{result.province_id}/"
+            f"{task_type}/model.joblib"
+        )
+        with local_path.open("rb") as file_handle:
+            bucket.upload(
+                remote_path,
+                file_handle,
+                {
+                    "content-type": "application/octet-stream",
+                    "upsert": "false",
+                },
+            )
+        row["artifact_uri"] = f"storage://model-artifacts/{remote_path}"
+        row["artifact_byte_size"] = local_path.stat().st_size
+        row["artifact_content_type"] = "application/octet-stream"
+        row["dependency_lock"] = dependency_lock
 
 
 def register_and_maybe_activate(
     sb: Client,
     result: ProvinceResult,
     activate: bool,
+    artifact_root: Path = Path("training/artifacts"),
 ) -> None:
+    upload_artifacts(sb, result, artifact_root)
     sb.rpc("fn_upsert_model_registry", {"rows": result.registry_rows}).execute()
     if not activate:
         return
@@ -1281,7 +1880,12 @@ def main() -> int:
             )
             save_artifacts(result, args.artifact_dir, config)
             if args.register and not args.dry_run:
-                register_and_maybe_activate(sb, result, args.activate)
+                register_and_maybe_activate(
+                    sb,
+                    result,
+                    args.activate,
+                    args.artifact_dir,
+                )
             results.append(result)
             print(json.dumps(summary_row(result), ensure_ascii=False))
         except Exception as exc:  # province failure must not stop the full run
