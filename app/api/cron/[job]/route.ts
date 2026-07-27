@@ -46,8 +46,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ job: string
     const result = await JOBS[validJob]();
     return ok(result, 0, 0);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Cron job failed";
-    return fail(message, 500);
+    console.error(`[cron:${validJob}] failed`, error);
+    return fail("Cron job failed", 500);
   }
 }
 

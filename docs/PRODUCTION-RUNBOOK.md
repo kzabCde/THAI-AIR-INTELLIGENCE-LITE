@@ -17,6 +17,15 @@ and defaults to dry-run.
 7. Apply the forecast evaluation lifecycle migration. Each ML forecast batch
    then records a `forecast_runs` row, links its forecasts by foreign key and
    evaluates forecasts whose trusted actual daily value has arrived.
+8. Apply `20260727170000_production_audit_remediation.sql` only after the
+   matching application release is deployed. It moves technical-status reads
+   to the service role, replaces the slow latest-row views, exposes
+   service-only trusted analytics views, and disables direct SQL fallback
+   forecast generation.
+9. Trigger one authenticated `/api/ml/forecast` run after the remediation
+   migration. Confirm that all newly written daily forecasts have a completed
+   `forecast_run_id`, target D+1 or later in Asia/Bangkok, and use an active
+   registry artifact.
 
 The historical production migration inventory is pinned in
 `supabase/production-migration-baseline.json`. It reconciles the 65 remote
@@ -39,12 +48,24 @@ the bootstrap/squash baseline.
 - Scheduled ML/upstream calls retry transient failures three times with capped
   exponential backoff. Unresolved failures are deduplicated in
   `pipeline_alerts`; a successful subsequent run resolves the alert.
+- The daily database pipeline runs at 01:30 Asia/Bangkok and triggers the ML
+  endpoint after summary/cleanup work. Model retraining is manual. Do not
+  re-enable `fn_generate_forecast` as a second writer: unaudited fallback rows
+  must not supersede a completed ML batch.
+- A forecast is serving-eligible only when it references a `forecast_runs` row
+  whose status is `success` or `partial`. Treat rows with no run ID as legacy
+  evidence, not as the current forecast.
 - Treat D+2–D+7 rows as experimental. A healthy pipeline does not change that
   model-evidence boundary.
 
 ## Data freshness
 
-Use Asia/Bangkok for business-day reporting and UTC for stored timestamps. Alert when latest observed PM2.5 or weather rows fall behind the expected hourly cadence.
+Use Asia/Bangkok for business-day reporting and UTC for stored timestamps.
+Alert when latest observed PM2.5 or weather rows fall behind the expected
+hourly cadence. Analytics and seasonal reports must read
+`trusted_daily_metrics_v1`; hotspot summaries must read
+`observed_hotspot_daily_v1`. Both service-only views exclude rows labelled
+`synthetic`, `mock`, or `demo`.
 
 ## Open-Meteo historical backfill
 

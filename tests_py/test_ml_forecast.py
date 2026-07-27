@@ -247,7 +247,7 @@ def test_missing_classifier_uses_explicit_regression_fallback():
 def test_only_d1_uses_classifier_and_later_horizons_are_experimental():
     rows = ml.make_forecasts(_forecast_sb(), horizon=2)
     assert rows[0]["classification_source"] == "active_classifier"
-    assert rows[0]["horizon_reliability"] == "validated_d1"
+    assert rows[0]["horizon_reliability"] == "evaluated_d1"
     assert rows[0]["is_experimental"] is False
     assert rows[1]["classifier_predicted_class"] is None
     assert rows[1]["classification_source"] == "regression_threshold"
@@ -282,16 +282,23 @@ def test_forecast_run_lifecycle_links_rows_and_closes_success(monkeypatch):
             return type("Resp", (), {"data": {}})()
 
     class RPC:
+        def __init__(self, name):
+            self.name = name
+
         def execute(self):
-            return type("Resp", (), {"data": {"evaluated": 7}})()
+            data = {"evaluated": 7} if self.name == "fn_evaluate_due_forecasts" else {"upserted": 3}
+            return type("Resp", (), {"data": data})()
 
     class SB:
         def table(self, name):
             return Query(name)
 
         def rpc(self, name, *_args, **_kwargs):
-            assert name == "fn_evaluate_due_forecasts"
-            return RPC()
+            assert name in {
+                "fn_evaluate_due_forecasts",
+                "fn_refresh_model_drift_metrics",
+            }
+            return RPC(name)
 
     rows = [{
         "province_id": "TH-30",
@@ -300,6 +307,7 @@ def test_forecast_run_lifecycle_links_rows_and_closes_success(monkeypatch):
     }]
     monkeypatch.setattr(ml, "make_forecasts", lambda _sb, _horizon: rows)
     monkeypatch.setattr(ml, "upsert_forecasts", lambda _sb, _rows: 1)
+    monkeypatch.setattr(ml, "upsert_feature_snapshots", lambda _sb: 1)
 
     output, count, evaluated = ml.execute_forecast_run(SB(), 1)
 
@@ -350,6 +358,7 @@ def test_forecast_run_lifecycle_records_error(monkeypatch):
         raise RuntimeError("test failure")
 
     monkeypatch.setattr(ml, "make_forecasts", fail_forecast)
+    monkeypatch.setattr(ml, "upsert_feature_snapshots", lambda _sb: 0)
     with pytest.raises(RuntimeError, match="test failure"):
         ml.execute_forecast_run(SB(), 1)
     assert any(
@@ -376,3 +385,42 @@ def test_calibrated_prediction_interval_uses_registered_residual_quantiles():
     )
     assert (p10, p50, p90) == (35.0, 41.0, 48.0)
     assert method == "calibrated_chronological_residual"
+
+
+def test_interval_uses_recent_variability_as_a_minimum_width():
+    p10, _p50, p90, method = ml.prediction_interval(
+        40.0,
+        1,
+        {
+            "surrogate": {
+                "residual_quantiles": {
+                    "p10": -1.0,
+                    "p50": 0.0,
+                    "p90": 1.0,
+                },
+            },
+        },
+        [10.0, 20.0, 30.0, 40.0],
+    )
+    assert p10 == 30.0
+    assert p90 == 50.0
+    assert method == "calibrated_residual_with_variability_floor"
+
+
+def test_stale_source_is_rolled_forward_before_emitting_d1(monkeypatch):
+    original = ml.load_recent_features
+    today = ml.datetime.now(ml.BANGKOK).date()
+
+    def stale_features(sb):
+        rows = original(sb)["TH-30"]
+        for index, row in enumerate(rows):
+            row["date"] = (today - ml.timedelta(days=2 - index)).isoformat()
+        return {"TH-30": rows}
+
+    monkeypatch.setattr(ml, "load_recent_features", stale_features)
+    rows = ml.make_forecasts(_forecast_sb(), horizon=2)
+    assert [row["target_date"] for row in rows] == [
+        (today + ml.timedelta(days=1)).isoformat(),
+        (today + ml.timedelta(days=2)).isoformat(),
+    ]
+    assert [row["forecast_horizon_days"] for row in rows] == [1, 2]

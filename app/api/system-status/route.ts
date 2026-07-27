@@ -2,6 +2,7 @@ import { handle, ok } from "@/lib/api-response";
 import { getCronLogs, getDataFreshness, getModelStatuses, getSyncJobs } from "@/services/system.service";
 
 export const revalidate = 0;
+export const dynamic = "force-dynamic";
 
 // GET /api/system-status → pipeline sync state, cron logs, data freshness.
 export async function GET() {
@@ -12,6 +13,6 @@ export async function GET() {
       getDataFreshness(),
       getModelStatuses(),
     ]);
-    return ok({ jobs, cronLogs, freshness, models }, 60, 120);
+    return ok({ jobs, cronLogs, freshness, models }, 0, 0);
   });
 }

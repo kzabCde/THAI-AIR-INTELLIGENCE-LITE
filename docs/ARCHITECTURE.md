@@ -14,7 +14,8 @@ Browser ──▶ Next.js App Router (Server Components)
                 ▼
             Supabase JS (typed) ──▶ PostgreSQL (province-level tables)
                 ▲
-Vercel Cron ──▶ /api/cron/* (service-role writes: sync, cleanup, forecasts)
+Vercel Cron ──▶ /api/cron/* (service-role sync/cleanup)
+                         └──▶ /api/ml/forecast (audited ML batch)
 ```
 
 ## Database schema (province-level only)
@@ -38,6 +39,12 @@ Supporting ML/operations tables include `model_registry`, `model_artifacts`,
 `stations`, `station_observations`, `feature_snapshots`, `forecast_runs`,
 `forecast_evaluations`, `model_drift_metrics`, `region_membership`,
 `pipeline_alerts`, `province_neighbours` and `backfill_checkpoints`.
+
+Serving and reporting use constrained views rather than raw historical tables:
+`air_quality_latest` and `weather_latest` select the newest trusted row through
+province/time indexes; `trusted_daily_metrics_v1` recomputes daily air/weather
+metrics from non-synthetic hourly rows; and `observed_hotspot_daily_v1` exposes
+only observed hotspot provenance. The reporting views are service-role only.
 
 ### Indexes
 
@@ -63,17 +70,26 @@ queries.
 ## Forecasting
 
 The Python ML endpoint evaluates the active lightweight serving artifact from
-`model_registry` and writes daily forecasts. Training compares six teacher
-families but reports the deployed Ridge/Logistic family separately. D+1 uses
-the validated next-day contract; recursive D+2–D+7 rows are explicitly
-experimental. Each row records provenance/fallback status and P10/P50/P90
-uncertainty where calibrated residuals exist.
+`model_registry` and writes one auditable daily batch linked to
+`forecast_runs`. Training compares six teacher families but reports the
+deployed Ridge/Logistic family separately. The endpoint evaluates due rows,
+refreshes rolling drift metrics, snapshots the exact feature vector/provenance,
+and emits D+1 from the next Asia/Bangkok business date even when its latest
+feature row is stale. D+1 has retrospective evaluation evidence; recursive
+D+2–D+7 rows remain experimental. Each row records model/run provenance and
+P10/P50/P90 uncertainty with a recent-variability floor.
+
+The dashboard serves only forecasts linked to a completed (`success` or
+`partial`) run. Legacy rows without a run ID remain available for audit but
+cannot supersede an ML batch.
 
 ## Caching strategy
 
-- Server queries wrapped in `unstable_cache` (60–3600s by domain).
+- Stable public queries are wrapped in `unstable_cache` (60–3600s by domain).
 - API routes set `Cache-Control: s-maxage / stale-while-revalidate`.
-- Pages use ISR `revalidate`; province pages are SSG via `generateStaticParams`.
+- Operational System and Forecast pages are dynamic/no-store so a completed
+  run or training candidate is visible immediately; province pages remain SSG
+  via `generateStaticParams`.
 - The Leaflet map is dynamically imported (`ssr: false`) and lazy-loaded.
 
 ## Security note

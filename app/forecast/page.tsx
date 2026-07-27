@@ -16,7 +16,8 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { pm25ClassDefinition } from "@/lib/pm25-classification";
 
 export const metadata: Metadata = { title: "พยากรณ์คุณภาพอากาศ" };
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function confidenceStatus(value: number | null | undefined) {
   if (value == null) {
@@ -65,6 +66,7 @@ export default async function ForecastPage({
 
   const current = forecast.current ?? 0;
   const primary = forecast.daily[0] ?? null;
+  const d1HasEvaluation = primary?.horizonReliability === "evaluated_d1";
   const primaryClass = primary?.airQualityClass
     ? pm25ClassDefinition(primary.airQualityClass)
     : null;
@@ -90,7 +92,11 @@ export default async function ForecastPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">พยากรณ์ PM2.5</h1>
           <p className="muted text-sm">
-            D+1 ผ่านการประเมิน · D+2 ถึง D+7 เป็นผลทดลอง · อัปเดต <RelativeTime iso={forecast.generatedAt} />
+            {d1HasEvaluation
+              ? "D+1 มีผลประเมินย้อนหลัง"
+              : "D+1 ยังอยู่ระหว่างสะสมหลักฐาน"}
+            {" · "}D+2 ถึง D+7 เป็นผลทดลอง · อัปเดต{" "}
+            <RelativeTime iso={forecast.generatedAt} />
           </p>
         </div>
         <ProvinceSelect value={province.id} />
@@ -292,12 +298,12 @@ export default async function ForecastPage({
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        d.horizonReliability === "validated_d1"
+                        d.horizonReliability === "evaluated_d1"
                           ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                           : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                       }`}>
-                        {d.horizonReliability === "validated_d1"
-                          ? "ผ่านการประเมิน D+1"
+                        {d.horizonReliability === "evaluated_d1"
+                          ? "มีผลประเมินย้อนหลัง"
                           : "ผลทดลอง"}
                       </span>
                     </td>

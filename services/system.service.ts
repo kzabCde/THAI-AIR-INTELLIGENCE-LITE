@@ -1,11 +1,11 @@
 import "server-only";
 
-import { getSupabase, isSupabaseConfigured } from "./_db";
+import { getServiceSupabase, isSupabaseConfigured } from "./_db";
 import type { CronLog, DataFreshness, ModelStatus, SyncJob } from "./types";
 
 export async function getSyncJobs(): Promise<SyncJob[]> {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await getSupabase()
+  const { data, error } = await getServiceSupabase()
     .from("sync_state")
     .select("*")
     .order("job_name", { ascending: true });
@@ -24,7 +24,7 @@ export async function getSyncJobs(): Promise<SyncJob[]> {
 
 export async function getCronLogs(limit = 20): Promise<CronLog[]> {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await getSupabase()
+  const { data, error } = await getServiceSupabase()
     .from("cron_log")
     .select("*")
     .order("started_at", { ascending: false })
@@ -43,33 +43,56 @@ export async function getCronLogs(limit = 20): Promise<CronLog[]> {
   }));
 }
 
-/** Active model availability only; evaluation metrics remain in Python training output. */
+/** Active serving model plus the latest candidate for each province/task. */
 export async function getModelStatuses(): Promise<ModelStatus[]> {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await getSupabase()
+  const { data, error } = await getServiceSupabase()
     .from("model_registry")
-    .select("model_name,province_id,task_type,trained_at,eligibility_status")
-    .eq("is_active", true)
-    .order("province_id", { ascending: true });
+    .select(
+      "model_name,province_id,task_type,run_id,trained_at,eligibility_status,eligibility_reason,is_active",
+    )
+    .order("province_id", { ascending: true })
+    .order("task_type", { ascending: true })
+    .order("trained_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []).flatMap((r) =>
-    r.province_id &&
-    (r.task_type === "regression" || r.task_type === "classification")
-      ? [{
-          modelName: r.model_name,
-          provinceId: r.province_id,
-          taskType: r.task_type,
-          trainedAt: r.trained_at,
-          eligible: r.eligibility_status,
-        }]
-      : [],
-  );
+
+  const groups = new Map<string, typeof data>();
+  for (const row of data ?? []) {
+    if (
+      !row.province_id
+      || (row.task_type !== "regression" && row.task_type !== "classification")
+    ) continue;
+    const key = `${row.province_id}:${row.task_type}`;
+    const rows = groups.get(key) ?? [];
+    rows.push(row);
+    groups.set(key, rows);
+  }
+
+  return [...groups.values()].flatMap((rows) => {
+    const latest = rows[0];
+    if (!latest?.province_id) return [];
+    const active = rows.find((row) => row.is_active === true) ?? null;
+    return [{
+      provinceId: latest.province_id,
+      taskType: latest.task_type as "regression" | "classification",
+      activeModelName: active?.model_name ?? null,
+      activeRunId: active?.run_id ?? null,
+      activeTrainedAt: active?.trained_at ?? null,
+      activeEligible: active?.eligibility_status === true,
+      latestModelName: latest.model_name,
+      latestRunId: latest.run_id,
+      latestTrainedAt: latest.trained_at,
+      latestEligible: latest.eligibility_status === true,
+      latestIsActive: latest.is_active === true,
+      latestEligibilityReason: latest.eligibility_reason,
+    }];
+  });
 }
 
 /** Latest timestamp + row count for each core data table. */
 export async function getDataFreshness(): Promise<DataFreshness[]> {
   if (!isSupabaseConfigured) return [];
-  const sb = getSupabase();
+  const sb = getServiceSupabase();
 
   async function freshness(
     table: "air_quality_hourly" | "weather_hourly" | "hotspot_daily" | "daily_summary",

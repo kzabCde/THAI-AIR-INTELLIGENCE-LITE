@@ -77,7 +77,7 @@ export type ForecastPoint = {
   fallbackReason?: string | null;
   horizonDays?: number;
   horizonReliability?:
-    | "validated_d1"
+    | "evaluated_d1"
     | "experimental_recursive"
     | "legacy_unverified_d1"
     | "legacy_unverified"
@@ -157,11 +157,18 @@ export type DataFreshness = {
   rowCount: number | null;
 };
 
-/** Public-facing status for an active model. Training metrics stay in Python output. */
+/** Public-facing model lifecycle status without exposing training artifacts. */
 export type ModelStatus = {
-  modelName: string;
   provinceId: string;
   taskType: "regression" | "classification";
-  trainedAt: string;
-  eligible: boolean;
+  activeModelName: string | null;
+  activeRunId: string | null;
+  activeTrainedAt: string | null;
+  activeEligible: boolean;
+  latestModelName: string;
+  latestRunId: string;
+  latestTrainedAt: string;
+  latestEligible: boolean;
+  latestIsActive: boolean;
+  latestEligibilityReason: string | null;
 };

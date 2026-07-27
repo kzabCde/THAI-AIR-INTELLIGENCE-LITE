@@ -4,6 +4,7 @@ import { getBrowserSupabase } from "@/lib/supabase/client";
 import type { Tables } from "@/lib/supabase/database.types";
 
 export type HotspotRow = Tables<"hotspot_daily">;
+const EXCLUDED_SOURCES = '("synthetic","mock","demo")';
 
 /** Latest hotspot record for every province (deduplicated, last 7 days). */
 export async function getLatestHotspots(): Promise<HotspotRow[]> {
@@ -14,6 +15,7 @@ export async function getLatestHotspots(): Promise<HotspotRow[]> {
   const { data, error } = await sb
     .from("hotspot_daily")
     .select("*")
+    .not("source", "in", EXCLUDED_SOURCES)
     .gte("date", since.toISOString().slice(0, 10))
     .order("date", { ascending: false });
   if (error) throw new Error(error.message);
@@ -33,6 +35,7 @@ export async function getProvinceHotspots(province: string): Promise<HotspotRow 
     .from("hotspot_daily")
     .select("*")
     .eq("province_id", province)
+    .not("source", "in", EXCLUDED_SOURCES)
     .order("date", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -53,6 +56,7 @@ export async function getHotspotHistory(
     .from("hotspot_daily")
     .select("*")
     .eq("province_id", province)
+    .not("source", "in", EXCLUDED_SOURCES)
     .gte("date", since.toISOString().slice(0, 10))
     .order("date", { ascending: true });
   if (error) throw new Error(error.message);

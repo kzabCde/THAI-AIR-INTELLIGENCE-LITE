@@ -157,7 +157,8 @@ def load_recent_features(sb: Client) -> dict[str, list[dict]]:
             "neighbor_pm25_avg,regional_pm25_avg,"
             "temp_mean,humidity_mean,wind_speed_mean,precip_total,"
             "hotspot_count,total_frp,month,day_of_week,"
-            "is_burning_season,is_dry_season,trusted_hours"
+            "is_burning_season,is_dry_season,trusted_hours,"
+            "trusted_sources,trusted_observed_at,feature_provenance"
         )
         .in_("province_id", PROVINCE_IDS)
         .gte("date", cutoff)
@@ -450,11 +451,107 @@ def prediction_interval(
         spread = max(spread, prediction * 0.10, 1.0) * math.sqrt(horizon)
         offsets = [-1.2816 * spread, 0.0, 1.2816 * spread]
         method = "uncalibrated_recent_variability"
+    recent = np.asarray(rolling[-14:], dtype=float)
+    innovations = np.abs(np.diff(recent))
+    if len(innovations):
+        variability_floor = max(
+            float(np.quantile(innovations, 0.80)),
+            1.0,
+        ) * math.sqrt(horizon)
+        widened = offsets[0] > -variability_floor or offsets[2] < variability_floor
+        offsets[0] = min(offsets[0], -variability_floor)
+        offsets[2] = max(offsets[2], variability_floor)
+        if widened and method == "calibrated_chronological_residual":
+            method = "calibrated_residual_with_variability_floor"
+
     values = sorted(
         float(np.clip(prediction + offset, 0.0, 500.0))
         for offset in offsets
     )
     return values[0], values[1], values[2], method
+
+
+def upsert_feature_snapshots(sb: Client) -> int:
+    """Persist the exact trusted feature state used at forecast time."""
+    recent = load_recent_features(sb)
+    now = datetime.now(timezone.utc)
+    snapshots: list[dict] = []
+    for province_id, history in recent.items():
+        if not history:
+            continue
+        row = history[-1]
+        feature_date = row.get("date")
+        if not feature_date:
+            continue
+        rolling = [
+            _fval(item, "pm25_mean")
+            for item in history
+            if item.get("pm25_mean") is not None
+        ]
+        if not rolling:
+            continue
+        vector = build_feature_vector(
+            row,
+            rolling,
+            date.fromisoformat(feature_date),
+            FEATURE_COLS,
+        )
+        features = {
+            name: float(vector[index])
+            for index, name in enumerate(FEATURE_COLS)
+        }
+        source_backed_features = {
+            "pm25_mean",
+            "neighbor_pm25_avg",
+            "regional_pm25_avg",
+            "temp_mean",
+            "humidity_mean",
+            "wind_speed_mean",
+            "precip_total",
+        }
+        missingness = {
+            name: (
+                row.get(name) is None
+                if name in source_backed_features
+                else False
+            )
+            for name in FEATURE_COLS
+        }
+        trusted_at = row.get("trusted_observed_at")
+        latency = None
+        if trusted_at:
+            try:
+                parsed = datetime.fromisoformat(str(trusted_at).replace("Z", "+00:00"))
+                latency = max(0, int((now - parsed).total_seconds()))
+            except ValueError:
+                latency = None
+        snapshots.append({
+            "province_id": province_id,
+            "feature_date": feature_date,
+            "feature_version": "daily-observed-v4",
+            "features": features,
+            "provenance": (
+                row.get("feature_provenance")
+                or {
+                    "trusted_sources": row.get("trusted_sources") or [],
+                    "synthetic_allowed": False,
+                }
+            ),
+            "missingness": missingness,
+            "quality_status": (
+                "trusted"
+                if int(row.get("trusted_hours") or 0) >= 18
+                else "insufficient_hours"
+            ),
+            "source_latency_seconds": latency,
+        })
+    if not snapshots:
+        return 0
+    sb.table("feature_snapshots").upsert(
+        snapshots,
+        on_conflict="province_id,feature_date,feature_version",
+    ).execute()
+    return len(snapshots)
 
 
 def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
@@ -500,9 +597,11 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             serving_policy = "classifier_with_regression_fallback"
         artifact = params.get("surrogate") or {}
         feature_cols = artifact.get("feature_cols") or FEATURE_COLS
-        for h in range(1, horizon + 1):
-            feature_date = as_of + timedelta(days=h - 1)
-            target_date = as_of + timedelta(days=h)
+        source_gap_days = max(0, (bangkok_today - as_of).days)
+        total_recursive_steps = source_gap_days + horizon
+        for recursive_step in range(1, total_recursive_steps + 1):
+            feature_date = as_of + timedelta(days=recursive_step - 1)
+            target_date = as_of + timedelta(days=recursive_step)
             features = build_feature_vector(last_row, rolling, feature_date, feature_cols)
             prediction = float(np.clip(_predict_model(
                 model_name,
@@ -516,10 +615,15 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             ), 1.0, 500.0))
             p10, p50, p90, uncertainty_method = prediction_interval(
                 prediction,
-                h,
+                recursive_step,
                 params,
                 rolling,
             )
+            rolling.append(prediction)
+            if target_date <= bangkok_today:
+                continue
+
+            forecast_horizon = (target_date - bangkok_today).days
             regression_class = class_for_pm25(prediction)
             classifier_class = None
             probabilities = None
@@ -528,7 +632,7 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             fallback_used = True
             fallback_reason = "no_eligible_active_classifier"
             if (
-                h == 1
+                forecast_horizon == 1
                 and classifier_row
                 and classifier_row.get("eligibility_status") is True
                 and serving_policy != "regression_threshold"
@@ -548,7 +652,7 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     fallback_reason = None
                 except (TypeError, ValueError):
                     fallback_reason = "invalid_classifier_artifact"
-            elif h > 1:
+            elif forecast_horizon > 1:
                 fallback_reason = "experimental_horizon_regression_threshold"
             displayed_class = (
                 classifier_class
@@ -605,14 +709,15 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     or classifier_params.get("feature_version")
                     or "daily-observed-v4"
                 ),
-                "forecast_horizon_days": h,
+                "forecast_horizon_days": forecast_horizon,
                 "horizon_reliability": (
-                    "validated_d1" if h == 1 else "experimental_recursive"
+                    "evaluated_d1"
+                    if forecast_horizon == 1
+                    else "experimental_recursive"
                 ),
-                "is_experimental": h > 1,
+                "is_experimental": forecast_horizon > 1,
                 "uncertainty_method": uncertainty_method,
             })
-            rolling.append(prediction)
 
     return rows_out
 
@@ -644,6 +749,9 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
     try:
         evaluation_response = sb.rpc("fn_evaluate_due_forecasts").execute()
         evaluated = int((evaluation_response.data or {}).get("evaluated", 0))
+        drift_response = sb.rpc("fn_refresh_model_drift_metrics").execute()
+        drift_rows = int((drift_response.data or {}).get("upserted", 0))
+        snapshot_count = upsert_feature_snapshots(sb)
         rows = make_forecasts(sb, horizon)
         for row in rows:
             row["forecast_run_id"] = run_id
@@ -667,6 +775,8 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
                 "province_count": province_count,
                 "forecast_rows": count,
                 "evaluated_previous_rows": evaluated,
+                "drift_rows": drift_rows,
+                "feature_snapshots": snapshot_count,
             },
         }).eq("run_id", run_id).execute()
         return rows, count, evaluated

@@ -17,7 +17,7 @@ export async function handle(fn: () => Promise<NextResponse>): Promise<NextRespo
   try {
     return await fn();
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Unexpected error";
-    return fail(message, 500);
+    console.error("[api] unhandled error", e);
+    return fail("Internal server error", 500);
   }
 }
