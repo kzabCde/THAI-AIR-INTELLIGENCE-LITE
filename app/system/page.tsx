@@ -11,16 +11,18 @@ import { getModelLabel } from "@/lib/model-labels";
 import { ISAN_PROVINCES } from "@/lib/isan";
 
 export const metadata: Metadata = { title: "สถานะระบบ" };
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const JOB_LABELS: Record<string, string> = {
   pm25_sync: "ซิงค์ PM2.5 (รายชั่วโมง)",
   weather_sync: "ซิงค์สภาพอากาศ (รายชั่วโมง)",
   hotspot_sync: "ซิงค์จุดความร้อน (ทุก 6 ชม.)",
-  daily_cleanup: "ล้างข้อมูลเก่า (รายวัน 01:00)",
-  model_retrain: "เทรนโมเดลใหม่ (รายวัน 02:00)",
-  forecast_generate: "สร้างพยากรณ์",
-  ml_forecast: "พยากรณ์ ML (Vercel Python)",
+  daily_pipeline: "ประมวลผลรายวัน (01:30 น.)",
+  daily_cleanup: "ล้างข้อมูลเก่า (ในรอบ 01:30 น.)",
+  model_retrain: "เทรนโมเดล (สั่งรันด้วยตนเอง)",
+  forecast_generate: "สร้างพยากรณ์สำรอง (ไม่รันอัตโนมัติ)",
+  ml_forecast: "พยากรณ์ ML (หลังรอบ 01:30 น.)",
 };
 
 const TABLE_LABELS: Record<string, string> = {
@@ -57,14 +59,14 @@ export default async function SystemPage() {
     modelStatuses.some((model) =>
       model.provinceId === province.id
       && model.taskType === "regression"
-      && model.eligible,
+      && model.activeEligible,
     ),
   ).length;
   const readyClassificationCount = ISAN_PROVINCES.filter((province) =>
     modelStatuses.some((model) =>
       model.provinceId === province.id
       && model.taskType === "classification"
-      && model.eligible,
+      && model.activeEligible,
     ),
   ).length;
   const calculatedClassificationCount = Math.max(
@@ -97,7 +99,7 @@ export default async function SystemPage() {
       {modelStatuses.length > 0 && (
         <Section
           title="สถานะโมเดลรายจังหวัด"
-          description="แสดงเฉพาะความพร้อมใช้งาน ส่วนผลประเมินเชิงเทคนิคจะแสดงตอนรัน Python เทรนโมเดล"
+          description="แยกโมเดลที่ใช้งานจริงออกจากผลเทรนรอบล่าสุด เพื่อให้เห็นว่ารอบใหม่ถูกเปิดใช้หรือยัง"
         >
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="card card-pad">
@@ -139,11 +141,17 @@ export default async function SystemPage() {
                   const rows = modelStatuses.filter((row) => row.provinceId === province.id);
                   const regression = rows.find((row) => row.taskType === "regression");
                   const classification = rows.find((row) => row.taskType === "classification");
-                  const regressionReady = regression?.eligible === true;
-                  const classificationReady = classification?.eligible === true;
+                  const regressionReady = regression?.activeEligible === true;
+                  const classificationReady = classification?.activeEligible === true;
                   const latest = [...rows].sort((a, b) =>
-                    b.trainedAt.localeCompare(a.trainedAt),
-                  )[0]?.trainedAt ?? null;
+                    b.latestTrainedAt.localeCompare(a.latestTrainedAt),
+                  )[0]?.latestTrainedAt ?? null;
+                  const candidateStatus = (model: typeof regression) => {
+                    if (!model) return "ยังไม่มีผลเทรน";
+                    if (model.latestIsActive) return "ผ่านเกณฑ์และเปิดใช้แล้ว";
+                    if (model.latestEligible) return "ผ่านเกณฑ์—รอเปิดใช้";
+                    return "ยังไม่ผ่านเกณฑ์—คงใช้โมเดลเดิม";
+                  };
                   return (
                     <tr key={province.id} className="border-b border-border/60 last:border-0">
                       <td className="px-4 py-2.5">
@@ -160,9 +168,18 @@ export default async function SystemPage() {
                           {regressionReady ? "พร้อมใช้งาน" : "ยังไม่พร้อม"}
                         </p>
                         <p className="muted mt-0.5 max-w-xs text-xs">
-                          {regression
-                            ? getModelLabel(regression.modelName)
+                          {regression?.activeModelName
+                            ? `ใช้งานอยู่: ${getModelLabel(regression.activeModelName)}`
                             : "ยังไม่มีโมเดลพยากรณ์ที่เปิดใช้งาน"}
+                        </p>
+                        <p className={`mt-1 max-w-xs text-xs ${
+                          regression?.latestIsActive
+                            ? "text-emerald-600"
+                            : regression?.latestEligible
+                              ? "text-amber-600"
+                              : "muted"
+                        }`}>
+                          รอบล่าสุด: {candidateStatus(regression)}
                         </p>
                       </td>
                       <td className="px-4 py-2.5">
@@ -183,12 +200,23 @@ export default async function SystemPage() {
                               : "ยังไม่พร้อม"}
                         </p>
                         <p className="muted mt-0.5 max-w-xs text-xs">
-                          {classificationReady && classification
-                            ? getModelLabel(classification.modelName)
+                          {classificationReady && classification?.activeModelName
+                            ? `ใช้งานอยู่: ${getModelLabel(classification.activeModelName)}`
                             : regressionReady
                               ? "แปลงค่าพยากรณ์เป็นระดับคุณภาพอากาศตามเกณฑ์"
                               : "ต้องมีโมเดลพยากรณ์ก่อน"}
                         </p>
+                        {classification && (
+                          <p className={`mt-1 max-w-xs text-xs ${
+                            classification.latestIsActive
+                              ? "text-emerald-600"
+                              : classification.latestEligible
+                                ? "text-amber-600"
+                                : "muted"
+                          }`}>
+                            รอบล่าสุด: {candidateStatus(classification)}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className={regressionReady ? "text-emerald-600" : "text-red-600"}>

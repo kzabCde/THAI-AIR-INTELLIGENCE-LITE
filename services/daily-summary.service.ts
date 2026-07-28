@@ -1,9 +1,9 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { dateDaysAgo, getSupabase, isSupabaseConfigured } from "./_db";
+import { dateDaysAgo, getServiceSupabase, isSupabaseConfigured } from "./_db";
 
-export type DailyRow = Tables<"daily_summary">;
+export type DailyRow = Tables<"trusted_daily_metrics_v1">;
 
 export type DailyPoint = {
   date: string;
@@ -46,8 +46,8 @@ function toPoint(r: Partial<DailyRow> & { date: string }): DailyPoint {
 /** Daily history for a province over the past `days` (7 / 30 / 90 …). */
 export async function getDailyHistory(provinceId: string, days: number): Promise<DailyPoint[]> {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await getSupabase()
-    .from("daily_summary")
+  const { data, error } = await getServiceSupabase()
+    .from("trusted_daily_metrics_v1")
     .select("date, pm25_mean, pm25_max, pm25_min, aqi_mean, temp_mean, temp_max, temp_min, humidity_mean, wind_speed_mean, wind_speed_max, wind_dir_mean, hotspot_count, hours_available, is_burning_season")
     .eq("province_id", provinceId)
     .gte("date", dateDaysAgo(days))
@@ -60,8 +60,8 @@ export async function getDailyHistory(provinceId: string, days: number): Promise
 export async function getYesterdayMeanByProvince(): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   if (!isSupabaseConfigured) return result;
-  const { data, error } = await getSupabase()
-    .from("daily_summary")
+  const { data, error } = await getServiceSupabase()
+    .from("trusted_daily_metrics_v1")
     .select("province_id, date, pm25_mean")
     .gte("date", dateDaysAgo(3))
     .order("date", { ascending: false });
@@ -83,8 +83,8 @@ export async function getMonthlyAverages(provinceId: string, months = 12): Promi
   if (!isSupabaseConfigured) return [];
   const since = new Date();
   since.setUTCMonth(since.getUTCMonth() - months);
-  const { data, error } = await getSupabase()
-    .from("daily_summary")
+  const { data, error } = await getServiceSupabase()
+    .from("trusted_daily_metrics_v1")
     .select("date, pm25_mean, aqi_mean")
     .eq("province_id", provinceId)
     .gte("date", since.toISOString().slice(0, 10))
@@ -115,8 +115,8 @@ export type SeasonPoint = { season: string; seasonTh: string; pm25: number; samp
  */
 export async function getSeasonalAverages(provinceId: string): Promise<SeasonPoint[]> {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await getSupabase()
-    .from("daily_summary")
+  const { data, error } = await getServiceSupabase()
+    .from("trusted_daily_metrics_v1")
     .select("month, pm25_mean")
     .eq("province_id", provinceId);
   if (error) throw error;

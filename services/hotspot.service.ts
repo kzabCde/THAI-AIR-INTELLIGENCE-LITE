@@ -1,9 +1,9 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { cachedMapQuery, getSupabase, isSupabaseConfigured } from "./_db";
+import { cachedMapQuery, getServiceSupabase, isSupabaseConfigured } from "./_db";
 
-export type HotspotRow = Tables<"hotspot_daily">;
+export type HotspotRow = Tables<"observed_hotspot_daily_v1">;
 
 /** Latest known hotspot record per province (fire season data may be stale). */
 export const getLatestHotspotByProvince = cachedMapQuery(
@@ -12,8 +12,8 @@ export const getLatestHotspotByProvince = cachedMapQuery(
     const result = new Map<string, HotspotRow>();
     if (!isSupabaseConfigured) return result;
     // Most recent 60 days covers a generous window; dedupe to latest per province.
-    const { data, error } = await getSupabase()
-      .from("hotspot_daily")
+    const { data, error } = await getServiceSupabase()
+      .from("observed_hotspot_daily_v1")
       .select("*")
       .order("date", { ascending: false })
       .limit(20 * 60);
@@ -33,8 +33,8 @@ export async function getHotspotHistory(
   if (!isSupabaseConfigured) return [];
   const since = new Date();
   since.setUTCDate(since.getUTCDate() - days);
-  const { data, error } = await getSupabase()
-    .from("hotspot_daily")
+  const { data, error } = await getServiceSupabase()
+    .from("observed_hotspot_daily_v1")
     .select("date, hotspot_count, total_frp")
     .eq("province_id", provinceId)
     .gte("date", since.toISOString().slice(0, 10))

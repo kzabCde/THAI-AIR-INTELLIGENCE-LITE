@@ -8,7 +8,7 @@ import {
   type PM25ClassId,
 } from "@/lib/pm25-classification";
 import type { TablesInsert } from "@/lib/supabase/database.types";
-import { getServiceSupabase, getSupabase, isSupabaseConfigured } from "./_db";
+import { getServiceSupabase, isSupabaseConfigured } from "./_db";
 import { getDailyHistory } from "./daily-summary.service";
 import { getLatestAir } from "./air-quality.service";
 import type { ForecastPoint, ProvinceForecast } from "./types";
@@ -17,7 +17,7 @@ export const FORECAST_MODEL = "ewma-diurnal-v1";
 export const FORECAST_HORIZON_HOURS = 168;
 const FORECAST_HORIZON_DAYS = 7;
 const HORIZON_RELIABILITY_VALUES = new Set([
-  "validated_d1",
+  "evaluated_d1",
   "experimental_recursive",
   "legacy_unverified_d1",
   "legacy_unverified",
@@ -28,6 +28,7 @@ function normalizeHorizonReliability(
   value: string | null,
   horizonDays: number,
 ): ForecastPoint["horizonReliability"] {
+  if (value === "validated_d1") return "evaluated_d1";
   if (value && HORIZON_RELIABILITY_VALUES.has(value)) {
     return value as ForecastPoint["horizonReliability"];
   }
@@ -170,50 +171,57 @@ export async function getProvinceForecast(provinceId: string): Promise<ProvinceF
   const current = latest?.pm25 ?? null;
 
   if (isSupabaseConfigured) {
-    const stored = await readStoredForecast(provinceId);
+    const stored = await readStoredForecast(provinceId, current);
     if (stored) return stored;
   }
   return buildForecast(provinceId, dailyMeans, current);
 }
 
-async function readStoredForecast(provinceId: string): Promise<ProvinceForecast | null> {
-  const sb = getSupabase();
+async function readStoredForecast(
+  provinceId: string,
+  observedCurrent: number | null,
+): Promise<ProvinceForecast | null> {
+  const sb = getServiceSupabase();
+  const { data: completedRuns, error: runsError } = await sb
+    .from("forecast_runs")
+    .select("run_id,forecast_at,status")
+    .in("status", ["success", "partial"])
+    .order("forecast_at", { ascending: false })
+    .limit(10);
+  if (runsError) throw runsError;
 
-  // Both tables are queried independently — sorted by forecast_at DESC so the
-  // latest model batch always wins, regardless of what model_name it carries.
-  const [{ data: hourlyRaw }, { data: dailyRaw }, { data: modelRows }] = await Promise.all([
-    sb
-      .from("forecast_hourly")
-      .select("target_time, pm25_forecast, forecast_at, model_name")
-      .eq("province_id", provinceId)
-      .order("forecast_at", { ascending: false })
-      .order("target_time", { ascending: true })
-      .limit(FORECAST_HORIZON_HOURS),
-    sb
-      .from("forecast_daily")
-      .select(
-        "target_date,pm25_mean_forecast,pm25_max_forecast,pm25_p10_forecast,pm25_p50_forecast,pm25_p90_forecast,forecast_at,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_reason,data_freshness,feature_version,forecast_horizon_days,horizon_reliability,is_experimental,uncertainty_method",
-      )
-      .eq("province_id", provinceId)
-      .order("forecast_at", { ascending: false })
-      .order("target_date", { ascending: true })
-      .limit(FORECAST_HORIZON_DAYS),
-    sb
-      .from("model_registry")
-      .select("task_type,model_name,run_id,eligibility_status,trained_at")
-      .eq("province_id", provinceId)
-      .eq("is_active", true),
-  ]);
+  const runIds = (completedRuns ?? []).map((run) => run.run_id);
+  if (!runIds.length) return null;
 
-  // forecast_daily is the source of truth for the ML pipeline. Pick exactly
-  // one newest daily batch and only use hourly rows from that same forecast_at;
-  // never pad a short latest batch with rows from older forecast_at values.
-  const daily = (dailyRaw ?? []).filter((r) => r.forecast_at === dailyRaw?.[0]?.forecast_at);
-  if (!daily.length && !hourlyRaw?.length) return null;
+  const [{ data: dailyRaw, error: dailyError }, { data: modelRows, error: modelError }] =
+    await Promise.all([
+      sb
+        .from("forecast_daily")
+        .select(
+          "target_date,pm25_mean_forecast,pm25_max_forecast,pm25_p10_forecast,pm25_p50_forecast,pm25_p90_forecast,forecast_at,forecast_run_id,model_name,regression_model_name,regression_run_id,regression_derived_class,classifier_predicted_class,displayed_class,class_label_th,class_label_en,classifier_model_name,classifier_run_id,confidence,class_probabilities,class_agreement,classification_source,fallback_reason,data_freshness,feature_version,forecast_horizon_days,horizon_reliability,is_experimental,uncertainty_method",
+        )
+        .eq("province_id", provinceId)
+        .in("forecast_run_id", runIds)
+        .order("forecast_at", { ascending: false })
+        .order("target_date", { ascending: true })
+        .limit(FORECAST_HORIZON_DAYS),
+      sb
+        .from("model_registry")
+        .select("task_type,model_name,run_id,eligibility_status,trained_at")
+        .eq("province_id", provinceId)
+        .eq("is_active", true),
+    ]);
+  if (dailyError) throw dailyError;
+  if (modelError) throw modelError;
 
-  const forecastAt = daily[0]?.forecast_at ?? hourlyRaw![0].forecast_at;
-  const hourly = (hourlyRaw ?? []).filter((r) => r.forecast_at === forecastAt);
-  const modelName = daily[0]?.model_name ?? hourly[0]?.model_name ?? FORECAST_MODEL;
+  // Only an auditable completed forecast run may be served. Rows written by
+  // emergency/legacy fallback jobs have no run id and cannot replace ML output.
+  const newestRunId = dailyRaw?.[0]?.forecast_run_id;
+  const daily = (dailyRaw ?? []).filter((row) => row.forecast_run_id === newestRunId);
+  if (!daily.length) return null;
+
+  const forecastAt = daily[0].forecast_at;
+  const modelName = daily[0].model_name ?? FORECAST_MODEL;
   const regressionRegistry = modelRows?.find((row) => row.task_type === "regression");
   const classificationRegistry = modelRows?.find((row) => row.task_type === "classification");
   const start = new Date(forecastAt).getTime();
@@ -266,29 +274,24 @@ async function readStoredForecast(provinceId: string): Promise<ProvinceForecast 
       uncertaintyMethod: r.uncertainty_method,
     };
   });
-  const hPoints: ForecastPoint[] = hourly.length
-    ? hourly.map((r) => {
-        const dt = new Date(r.target_time).getTime();
-        const hAhead = Math.max(1, (dt - start) / 3600_000);
-        return {
-          t: r.target_time,
-          pm25: r.pm25_forecast,
-          confidence: +Math.max(0.35, 0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
-        };
-      })
-    : dPoints.flatMap((d, dayIndex) => Array.from({ length: 24 }, (_, hourIndex) => {
-        const hAhead = dayIndex * 24 + hourIndex + 1;
-        const target = new Date(start + hAhead * 3600_000);
-        return {
-          t: target.toISOString(),
-          pm25: +Math.max(1, d.pm25 * diurnal(target.getUTCHours())).toFixed(1),
-          confidence: +Math.max(0.35, 0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
-        };
-      }));
+  const hPoints: ForecastPoint[] = dPoints.flatMap((d, dayIndex) =>
+    Array.from({ length: 24 }, (_, hourIndex) => {
+      const hAhead = dayIndex * 24 + hourIndex + 1;
+      const target = new Date(start + hAhead * 3600_000);
+      return {
+        t: target.toISOString(),
+        pm25: +Math.max(1, d.pm25 * diurnal(target.getUTCHours())).toFixed(1),
+        confidence: +Math.max(
+          0.35,
+          0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55,
+        ).toFixed(2),
+      };
+    }),
+  );
 
-  const current = hPoints[0]?.pm25 ?? null;
+  const current = observedCurrent;
   const last = dPoints[dPoints.length - 1]?.pm25 ?? current ?? 0;
-  const base = current ?? 0;
+  const base = current ?? dPoints[0]?.pm25 ?? 0;
   const peak = hPoints.reduce<ForecastPoint | null>((m, p) => (!m || p.pm25 > m.pm25 ? p : m), null);
   const newest = daily[0];
   const hasDirectClassification = Boolean(

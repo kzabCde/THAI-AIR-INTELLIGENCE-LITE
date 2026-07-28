@@ -30,6 +30,13 @@ const evaluationLifecycle = readFileSync(
   ),
   "utf8",
 );
+const productionRemediation = readFileSync(
+  new URL(
+    "../supabase/migrations/20260727170000_production_audit_remediation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(
   readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
@@ -172,4 +179,27 @@ test("forecast batches are linked to runs and evaluated against trusted actuals"
   );
   assert.match(runtime, /def execute_forecast_run/);
   assert.match(runtime, /evaluated_previous_rows/);
+});
+
+test("production remediation prevents fallback overwrite and records drift", () => {
+  assert.doesNotMatch(
+    productionRemediation.slice(
+      productionRemediation.indexOf("create or replace function public.fn_daily_pipeline"),
+    ),
+    /fn_generate_forecast\(/,
+  );
+  assert.match(productionRemediation, /fn_refresh_model_drift_metrics/);
+  assert.match(productionRemediation, /trusted_daily_metrics_v1/);
+  assert.match(productionRemediation, /observed_hotspot_daily_v1/);
+  assert.match(productionRemediation, /idx_aqh_trusted_latest/);
+  assert.match(productionRemediation, /idx_wh_trusted_latest/);
+});
+
+test("technical operations tables are service-role only", () => {
+  for (const table of ["cron_log", "model_registry", "sync_state"]) {
+    assert.match(
+      productionRemediation,
+      new RegExp(`revoke all privileges on table public\\.${table}[\\s\\S]+from anon, authenticated`, "i"),
+    );
+  }
 });

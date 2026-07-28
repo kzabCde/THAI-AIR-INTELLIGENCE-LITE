@@ -1586,6 +1586,63 @@ export type Database = {
           },
         ]
       }
+      trusted_daily_metrics_v1: {
+        Row: {
+          aqi_mean: number | null
+          date: string
+          day_of_week: number | null
+          hotspot_count: number | null
+          hours_available: number | null
+          humidity_mean: number | null
+          is_burning_season: boolean | null
+          is_dry_season: boolean | null
+          month: number | null
+          pm10_mean: number | null
+          pm25_max: number | null
+          pm25_mean: number | null
+          pm25_min: number | null
+          province_id: string
+          temp_max: number | null
+          temp_mean: number | null
+          temp_min: number | null
+          trusted_observed_at: string | null
+          trusted_sources: string[] | null
+          wind_dir_mean: number | null
+          wind_speed_max: number | null
+          wind_speed_mean: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "air_quality_hourly_province_id_fkey"
+            columns: ["province_id"]
+            isOneToOne: false
+            referencedRelation: "isan_provinces"
+            referencedColumns: ["province_id"]
+          },
+        ]
+      }
+      observed_hotspot_daily_v1: {
+        Row: {
+          created_at: string | null
+          date: string
+          high_confidence_count: number | null
+          hotspot_count: number
+          id: number
+          max_frp: number | null
+          province_id: string
+          source: string
+          total_frp: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hotspot_daily_province_id_fkey"
+            columns: ["province_id"]
+            isOneToOne: false
+            referencedRelation: "isan_provinces"
+            referencedColumns: ["province_id"]
+          },
+        ]
+      }
       training_daily_summary_v2: {
         Row: {
           aqi_max: number | null
@@ -1638,6 +1695,7 @@ export type Database = {
           temp_min: number | null
           total_frp: number | null
           trusted_hours: number | null
+          trusted_observed_at: string | null
           trusted_sources: string[] | null
           updated_at: string | null
           wind_dir_mean: number | null

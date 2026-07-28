@@ -54,3 +54,19 @@ test('scheduled sync retries transient failures and records operational alerts',
     assert.match(source, /fn_resolve_pipeline_alert/);
   }
 });
+
+test('API wrapper does not expose internal exception messages', () => {
+  const source = readFileSync(new URL('../lib/api-response.ts', import.meta.url), 'utf8');
+  assert.match(source, /console\.error/);
+  assert.match(source, /fail\("Internal server error", 500\)/);
+  assert.doesNotMatch(source, /e instanceof Error \? e\.message/);
+});
+
+test('browser hotspot reads exclude synthetic and demo sources', () => {
+  const source = readFileSync(
+    new URL('../services/supabase/hotspot.service.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /EXCLUDED_SOURCES/);
+  assert.match(source, /\.not\("source", "in", EXCLUDED_SOURCES\)/);
+});

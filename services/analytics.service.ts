@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabase, isSupabaseConfigured } from "./_db";
+import { getServiceSupabase, isSupabaseConfigured } from "./_db";
 
 export type AnalyticsFilter = {
   provinceId?: string; // omit / "all" → whole region
@@ -22,6 +22,8 @@ export type AnalyticsResult = {
 };
 
 const THAI_PM25_STANDARD = 37.5;
+const PAGE_SIZE = 1_000;
+const MAX_ANALYTICS_ROWS = 10_000;
 
 /** Daily PM2.5/AQI series for a province or the whole region, with summary stats. */
 export async function getAnalytics(filter: AnalyticsFilter): Promise<AnalyticsResult> {
@@ -31,22 +33,35 @@ export async function getAnalytics(filter: AnalyticsFilter): Promise<AnalyticsRe
   };
   if (!isSupabaseConfigured) return empty;
 
-  let query = getSupabase()
-    .from("daily_summary")
-    .select("date, pm25_mean, aqi_mean, province_id")
-    .gte("date", filter.from)
-    .lte("date", filter.to)
-    .order("date", { ascending: true });
-
   const single = filter.provinceId && filter.provinceId !== "all";
-  if (single) query = query.eq("province_id", filter.provinceId!);
+  const rows: {
+    date: string;
+    pm25_mean: number | null;
+    aqi_mean: number | null;
+    province_id: string;
+  }[] = [];
 
-  const { data, error } = await query;
-  if (error) throw error;
+  // PostgREST limits a response to 1,000 rows by default. Fetch deterministic
+  // pages so a 90/365-day regional query never silently truncates its tail.
+  for (let offset = 0; offset < MAX_ANALYTICS_ROWS; offset += PAGE_SIZE) {
+    let query = getServiceSupabase()
+      .from("trusted_daily_metrics_v1")
+      .select("date,pm25_mean,aqi_mean,province_id")
+      .gte("date", filter.from)
+      .lte("date", filter.to)
+      .order("date", { ascending: true })
+      .order("province_id", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (single) query = query.eq("province_id", filter.provinceId!);
+    const { data, error } = await query;
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < PAGE_SIZE) break;
+  }
 
   // Aggregate by date (average across provinces when region-wide).
   const buckets = new Map<string, { pm: number; aqi: number; n: number }>();
-  for (const r of data ?? []) {
+  for (const r of rows) {
     const b = buckets.get(r.date) ?? { pm: 0, aqi: 0, n: 0 };
     b.pm += r.pm25_mean ?? 0;
     b.aqi += r.aqi_mean ?? 0;
