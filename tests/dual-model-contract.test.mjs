@@ -44,6 +44,13 @@ const evaluatedD1Hotfix = readFileSync(
   ),
   "utf8",
 );
+const dueEvaluationHotfix = readFileSync(
+  new URL(
+    "../supabase/migrations/20260728023628_optimize_due_forecast_evaluation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(
   readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
@@ -124,6 +131,25 @@ test("D+1 runtime reliability value is accepted by the database contract", () =>
   assert.match(
     evaluatedD1Hotfix,
     /validate constraint forecast_daily_horizon_reliability_check/i,
+  );
+});
+
+test("due evaluation reads only auditable missing province-date pairs", () => {
+  assert.match(
+    dueEvaluationHotfix,
+    /forecast\.forecast_run_id is not null/i,
+  );
+  assert.match(
+    dueEvaluationHotfix,
+    /not exists[\s\S]+forecast_daily_id = forecast\.id/i,
+  );
+  assert.match(
+    dueEvaluationHotfix,
+    /candidate\.target_date::timestamp[\s\S]+at time zone 'Asia\/Bangkok'/i,
+  );
+  assert.doesNotMatch(
+    dueEvaluationHotfix,
+    /join public\.training_daily_summary_v2/i,
   );
 });
 
