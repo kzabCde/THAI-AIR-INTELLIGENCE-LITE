@@ -37,6 +37,13 @@ const productionRemediation = readFileSync(
   ),
   "utf8",
 );
+const evaluatedD1Hotfix = readFileSync(
+  new URL(
+    "../supabase/migrations/20260728023020_allow_evaluated_d1_reliability.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(
   readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
@@ -106,6 +113,18 @@ test("v4 forecast contract records intervals and horizon reliability", () => {
     assert.ok(hardeningMigration.includes(field), `migration missing ${field}`);
     assert.ok(runtime.includes(field), `runtime missing ${field}`);
   }
+});
+
+test("D+1 runtime reliability value is accepted by the database contract", () => {
+  assert.match(runtime, /"horizon_reliability":\s*\([\s\S]*"evaluated_d1"/);
+  assert.match(
+    evaluatedD1Hotfix,
+    /forecast_daily_horizon_reliability_check[\s\S]*'evaluated_d1'/,
+  );
+  assert.match(
+    evaluatedD1Hotfix,
+    /validate constraint forecast_daily_horizon_reliability_check/i,
+  );
 });
 
 test("new operational tables are RLS protected and browser roles are revoked", () => {
