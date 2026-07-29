@@ -44,6 +44,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ job: string
   if (!validJob) return fail("Unknown cron job", 404);
   try {
     const result = await JOBS[validJob]();
+    if (result.status === "error") {
+      console.error(
+        `[cron:${validJob}] failed`,
+        result.message ?? "Scheduled job returned an error status",
+      );
+      return fail("Cron job failed", 500);
+    }
     return ok(result, 0, 0);
   } catch (error) {
     console.error(`[cron:${validJob}] failed`, error);
