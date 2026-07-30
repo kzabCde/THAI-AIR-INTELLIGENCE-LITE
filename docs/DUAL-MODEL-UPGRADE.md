@@ -181,7 +181,7 @@ deliberately. Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 
 ## Rollback
 
-`supabase/rollback/20260724190000_dual_regression_classification_pm25.sql`
+`supabase/rollback/20260724134401_dual_regression_classification_pm25.sql`
 deactivates classifiers and restores the one-active-regression-per-province
 rule without deleting rows or forecast history.
 

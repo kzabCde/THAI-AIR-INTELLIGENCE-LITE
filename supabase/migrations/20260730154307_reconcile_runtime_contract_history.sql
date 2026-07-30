@@ -1,3 +1,6 @@
+set lock_timeout = '5s';
+set statement_timeout = '90s';
+
 -- Production audit remediation
 -- - serves only auditable forecast runs and stops scheduled fallback overwrite
 -- - exposes trusted observed-only daily/hotspot read models to server code

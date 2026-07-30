@@ -116,7 +116,7 @@ on focus/reconnect.
 - **Realtime**: browser anon client (`lib/supabase/client.ts`) subscribes to the
   `supabase_realtime` publication (enabled via migration for all data tables).
 - **Writes**: service-role key, server-only, used by optional `/api/cron/*`.
-- **Security**: see `supabase/migrations/0002_rls_readonly_policies.sql` for the
+- **Security**: see `supabase/bootstrap/0002_rls_readonly_policies.sql` for the
   recommended RLS (enable + anon `SELECT`; writes via service role only).
 
 ## 8. Performance optimization checklist

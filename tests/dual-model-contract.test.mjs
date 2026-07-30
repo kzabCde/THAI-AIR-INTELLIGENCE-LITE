@@ -4,49 +4,49 @@ import test from "node:test";
 
 const migration = readFileSync(
   new URL(
-    "../supabase/migrations/20260724190000_dual_regression_classification_pm25.sql",
+    "../supabase/migrations/20260724134401_dual_regression_classification_pm25.sql",
     import.meta.url,
   ),
   "utf8",
 );
 const hardeningMigration = readFileSync(
   new URL(
-    "../supabase/migrations/20260726130615_research_hardening_v4.sql",
+    "../supabase/migrations/20260726132707_research_hardening_v4.sql",
     import.meta.url,
   ),
   "utf8",
 );
 const advisorFollowup = readFileSync(
   new URL(
-    "../supabase/migrations/20260726134000_research_hardening_v4_advisor_followup.sql",
+    "../supabase/migrations/20260726132929_research_hardening_v4_advisor_followup.sql",
     import.meta.url,
   ),
   "utf8",
 );
 const evaluationLifecycle = readFileSync(
   new URL(
-    "../supabase/migrations/20260726142000_forecast_evaluation_lifecycle.sql",
+    "../supabase/migrations/20260726133750_forecast_evaluation_lifecycle.sql",
     import.meta.url,
   ),
   "utf8",
 );
 const productionRemediation = readFileSync(
   new URL(
-    "../supabase/migrations/20260727170000_production_audit_remediation.sql",
+    "../supabase/migrations/20260730154307_reconcile_runtime_contract_history.sql",
     import.meta.url,
   ),
   "utf8",
 );
 const evaluatedD1Hotfix = readFileSync(
   new URL(
-    "../supabase/migrations/20260728023020_allow_evaluated_d1_reliability.sql",
+    "../supabase/migrations/20260728023313_allow_evaluated_d1_reliability.sql",
     import.meta.url,
   ),
   "utf8",
 );
 const dueEvaluationHotfix = readFileSync(
   new URL(
-    "../supabase/migrations/20260728023628_optimize_due_forecast_evaluation.sql",
+    "../supabase/migrations/20260728023805_optimize_due_forecast_evaluation.sql",
     import.meta.url,
   ),
   "utf8",

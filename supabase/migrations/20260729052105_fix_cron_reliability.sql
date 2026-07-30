@@ -1,4 +1,4 @@
--- Cron reliability hotfix (production version 20260729052105)
+-- Cron reliability hotfix
 --
 -- Root causes addressed:
 --   1. fn_daily_pipeline() and fn_refresh_next_runs() updated overlapping

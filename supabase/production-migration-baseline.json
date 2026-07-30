@@ -1,13 +1,29 @@
 {
   "project_scope": "northeast-thailand-air-quality",
-  "captured_at": "2026-07-26",
-  "remote_migration_count": 65,
+  "captured_at": "2026-07-30",
+  "project_ref": "qtcptorlmteydcslveqm",
+  "remote_migration_count": 73,
   "remote_head": {
-    "version": "20260724134401",
-    "name": "dual_regression_classification_pm25"
+    "version": "20260730154307",
+    "name": "reconcile_runtime_contract_history"
   },
-  "next_repository_migration": "20260726130615_research_hardening_v4.sql",
-  "purpose": "Auditable inventory of the production history that predates the repository hardening migration. Numbered repository migrations are retained as the bootstrap/squash baseline; do not replay this inventory as SQL.",
+  "repository_history_start": "20260718084717",
+  "purpose": "Authoritative inventory of the Supabase Production migration history. supabase/migrations contains the matching forward history from repository_history_start; squashed setup SQL lives in supabase/bootstrap and superseded unapplied candidates live in supabase/archive so linked migration tooling cannot replay them.",
+  "repository_statement_md5": {
+    "20260718084717": "18f13293445a542de3f012545a8a79a5",
+    "20260718085348": "e1365d91d8b0016864542af5e3a4c9c8",
+    "20260719101123": "1b9f601150f1240049ff61ae7d88262c",
+    "20260720112049": "39ed645ba1e82de9c628d686b3b82fb0",
+    "20260724134401": "3ed566b2361b8047ce8978e270ff4324",
+    "20260726132707": "43e80833795452415cb54ea58a31d6b9",
+    "20260726132929": "93f144ceea1c8ab62b1f5da7d4036423",
+    "20260726133750": "f71875b87618a8cb222deae4f41ee6dc",
+    "20260727003726": "369fd3cd76ad487b87f16b73415ba0c4",
+    "20260728023313": "644ad46f3c979f6bc378e85093c54936",
+    "20260728023805": "d0282620175c0ae5b66e0e0fc5743446",
+    "20260729052105": "8637c75f50c1f277ca8dda540790b7b3",
+    "20260730154307": "3c25f5bc4ce35b198f1fbee7b2c8d8f5"
+  },
   "migrations": [
     ["20260610152422", "001_extensions_and_geography"],
     ["20260610152437", "002_raw_observations"],
@@ -73,6 +89,14 @@
     ["20260718085348", "production_drift_safety_indexes"],
     ["20260719101123", "repair_daily_pipeline_registry_conflict"],
     ["20260720112049", "support_ensemble6_pm25_v3"],
-    ["20260724134401", "dual_regression_classification_pm25"]
+    ["20260724134401", "dual_regression_classification_pm25"],
+    ["20260726132707", "research_hardening_v4"],
+    ["20260726132929", "research_hardening_v4_advisor_followup"],
+    ["20260726133750", "forecast_evaluation_lifecycle"],
+    ["20260727003726", "align_runtime_with_observed_data"],
+    ["20260728023313", "allow_evaluated_d1_reliability"],
+    ["20260728023805", "optimize_due_forecast_evaluation"],
+    ["20260729052105", "fix_cron_reliability"],
+    ["20260730154307", "reconcile_runtime_contract_history"]
   ]
 }
