@@ -1,4 +1,4 @@
--- Run after applying 20260726130615_research_hardening_v4.sql.
+-- Run after applying 20260726132707_research_hardening_v4.sql.
 
 do $$
 declare

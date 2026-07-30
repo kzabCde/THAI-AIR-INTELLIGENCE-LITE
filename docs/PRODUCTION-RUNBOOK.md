@@ -7,7 +7,9 @@ and defaults to dry-run.
 ## Deploy
 
 1. Deploy application changes from a reviewed pull request.
-2. Apply forward-only Supabase migrations in order.
+2. Compare `supabase/production-migration-baseline.json` with the linked
+   Supabase project before applying anything. Apply only new forward-only
+   migrations whose 14-digit version is absent from Production.
 3. Confirm environment variables are present in production: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ML_SECRET`, and optional `ML_FORECAST_URL`.
 4. Verify data freshness and cron status read-only before enabling traffic.
 5. Confirm `research_hardening_v4_contract.sql` passes and that any legacy
@@ -17,7 +19,7 @@ and defaults to dry-run.
 7. Apply the forecast evaluation lifecycle migration. Each ML forecast batch
    then records a `forecast_runs` row, links its forecasts by foreign key and
    evaluates forecasts whose trusted actual daily value has arrived.
-8. Apply `20260727170000_production_audit_remediation.sql` only after the
+8. Apply `20260727003726_align_runtime_with_observed_data.sql` only after the
    matching application release is deployed. It moves technical-status reads
    to the service role, replaces the slow latest-row views, exposes
    service-only trusted analytics views, and disables direct SQL fallback
@@ -27,11 +29,23 @@ and defaults to dry-run.
    `forecast_run_id`, target D+1 or later in Asia/Bangkok, and use an active
    registry artifact.
 
-The historical production migration inventory is pinned in
-`supabase/production-migration-baseline.json`. It reconciles the 65 remote
-migration identifiers that predate the repository hardening migration. It is
-an audit record, not executable SQL; the numbered repository migrations remain
-the bootstrap/squash baseline.
+The Production migration inventory is pinned in
+`supabase/production-migration-baseline.json`. As of 30 July 2026 it contains
+all 73 remote identifiers through
+`20260730154307_reconcile_runtime_contract_history`. The forward history represented in this
+repository starts at `20260718084717`; every SQL file in
+`supabase/migrations` must have the same version and name as its Production
+record.
+
+The squashed setup SQL is stored in `supabase/bootstrap` and is only for
+provisioning an empty database. Superseded candidates that were never recorded
+in Production are stored in `supabase/archive`. Neither directory may be
+passed to linked migration tooling or copied back into
+`supabase/migrations`.
+
+The checked-in `.mcp.json` scopes the Supabase connector to project
+`qtcptorlmteydcslveqm` and contains no credential. Application runtime access
+continues to use environment variables; never commit their values.
 
 ## Rollback
 
