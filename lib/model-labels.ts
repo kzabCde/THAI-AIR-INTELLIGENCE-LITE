@@ -1,6 +1,7 @@
 export const MODEL_LABELS: Record<string, string> = {
-  "persist-revert-v2": "Persistence + Mean-Revert (ค่า 7 วันย้อนหลัง)",
-  "ewma-diurnal-v1": "EWMA + Diurnal Curve",
+  "recent-mean-v1": "ค่าเฉลี่ย PM2.5 ย้อนหลัง 7 วัน (Fallback)",
+  "persist-revert-v2": "Persistence + Mean-Revert (Legacy)",
+  "ewma-diurnal-v1": "EWMA + Diurnal Curve (Legacy)",
   "weighted-ensemble-v1": "Weighted Ensemble (เลิกใช้)",
   "stacking-v1": "Learned Stacking (persist-revert + ML base model)",
   "lightgbm-v1": "LightGBM (feature importance weighted)",
