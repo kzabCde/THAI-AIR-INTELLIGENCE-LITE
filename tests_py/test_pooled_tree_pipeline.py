@@ -7,6 +7,7 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier
 
 from api.ml.portable_trees import (
+    _rf_leaf_probabilities,
     decode_artifact,
     encode_artifact,
     evaluate_lightgbm_regressor,
@@ -132,6 +133,56 @@ def test_random_forest_portable_tree_matches_native_probabilities():
         for row in X[:50]
     ])
     assert portable == pytest.approx(model.predict_proba(X[:50]), abs=1e-12, rel=1e-12)
+
+
+def test_random_forest_temperature_scaling_aligns_missing_public_class():
+    rng = np.random.default_rng(11)
+    X = rng.normal(size=(300, 4))
+    y = np.digitize(X[:, 0] - X[:, 1], [-1.0, 0.0, 1.0]) + 1
+    model = RandomForestClassifier(
+        n_estimators=35,
+        max_depth=6,
+        random_state=42,
+    ).fit(X, y)
+    artifact = export_random_forest_classifier(
+        model,
+        [f"f{index}" for index in range(X.shape[1])],
+        feature_version="test-v1",
+        threshold_version=THRESHOLD_VERSION,
+        temperature=1.5,
+    )
+
+    native = np.zeros((50, 5), dtype=float)
+    native[:, np.asarray(model.classes_, dtype=int) - 1] = model.predict_proba(X[:50])
+    logits = np.log(np.clip(native, 1e-12, 1.0)) / 1.5
+    logits -= logits.max(axis=1, keepdims=True)
+    native = np.exp(logits)
+    native /= native.sum(axis=1, keepdims=True)
+
+    portable = np.asarray([
+        list(evaluate_random_forest_classifier(row, artifact).values())
+        for row in X[:50]
+    ])
+    assert portable == pytest.approx(native, abs=1e-12, rel=1e-12)
+
+
+def test_random_forest_portable_traversal_matches_sklearn_float32_boundary():
+    upper = np.float32(1.0)
+    lower = np.nextafter(upper, np.float32(-np.inf))
+    threshold = float(lower) + 0.75 * (float(upper) - float(lower))
+    value = np.nextafter(threshold, -np.inf)
+    assert value <= threshold
+    assert float(np.float32(value)) > threshold
+
+    tree = {
+        "children_left": [1, -1, -1],
+        "children_right": [2, -1, -1],
+        "features": [0, -2, -2],
+        "thresholds": [threshold, -2.0, -2.0],
+        "values": [[1.0, 1.0], [1.0, 0.0], [0.0, 1.0]],
+    }
+    probabilities = _rf_leaf_probabilities(tree, np.asarray([value], dtype=float))
+    assert probabilities == pytest.approx([0.0, 1.0])
 
 
 def test_runtime_artifacts_are_not_checked_into_git():
