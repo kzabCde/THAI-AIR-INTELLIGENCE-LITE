@@ -224,6 +224,12 @@ test("Colab entry points default to safe non-production behavior", () => {
     assert.match(notebook, /ACTIVATE = False/);
     assert.match(notebook, /APPROVED_CODE_SHA/);
   }
+  assert.match(canonical, /training\.train_pooled_models/);
+  assert.match(canonical, /LightGBMRegressor/);
+  assert.match(canonical, /RandomForestClassifier/);
+  assert.match(canonical, /pooled_chronological_split/);
+  assert.doesNotMatch(canonical, /train_province/);
+  assert.doesNotMatch(canonical, /adaboost|gradient_boosting|xgboost|catboost/i);
   assert.match(legacy, /DEPRECATED/);
   assert.match(legacy, /REGISTER=False; ACTIVATE=False/);
   assert.match(legacy, /raise RuntimeError\(\\"Deprecated notebook/);
