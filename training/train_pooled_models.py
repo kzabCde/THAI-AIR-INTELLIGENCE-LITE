@@ -36,6 +36,9 @@ from api.ml.portable_trees import (
     export_random_forest_classifier,
 )
 from training.dual_model_config import (
+    FALLBACK_MODEL_NAME,
+    FALLBACK_STRATEGY,
+    FALLBACK_WINDOW_DAYS,
     POOLED_CLASSIFICATION_FAMILY,
     POOLED_FEATURE_COLUMNS,
     POOLED_FEATURE_PROVENANCE,
@@ -646,6 +649,12 @@ def build_registry_rows(
                 "target_strategy": "direct_observed_horizon",
                 "trained_horizons": list(DIRECT_HORIZONS),
                 "validated_horizons": [1],
+                "fallback": {
+                    "model_name": FALLBACK_MODEL_NAME,
+                    "strategy": FALLBACK_STRATEGY,
+                    "window_days": FALLBACK_WINDOW_DAYS,
+                    "trigger": "no_eligible_active_regressor_or_invalid_artifact",
+                },
                 "hyperparameters": task.parameters,
                 "global_test_metrics": task.test_metrics,
                 "province_test_metrics": metrics,
@@ -745,7 +754,15 @@ def save_artifacts(result: PooledResult, root: Path, config: PipelineConfig) -> 
             "libraries": _versions(),
             "python": sys.version.split()[0],
             "git_sha": _git_sha(),
-            "configuration": {"minimum_origin_dates": config.minimum_rows, "cv_splits": config.cv_splits},
+            "configuration": {
+                "minimum_origin_dates": config.minimum_rows,
+                "cv_splits": config.cv_splits,
+                "fallback": {
+                    "model_name": FALLBACK_MODEL_NAME,
+                    "strategy": config.fallback_strategy,
+                    "window_days": config.fallback_window_days,
+                },
+            },
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         (target / "metadata.json").write_text(json.dumps(_json_safe(metadata), ensure_ascii=False, indent=2), encoding="utf-8")
