@@ -110,14 +110,23 @@ monitoring-station observation.
 ## Dual-model safe workflow
 
 ```bash
-python training/train_dual_models.py --dry-run --province TH-30
-python training/train_dual_models.py --register --province TH-30
+python -m training.train_pooled_models --dry-run
+python -m training.train_pooled_models --shadow
+python -m training.train_pooled_models --register
 # Review run_summary.json, evidence_status, checksums and shadow output.
-python training/train_dual_models.py --register --activate --province TH-30
+python -m training.train_pooled_models --register --activate
 ```
 
-Registration uploads immutable native artifacts and always inserts candidates
+The canonical Colab entry point is
+`training/train_dual_models_pm25.ipynb`. It imports the same
+`training.train_pooled_models` functions used above, defaults to shadow-only
+execution (`REGISTER = False`, `ACTIVATE = False`), and requires only
+`SUPABASE_URL` plus `SUPABASE_SERVICE_ROLE_KEY` in Colab Secrets. The retained
+`train_all_6_models_pm25.ipynb` notebook is a legacy comparison/rollback aid;
+it is not the production pooled training path.
+
+Registration uploads immutable native and exact portable tree artifacts and always inserts candidates
 inactive. Activation is a separate RPC gate. Classifiers cannot activate
-without fixed-five-class metrics and at least five final-test samples in both
-critical classes. The Colab notebooks default to no registration and no
-activation and check out an approved immutable commit.
+without fixed-five-class pooled metrics and at least five final-test samples in
+both critical classes. The GitHub workflow defaults to dry-run; `shadow` writes
+artifacts and summaries without changing the registry.

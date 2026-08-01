@@ -47,12 +47,33 @@ FEATURE_PROVENANCE = {
 }
 MODEL_FAMILIES = (
     "random_forest",
-    "adaboost",
-    "gradient_boosting",
-    "xgboost",
     "lightgbm",
-    "catboost",
 )
+
+# Production v5 uses one pooled model per task.  The province columns are
+# deliberately one-hot encoded instead of passing the ISO code as an ordinal
+# number (which would invent a distance between TH-30 and TH-49).
+POOLED_FEATURE_VERSION = "daily-pooled-v1"
+POOLED_REGRESSION_FAMILY = "lightgbm"
+POOLED_CLASSIFICATION_FAMILY = "random_forest"
+POOLED_PROVINCE_IDS = tuple(f"TH-{code}" for code in range(30, 50))
+POOLED_PROVINCE_COLUMNS = tuple(
+    f"province_{province_id.replace('-', '_')}"
+    for province_id in POOLED_PROVINCE_IDS
+)
+POOLED_FEATURE_COLUMNS = (
+    *FEATURE_COLUMNS,
+    "province_latitude",
+    "province_longitude",
+    "forecast_horizon_days",
+    *POOLED_PROVINCE_COLUMNS,
+)
+POOLED_FEATURE_PROVENANCE = {
+    **FEATURE_PROVENANCE,
+    "province": "isan_provinces coordinates plus deterministic one-hot identity",
+    "forecast_horizon": "integer direct horizon from 1 through 7 days",
+    "pooling": "all selected provinces share one leakage-safe chronological model",
+}
 SERVING_POLICIES = (
     "direct_classifier",
     "regression_threshold",

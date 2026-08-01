@@ -39,6 +39,24 @@ function StatusDot({ status }: { status: string }) {
   return <Clock size={15} className="text-amber-500" />;
 }
 
+function LifecycleBadge({ lifecycle }: { lifecycle: "validated" | "legacy" | "fallback" }) {
+  const styles = {
+    validated: "bg-emerald-500/10 text-emerald-700",
+    legacy: "bg-amber-500/10 text-amber-700",
+    fallback: "bg-slate-500/10 text-slate-600",
+  };
+  const labels = {
+    validated: "Validated",
+    legacy: "Legacy",
+    fallback: "Fallback",
+  };
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[lifecycle]}`}>
+      {labels[lifecycle]}
+    </span>
+  );
+}
+
 export default async function SystemPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
   let jobs, cronLogs, freshness, modelStatuses;
@@ -73,6 +91,8 @@ export default async function SystemPage() {
     0,
     readyRegressionCount - readyClassificationCount,
   );
+  const latestDailyRows = cronLogs.find((row) => row.jobName === "daily_pipeline")?.recordsOut ?? 0;
+  const latestMlRows = cronLogs.find((row) => row.jobName === "ml_forecast")?.recordsOut ?? 0;
 
   return (
     <div className="space-y-6">
@@ -114,10 +134,14 @@ export default async function SystemPage() {
               <p className="mt-1 text-2xl font-semibold tabular-nums">
                 {readyClassificationCount} <span className="text-sm font-medium">จังหวัด</span>
               </p>
-              <p className="muted mt-1 text-xs">ใช้ตัวจัดระดับที่ผ่านการตรวจสอบ</p>
+              <p className="muted mt-1 text-xs">
+                {readyClassificationCount > 0
+                  ? "ใช้ Random Forest ที่ผ่านการตรวจสอบ"
+                  : "Classification unavailable—ใช้เกณฑ์ PM2.5 แทน"}
+              </p>
             </div>
             <div className="card card-pad">
-              <p className="muted text-xs">จัดระดับจากค่า PM2.5</p>
+              <p className="muted text-xs">คำนวณจากค่า PM2.5</p>
               <p className="mt-1 text-2xl font-semibold tabular-nums">
                 {calculatedClassificationCount} <span className="text-sm font-medium">จังหวัด</span>
               </p>
@@ -172,6 +196,9 @@ export default async function SystemPage() {
                             ? `ใช้งานอยู่: ${getModelLabel(regression.activeModelName)}`
                             : "ยังไม่มีโมเดลพยากรณ์ที่เปิดใช้งาน"}
                         </p>
+                        <div className="mt-1">
+                          <LifecycleBadge lifecycle={regression?.activeLifecycle ?? "fallback"} />
+                        </div>
                         <p className={`mt-1 max-w-xs text-xs ${
                           regression?.latestIsActive
                             ? "text-emerald-600"
@@ -196,7 +223,7 @@ export default async function SystemPage() {
                           {classificationReady
                             ? "โมเดลจัดระดับพร้อมใช้"
                             : regressionReady
-                              ? "คำนวณจากค่า PM2.5"
+                              ? "Classification unavailable"
                               : "ยังไม่พร้อม"}
                         </p>
                         <p className="muted mt-0.5 max-w-xs text-xs">
@@ -206,6 +233,9 @@ export default async function SystemPage() {
                               ? "แปลงค่าพยากรณ์เป็นระดับคุณภาพอากาศตามเกณฑ์"
                               : "ต้องมีโมเดลพยากรณ์ก่อน"}
                         </p>
+                        <div className="mt-1">
+                          <LifecycleBadge lifecycle={classification?.activeLifecycle ?? "fallback"} />
+                        </div>
                         {classification && (
                           <p className={`mt-1 max-w-xs text-xs ${
                             classification.latestIsActive
@@ -237,6 +267,28 @@ export default async function SystemPage() {
           </div>
         </Section>
       )}
+
+      <Section
+        title="ผลการประมวลผลรายวัน"
+        description="แยกจำนวนสรุปรายวันและผลพยากรณ์ เพื่อไม่ให้ตัวเลข 40 ถูกเข้าใจว่าเป็นข้อมูลรับเข้าทั้งหมด"
+      >
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="card card-pad">
+            <p className="muted text-xs">สรุปรายวัน</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{fmtNumber(latestDailyRows)} แถว</p>
+          </div>
+          <div className="card card-pad">
+            <p className="muted text-xs">พยากรณ์ ML</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{fmtNumber(latestMlRows)} แถว</p>
+          </div>
+          <div className="card card-pad">
+            <p className="muted text-xs">รวมทั้งกระบวนการ</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">
+              {fmtNumber(latestDailyRows + latestMlRows)} แถว
+            </p>
+          </div>
+        </div>
+      </Section>
 
       <Section title="งานซิงค์ข้อมูล (Cron Jobs)">
         <div className="card overflow-x-auto">

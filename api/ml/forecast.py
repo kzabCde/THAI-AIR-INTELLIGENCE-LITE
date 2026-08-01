@@ -1,14 +1,15 @@
 """Lightweight PM2.5 inference endpoint.
 
-Production evaluates a leakage-safe linear surrogate distilled from the selected
-teacher among six tree ensembles. It never treats feature importance as coefficients.
-If an artifact is missing or invalid, the endpoint falls back to the explicit
-persist-revert model for that province.
+The v5 path evaluates the exact portable LightGBM/Random Forest tree artifacts
+stored in the private model bucket.  Legacy Ridge/Logistic artifacts remain
+readable as a rollback path.  Missing, corrupt, or schema-mismatched artifacts
+fail closed to the explicit persistence/reversion baseline.
 """
 
 from __future__ import annotations
 
 import hmac
+import hashlib
 import json
 import math
 import os
@@ -19,6 +20,13 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 from supabase import Client, create_client
+
+from api.ml.portable_trees import (
+    ARTIFACT_SCHEMA as TREE_ARTIFACT_SCHEMA,
+    decode_artifact,
+    evaluate_lightgbm_regressor,
+    evaluate_random_forest_classifier,
+)
 
 from training.pm25_classes import (
     CLASS_IDS,
@@ -38,6 +46,8 @@ OBSERVED_VIEW = "training_daily_summary_v2"
 STACKING_MODEL = "stacking-v2"
 SURROGATE_MODEL = "surrogate-v2"
 ENSEMBLE6_MODEL = "ensemble6-pm25-v3"
+POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-pooled-v1"
+POOLED_RF_CLASSIFIER = "random-forest-aqi-classifier-pooled-v1"
 PERSIST_MODEL = "persist-revert-v2"
 LEGACY_STACKING_MODEL = "stacking-v1"
 LEGACY_BASE_MODELS = {"lightgbm-v1", "xgboost-v1"}
@@ -117,7 +127,10 @@ def load_active_task_models(sb: Client) -> dict[str, dict[str, dict]]:
         sb.table("model_registry")
         .select(
             "province_id,task_type,model_name,model_params,run_id,"
-            "mae,rmse,r2,metrics,baseline_metrics,eligibility_status"
+            "mae,rmse,r2,metrics,baseline_metrics,eligibility_status,"
+            "feature_version,runtime_artifact_uri,runtime_artifact_sha256,"
+            "runtime_artifact_byte_size,runtime_artifact_format,"
+            "threshold_version,serving_model_family,model_version,evidence_status"
         )
         .eq("is_active", True)
         .execute()
@@ -139,6 +152,89 @@ def load_active_task_models(sb: Client) -> dict[str, dict[str, dict]]:
             )
         result[task_type][province_id] = row
     return result
+
+
+def load_province_metadata(sb: Client) -> dict[str, dict[str, float]]:
+    response = (
+        sb.table("isan_provinces")
+        .select("province_id,lat,lon")
+        .in_("province_id", PROVINCE_IDS)
+        .execute()
+    )
+    return {
+        str(row["province_id"]): {
+            "lat": float(row["lat"]),
+            "lon": float(row["lon"]),
+        }
+        for row in response.data or []
+        if row.get("province_id") and row.get("lat") is not None and row.get("lon") is not None
+    }
+
+
+def _storage_location(uri: str) -> tuple[str, str]:
+    prefix = "storage://"
+    if not uri.startswith(prefix):
+        raise ValueError("runtime artifact must use a private storage URI")
+    location = uri[len(prefix):]
+    bucket, separator, path = location.partition("/")
+    if not separator or not bucket or not path or ".." in path.split("/"):
+        raise ValueError("invalid runtime artifact storage URI")
+    return bucket, path
+
+
+def load_runtime_artifact(
+    sb: Client,
+    model_row: dict | None,
+    cache: dict[str, dict],
+) -> dict | None:
+    if not model_row:
+        return None
+    params = model_row.get("model_params") or {}
+    uri = model_row.get("runtime_artifact_uri") or params.get("runtime_artifact_uri")
+    expected_sha = (
+        model_row.get("runtime_artifact_sha256")
+        or params.get("runtime_artifact_sha256")
+    )
+    if not uri or not expected_sha:
+        return None
+    cache_key = f"{uri}#{expected_sha}"
+    if cache_key in cache:
+        return cache[cache_key]
+    bucket, path = _storage_location(str(uri))
+    payload = sb.storage.from_(bucket).download(path)
+    expected_size = model_row.get("runtime_artifact_byte_size")
+    if expected_size is not None and len(payload) != int(expected_size):
+        raise ValueError("runtime artifact byte size mismatch")
+    if hashlib.sha256(payload).hexdigest() != str(expected_sha):
+        raise ValueError("runtime artifact checksum mismatch")
+    if model_row.get("runtime_artifact_format") not in (None, "json+gzip"):
+        raise ValueError("unsupported runtime artifact format")
+    artifact = decode_artifact(payload)
+    if artifact.get("feature_version") != (
+        model_row.get("feature_version") or params.get("feature_version")
+    ):
+        raise ValueError("runtime artifact feature version mismatch")
+    expected_task = model_row.get("task_type")
+    if expected_task and artifact.get("task_type") != expected_task:
+        raise ValueError("runtime artifact task mismatch")
+    expected_family = (
+        model_row.get("serving_model_family")
+        or params.get("serving_model_family")
+    )
+    if expected_family and artifact.get("model_family") != expected_family:
+        raise ValueError("runtime artifact model family mismatch")
+    expected_features = params.get("feature_cols")
+    if expected_features and artifact.get("feature_cols") != expected_features:
+        raise ValueError("runtime artifact feature order mismatch")
+    expected_threshold = model_row.get("threshold_version")
+    if (
+        expected_task == "classification"
+        and expected_threshold
+        and artifact.get("threshold_version") != expected_threshold
+    ):
+        raise ValueError("runtime artifact threshold version mismatch")
+    cache[cache_key] = artifact
+    return artifact
 
 
 def load_active_models(sb: Client) -> dict[str, dict]:
@@ -210,6 +306,10 @@ def build_feature_vector(
     rolling: list[float],
     feature_date: date,
     feature_cols: list[str],
+    *,
+    province_id: str = "",
+    province_metadata: dict[str, dict[str, float]] | None = None,
+    forecast_horizon_days: int = 1,
 ) -> np.ndarray:
     current = rolling[-1]
     values = {
@@ -238,7 +338,20 @@ def build_feature_vector(
         ),
         "is_burning_season": 1.0 if feature_date.month in (1, 2, 3, 4) else 0.0,
         "is_dry_season": 1.0 if feature_date.month in (11, 12, 1, 2, 3, 4) else 0.0,
+        "province_latitude": _fval(
+            (province_metadata or {}).get(province_id, {}),
+            "lat",
+        ),
+        "province_longitude": _fval(
+            (province_metadata or {}).get(province_id, {}),
+            "lon",
+        ),
+        "forecast_horizon_days": float(forecast_horizon_days),
     }
+    for known_province_id in PROVINCE_IDS:
+        values[f"province_{known_province_id.replace('-', '_')}"] = (
+            1.0 if province_id == known_province_id else 0.0
+        )
     missing = [name for name in feature_cols if name not in values]
     if missing:
         raise ValueError(f"unsupported artifact features: {missing}")
@@ -375,11 +488,17 @@ def _predict_model(
     last_row: dict | None = None,
     feature_date: date | None = None,
     legacy_base_models: dict[tuple[str, str], dict] | None = None,
+    runtime_artifact: dict | None = None,
 ) -> float:
     last_row = last_row or {}
     feature_date = feature_date or datetime.now(BANGKOK).date()
     legacy_base_models = legacy_base_models or {}
     fallback = persist_revert_forecast(rolling, h=1)
+    if runtime_artifact is not None:
+        try:
+            return evaluate_lightgbm_regressor(features, runtime_artifact)
+        except Exception:
+            return fallback
     if model_name in LEGACY_BASE_MODELS:
         return legacy_weighted_forecast(
             last_row,
@@ -432,14 +551,17 @@ def prediction_interval(
 ) -> tuple[float, float, float, str]:
     """Return ordered P10/P50/P90 values and the uncertainty method."""
     artifact = params.get("surrogate") or {}
+    by_horizon = params.get("residual_quantiles_by_horizon") or {}
+    direct_quantiles = by_horizon.get(str(horizon))
     quantiles = (
-        artifact.get("residual_quantiles")
+        direct_quantiles
+        or artifact.get("residual_quantiles")
         or params.get("residual_quantiles")
         or {}
     )
     try:
         offsets = [
-            float(quantiles[name]) * math.sqrt(horizon)
+            float(quantiles[name]) * (1.0 if direct_quantiles else math.sqrt(horizon))
             for name in ("p10", "p50", "p90")
         ]
         if not all(math.isfinite(value) for value in offsets):
@@ -472,7 +594,7 @@ def prediction_interval(
 
 
 def upsert_feature_snapshots(sb: Client) -> int:
-    """Persist the exact trusted feature state used at forecast time."""
+    """Persist the trusted observed feature state available at forecast time."""
     recent = load_recent_features(sb)
     now = datetime.now(timezone.utc)
     snapshots: list[dict] = []
@@ -559,6 +681,15 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
     active_models = active_tasks["regression"]
     active_classifiers = active_tasks["classification"]
     recent = load_recent_features(sb)
+    needs_province_metadata = any(
+        (row.get("model_params") or {}).get("runtime_kind")
+        == TREE_ARTIFACT_SCHEMA
+        for row in [*active_models.values(), *active_classifiers.values()]
+    )
+    province_metadata = (
+        load_province_metadata(sb) if needs_province_metadata else {}
+    )
+    runtime_cache: dict[str, dict] = {}
     needs_legacy = any(
         row.get("model_name") in LEGACY_BASE_MODELS | {LEGACY_STACKING_MODEL}
         for row in active_models.values()
@@ -582,9 +713,16 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
         if not rolling:
             continue
 
-        fallback_regression = model_row is None
-        model_name = model_row["model_name"] if model_row else PERSIST_MODEL
         params = model_row.get("model_params") or {} if model_row else {}
+        requires_tree_regression = params.get("runtime_kind") == TREE_ARTIFACT_SCHEMA
+        try:
+            regression_tree = load_runtime_artifact(sb, model_row, runtime_cache)
+        except Exception:
+            regression_tree = None
+        fallback_regression = model_row is None or (
+            requires_tree_regression and regression_tree is None
+        )
+        model_name = model_row["model_name"] if model_row else PERSIST_MODEL
         regression_run_id = model_row.get("run_id") if model_row else None
         classifier_row = active_classifiers.get(province_id)
         classifier_params = (
@@ -592,38 +730,139 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             if classifier_row else {}
         )
         classifier_artifact = classifier_params.get("portable_classifier") or {}
+        requires_tree_classifier = (
+            classifier_params.get("runtime_kind") == TREE_ARTIFACT_SCHEMA
+        )
+        try:
+            classifier_tree = load_runtime_artifact(
+                sb,
+                classifier_row,
+                runtime_cache,
+            )
+        except Exception:
+            classifier_tree = None
         serving_policy = classifier_params.get("serving_policy") or SERVING_POLICY
         if serving_policy not in SUPPORTED_SERVING_POLICIES:
             serving_policy = "classifier_with_regression_fallback"
         artifact = params.get("surrogate") or {}
-        feature_cols = artifact.get("feature_cols") or FEATURE_COLS
+        feature_cols = (
+            (regression_tree or {}).get("feature_cols")
+            or artifact.get("feature_cols")
+            or FEATURE_COLS
+        )
+        classifier_feature_cols = (
+            (classifier_tree or {}).get("feature_cols")
+            or classifier_artifact.get("feature_cols")
+            or feature_cols
+        )
         source_gap_days = max(0, (bangkok_today - as_of).days)
-        total_recursive_steps = source_gap_days + horizon
-        for recursive_step in range(1, total_recursive_steps + 1):
-            feature_date = as_of + timedelta(days=recursive_step - 1)
-            target_date = as_of + timedelta(days=recursive_step)
-            features = build_feature_vector(last_row, rolling, feature_date, feature_cols)
-            prediction = float(np.clip(_predict_model(
-                model_name,
-                params,
-                features,
-                rolling,
-                province_id=province_id,
-                last_row=last_row,
-                feature_date=feature_date,
-                legacy_base_models=legacy_base_models,
-            ), 1.0, 500.0))
+        direct_horizon = bool(
+            regression_tree
+            and params.get("target_strategy") == "direct_observed_horizon"
+            and horizon <= max(params.get("trained_horizons") or [1])
+        )
+
+        # Bridge a one/two-day source delay with D+1 predictions before using
+        # the current Bangkok business date as the direct forecast origin.
+        if direct_horizon:
+            for bridge_step in range(1, source_gap_days + 1):
+                bridge_origin = as_of + timedelta(days=bridge_step - 1)
+                bridge_features = build_feature_vector(
+                    last_row,
+                    rolling,
+                    bridge_origin,
+                    feature_cols,
+                    province_id=province_id,
+                    province_metadata=province_metadata,
+                    forecast_horizon_days=1,
+                )
+                bridge_prediction = float(np.clip(_predict_model(
+                    model_name,
+                    params,
+                    bridge_features,
+                    rolling,
+                    province_id=province_id,
+                    last_row=last_row,
+                    feature_date=bridge_origin,
+                    legacy_base_models=legacy_base_models,
+                    runtime_artifact=regression_tree,
+                ), 1.0, 500.0))
+                rolling.append(bridge_prediction)
+
+        predictions_to_emit: list[tuple[int, date, date, np.ndarray, float]] = []
+        if direct_horizon:
+            origin_date = as_of + timedelta(days=source_gap_days)
+            for forecast_horizon in range(1, horizon + 1):
+                features = build_feature_vector(
+                    last_row,
+                    rolling,
+                    origin_date,
+                    feature_cols,
+                    province_id=province_id,
+                    province_metadata=province_metadata,
+                    forecast_horizon_days=forecast_horizon,
+                )
+                prediction = float(np.clip(_predict_model(
+                    model_name,
+                    params,
+                    features,
+                    rolling,
+                    province_id=province_id,
+                    last_row=last_row,
+                    feature_date=origin_date,
+                    legacy_base_models=legacy_base_models,
+                    runtime_artifact=regression_tree,
+                ), 1.0, 500.0))
+                predictions_to_emit.append((
+                    forecast_horizon,
+                    origin_date,
+                    origin_date + timedelta(days=forecast_horizon),
+                    features,
+                    prediction,
+                ))
+        else:
+            total_recursive_steps = source_gap_days + horizon
+            for recursive_step in range(1, total_recursive_steps + 1):
+                feature_date = as_of + timedelta(days=recursive_step - 1)
+                target_date = as_of + timedelta(days=recursive_step)
+                features = build_feature_vector(
+                    last_row,
+                    rolling,
+                    feature_date,
+                    feature_cols,
+                    province_id=province_id,
+                    province_metadata=province_metadata,
+                    forecast_horizon_days=1,
+                )
+                prediction = float(np.clip(_predict_model(
+                    model_name,
+                    params,
+                    features,
+                    rolling,
+                    province_id=province_id,
+                    last_row=last_row,
+                    feature_date=feature_date,
+                    legacy_base_models=legacy_base_models,
+                    runtime_artifact=regression_tree,
+                ), 1.0, 500.0))
+                rolling.append(prediction)
+                if target_date <= bangkok_today:
+                    continue
+                predictions_to_emit.append((
+                    (target_date - bangkok_today).days,
+                    feature_date,
+                    target_date,
+                    features,
+                    prediction,
+                ))
+
+        for forecast_horizon, feature_date, target_date, features, prediction in predictions_to_emit:
             p10, p50, p90, uncertainty_method = prediction_interval(
                 prediction,
-                recursive_step,
+                forecast_horizon,
                 params,
                 rolling,
             )
-            rolling.append(prediction)
-            if target_date <= bangkok_today:
-                continue
-
-            forecast_horizon = (target_date - bangkok_today).days
             regression_class = class_for_pm25(prediction)
             classifier_class = None
             probabilities = None
@@ -638,9 +877,26 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 and serving_policy != "regression_threshold"
             ):
                 try:
-                    probabilities = evaluate_portable_classifier(
-                        features,
-                        classifier_artifact,
+                    classifier_features = build_feature_vector(
+                        last_row,
+                        rolling,
+                        feature_date,
+                        classifier_feature_cols,
+                        province_id=province_id,
+                        province_metadata=province_metadata,
+                        forecast_horizon_days=forecast_horizon,
+                    )
+                    probabilities = (
+                        evaluate_random_forest_classifier(
+                            classifier_features,
+                            classifier_tree,
+                            class_ids=CLASS_IDS,
+                        )
+                        if classifier_tree is not None
+                        else evaluate_portable_classifier(
+                            classifier_features,
+                            classifier_artifact,
+                        )
                     )
                     classifier_class = max(
                         CLASS_IDS,
@@ -650,8 +906,12 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     classification_source = "active_classifier"
                     fallback_used = False
                     fallback_reason = None
-                except (TypeError, ValueError):
-                    fallback_reason = "invalid_classifier_artifact"
+                except (KeyError, TypeError, ValueError):
+                    fallback_reason = (
+                        "missing_tree_classifier_artifact"
+                        if requires_tree_classifier and classifier_tree is None
+                        else "invalid_classifier_artifact"
+                    )
             elif forecast_horizon > 1:
                 fallback_reason = "experimental_horizon_regression_threshold"
             displayed_class = (
@@ -713,7 +973,11 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 "horizon_reliability": (
                     "evaluated_d1"
                     if forecast_horizon == 1
-                    else "experimental_recursive"
+                    else (
+                        "experimental_direct"
+                        if direct_horizon
+                        else "experimental_recursive"
+                    )
                 ),
                 "is_experimental": forecast_horizon > 1,
                 "uncertainty_method": uncertainty_method,
@@ -736,7 +1000,7 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
     sb.table("forecast_runs").insert({
         "run_id": run_id,
         "forecast_at": started_at,
-        "feature_version": "daily-observed-v4",
+        "feature_version": None,
         "code_version": os.environ.get("VERCEL_GIT_COMMIT_SHA") or "unversioned",
         "serving_policy": SERVING_POLICY,
         "horizon_days": horizon,
@@ -761,9 +1025,47 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
                 "forecast_run_id": run_id,
             }).eq("forecast_at", rows[0]["forecast_at"]).execute()
         province_count = len({row["province_id"] for row in rows})
-        status = "success" if province_count == len(PROVINCE_IDS) else "partial"
+        expected_rows = len(PROVINCE_IDS) * horizon
+        required_fields_ok = all(
+            row.get("province_id") and row.get("target_date")
+            for row in rows
+        )
+        unique_forecasts = {
+            (row.get("province_id"), row.get("target_date"))
+            for row in rows
+        }
+        valid_values = all(
+            row.get("pm25_mean_forecast") is not None
+            and math.isfinite(float(row["pm25_mean_forecast"]))
+            and float(row["pm25_mean_forecast"]) >= 0
+            for row in rows
+        )
+        integrity_ok = (
+            required_fields_ok
+            and province_count == len(PROVINCE_IDS)
+            and len(rows) == expected_rows
+            and len(unique_forecasts) == expected_rows
+            and count == expected_rows
+            and valid_values
+        )
+        status = "success" if integrity_ok else "partial"
+        feature_versions = sorted({
+            str(row["feature_version"])
+            for row in rows
+            if row.get("feature_version")
+        })
+        feature_version = (
+            feature_versions[0]
+            if len(feature_versions) == 1
+            else "mixed:" + ",".join(feature_versions)
+        ) if feature_versions else None
+        model_counts: dict[str, int] = {}
+        for row in rows:
+            model_name = str(row.get("model_name") or "unknown")
+            model_counts[model_name] = model_counts.get(model_name, 0) + 1
         sb.table("forecast_runs").update({
             "status": status,
+            "feature_version": feature_version,
             "source_as_of": max(
                 (row["data_freshness"] for row in rows),
                 default=None,
@@ -774,6 +1076,10 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
                 "experimental_horizons": list(range(2, horizon + 1)),
                 "province_count": province_count,
                 "forecast_rows": count,
+                "expected_forecast_rows": expected_rows,
+                "unique_forecasts": len(unique_forecasts),
+                "integrity_ok": integrity_ok,
+                "model_counts": model_counts,
                 "evaluated_previous_rows": evaluated,
                 "drift_rows": drift_rows,
                 "feature_snapshots": snapshot_count,
@@ -801,6 +1107,8 @@ class handler(BaseHTTPRequestHandler):
                 SURROGATE_MODEL,
                 ENSEMBLE6_MODEL,
                 STACKING_MODEL,
+                POOLED_LIGHTGBM_MODEL,
+                POOLED_RF_CLASSIFIER,
             ],
             "observed_view": OBSERVED_VIEW,
         })

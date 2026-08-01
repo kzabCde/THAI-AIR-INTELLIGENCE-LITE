@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Dry-run training, register candidates, or generate forecasts only
+        description: Dry-run, shadow, register inactive candidates, or forecast only
         required: true
         default: dry-run
         type: choice
         options:
           - dry-run
+          - shadow
           - register
           - forecast-only
       activate:
@@ -27,13 +28,8 @@ on:
         required: true
         default: all
         type: string
-      model_families:
-        description: Comma-separated families (all six by default)
-        required: true
-        default: random_forest,adaboost,gradient_boosting,xgboost,lightgbm,catboost
-        type: string
       minimum_rows:
-        description: Minimum leakage-safe rows per province
+        description: Minimum leakage-safe unique origin dates in the pooled dataset
         required: true
         default: "180"
         type: string
@@ -119,13 +115,14 @@ jobs:
           MODE: ${{ inputs.mode }}
           ACTIVATE: ${{ inputs.activate }}
           PROVINCE: ${{ inputs.province }}
-          MODEL_FAMILIES_INPUT: ${{ inputs.model_families }}
           MINIMUM_ROWS: ${{ inputs.minimum_rows }}
         run: |
           set -euo pipefail
           args=(--min-rows "$MINIMUM_ROWS")
           if [[ "$MODE" == "dry-run" ]]; then
             args+=(--dry-run)
+          elif [[ "$MODE" == "shadow" ]]; then
+            args+=(--shadow)
           else
             args+=(--register)
           fi
@@ -135,11 +132,7 @@ jobs:
           if [[ "$PROVINCE" != "all" ]]; then
             args+=(--province "$PROVINCE")
           fi
-          IFS=',' read -ra families <<< "$MODEL_FAMILIES_INPUT"
-          for family in "${families[@]}"; do
-            args+=(--model-family "$family")
-          done
-          python -u -m training.train_dual_models "${args[@]}"
+          python -u -m training.train_pooled_models "${args[@]}"
       - name: Upload run summary and artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -158,7 +151,9 @@ jobs:
             echo "- Mode: \`${{ inputs.mode }}\`"
             echo "- Activate: \`${{ inputs.activate }}\`"
             echo "- Province: \`${{ inputs.province }}\`"
-            echo "- Families: \`${{ inputs.model_families }}\`"
+            echo "- PM2.5 regression: \`LightGBMRegressor\`"
+            echo "- Air-quality classification: \`RandomForestClassifier\`"
+            echo "- Dataset: pooled provinces with purged chronological split"
             echo "- Minimum rows: \`${{ inputs.minimum_rows }}\`"
             echo "- Threshold version: \`thai-pm25-5class-v1\`"
             echo "- Classification selection metric: \`Macro F1\`"

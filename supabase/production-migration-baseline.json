@@ -1,11 +1,11 @@
 {
   "project_scope": "northeast-thailand-air-quality",
-  "captured_at": "2026-07-30",
+  "captured_at": "2026-08-01",
   "project_ref": "qtcptorlmteydcslveqm",
-  "remote_migration_count": 73,
+  "remote_migration_count": 74,
   "remote_head": {
-    "version": "20260730154307",
-    "name": "reconcile_runtime_contract_history"
+    "version": "20260801052036",
+    "name": "pooled_tree_runtime_contract"
   },
   "repository_history_start": "20260718084717",
   "purpose": "Authoritative inventory of the Supabase Production migration history. supabase/migrations contains the matching forward history from repository_history_start; squashed setup SQL lives in supabase/bootstrap and superseded unapplied candidates live in supabase/archive so linked migration tooling cannot replay them.",
@@ -22,7 +22,8 @@
     "20260728023313": "644ad46f3c979f6bc378e85093c54936",
     "20260728023805": "d0282620175c0ae5b66e0e0fc5743446",
     "20260729052105": "8637c75f50c1f277ca8dda540790b7b3",
-    "20260730154307": "3c25f5bc4ce35b198f1fbee7b2c8d8f5"
+    "20260730154307": "3c25f5bc4ce35b198f1fbee7b2c8d8f5",
+    "20260801052036": "30202c1e3a9bbc327557fdaa4852cd2b"
   },
   "migrations": [
     ["20260610152422", "001_extensions_and_geography"],
@@ -97,6 +98,7 @@
     ["20260728023313", "allow_evaluated_d1_reliability"],
     ["20260728023805", "optimize_due_forecast_evaluation"],
     ["20260729052105", "fix_cron_reliability"],
-    ["20260730154307", "reconcile_runtime_contract_history"]
+    ["20260730154307", "reconcile_runtime_contract_history"],
+    ["20260801052036", "pooled_tree_runtime_contract"]
   ]
 }

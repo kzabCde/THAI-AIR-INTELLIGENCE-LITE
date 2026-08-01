@@ -78,6 +78,7 @@ export type ForecastPoint = {
   horizonDays?: number;
   horizonReliability?:
     | "evaluated_d1"
+    | "experimental_direct"
     | "experimental_recursive"
     | "legacy_unverified_d1"
     | "legacy_unverified"
@@ -165,10 +166,14 @@ export type ModelStatus = {
   activeRunId: string | null;
   activeTrainedAt: string | null;
   activeEligible: boolean;
+  activeLifecycle: "validated" | "legacy" | "fallback";
+  activeServingFamily: string | null;
+  activeFeatureVersion: string | null;
   latestModelName: string;
   latestRunId: string;
   latestTrainedAt: string;
   latestEligible: boolean;
   latestIsActive: boolean;
   latestEligibilityReason: string | null;
+  latestLifecycle: "validated" | "legacy" | "fallback";
 };

@@ -69,10 +69,10 @@ queries.
 
 ## Forecasting
 
-The Python ML endpoint evaluates the active lightweight serving artifact from
+The Python ML endpoint evaluates the active exact portable tree artifact from
 `model_registry` and writes one auditable daily batch linked to
-`forecast_runs`. Training compares six teacher families but reports the
-deployed Ridge/Logistic family separately. The endpoint evaluates due rows,
+`forecast_runs`. Training uses pooled LightGBM regression and Random Forest
+classification; legacy Ridge/Logistic artifacts remain rollback-compatible. The endpoint evaluates due rows,
 refreshes rolling drift metrics, snapshots the exact feature vector/provenance,
 and emits D+1 from the next Asia/Bangkok business date even when its latest
 feature row is stale. D+1 has retrospective evaluation evidence; recursive

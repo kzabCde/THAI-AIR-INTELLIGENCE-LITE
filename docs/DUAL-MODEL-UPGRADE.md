@@ -1,5 +1,9 @@
 # PM2.5 Dual-Model Upgrade
 
+> This document describes the v4 transition. Production v5 supersedes its
+> six-teacher/Ridge/Logistic training path with pooled LightGBM regression and
+> pooled Random Forest classification. See [MODEL-METHODOLOGY.md](./MODEL-METHODOLOGY.md).
+
 ## Repository audit
 
 The pre-upgrade system had one active `model_registry` row per province and

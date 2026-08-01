@@ -52,6 +52,21 @@ const dueEvaluationHotfix = readFileSync(
   "utf8",
 );
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
+const pooledMigration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260801052036_pooled_tree_runtime_contract.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const pooledTrainer = readFileSync(
+  new URL("../training/train_pooled_models.py", import.meta.url),
+  "utf8",
+);
+const portableTrees = readFileSync(
+  new URL("../api/ml/portable_trees.py", import.meta.url),
+  "utf8",
+);
 const vercelConfig = JSON.parse(
   readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
 );
@@ -209,6 +224,12 @@ test("Colab entry points default to safe non-production behavior", () => {
     assert.match(notebook, /ACTIVATE = False/);
     assert.match(notebook, /APPROVED_CODE_SHA/);
   }
+  assert.match(canonical, /training\.train_pooled_models/);
+  assert.match(canonical, /LightGBMRegressor/);
+  assert.match(canonical, /RandomForestClassifier/);
+  assert.match(canonical, /pooled_chronological_split/);
+  assert.doesNotMatch(canonical, /train_province/);
+  assert.doesNotMatch(canonical, /adaboost|gradient_boosting|xgboost|catboost/i);
   assert.match(legacy, /DEPRECATED/);
   assert.match(legacy, /REGISTER=False; ACTIVATE=False/);
   assert.match(legacy, /raise RuntimeError\(\\"Deprecated notebook/);
@@ -247,4 +268,36 @@ test("technical operations tables are service-role only", () => {
       new RegExp(`revoke all privileges on table public\\.${table}[\\s\\S]+from anon, authenticated`, "i"),
     );
   }
+});
+
+test("v5 trains exactly one pooled family per task", () => {
+  assert.match(pooledTrainer, /POOLED_REGRESSION_FAMILY/);
+  assert.match(pooledTrainer, /POOLED_CLASSIFICATION_FAMILY/);
+  assert.match(pooledTrainer, /LGBMRegressor/);
+  assert.match(pooledTrainer, /RandomForestClassifier/);
+  assert.doesNotMatch(pooledTrainer, /AdaBoost|XGBRegressor|CatBoost/);
+  assert.match(pooledTrainer, /same_date_same_partition/);
+  assert.match(pooledTrainer, /embargo_days/);
+  assert.match(pooledTrainer, /pooled_walk_forward_folds/);
+});
+
+test("v5 runtime loads checksum-verified exact tree artifacts", () => {
+  assert.match(runtime, /load_runtime_artifact/);
+  assert.match(runtime, /runtime artifact checksum mismatch/);
+  assert.match(runtime, /evaluate_lightgbm_regressor/);
+  assert.match(runtime, /evaluate_random_forest_classifier/);
+  assert.match(portableTrees, /portable-tree-ensemble-v1/);
+  assert.doesNotMatch(portableTrees, /Ridge|LogisticRegression/);
+});
+
+test("v5 migration keeps runtime artifacts private and activation separate", () => {
+  assert.match(pooledMigration, /runtime_artifact_uri/);
+  assert.match(pooledMigration, /storage:\/\/model-artifacts\//);
+  assert.match(pooledMigration, /serving_portable/);
+  assert.match(pooledMigration, /experimental_direct/);
+  assert.match(
+    pooledMigration,
+    /revoke all on function public\.fn_upsert_model_registry\(jsonb\)[\s\S]+from public, anon, authenticated/i,
+  );
+  assert.doesNotMatch(pooledMigration, /fn_activate_model_task\s*\(/);
 });

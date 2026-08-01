@@ -838,6 +838,10 @@ export type Database = {
           r2: number | null
           rmse: number | null
           run_id: string
+          runtime_artifact_byte_size: number | null
+          runtime_artifact_format: string | null
+          runtime_artifact_sha256: string | null
+          runtime_artifact_uri: string | null
           serving_model_family: string | null
           source: string | null
           task_type: string
@@ -881,6 +885,10 @@ export type Database = {
           r2?: number | null
           rmse?: number | null
           run_id?: string
+          runtime_artifact_byte_size?: number | null
+          runtime_artifact_format?: string | null
+          runtime_artifact_sha256?: string | null
+          runtime_artifact_uri?: string | null
           serving_model_family?: string | null
           source?: string | null
           task_type?: string
@@ -924,6 +932,10 @@ export type Database = {
           r2?: number | null
           rmse?: number | null
           run_id?: string
+          runtime_artifact_byte_size?: number | null
+          runtime_artifact_format?: string | null
+          runtime_artifact_sha256?: string | null
+          runtime_artifact_uri?: string | null
           serving_model_family?: string | null
           source?: string | null
           task_type?: string

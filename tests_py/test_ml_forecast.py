@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from api.ml.portable_trees import encode_artifact
+
 spec = importlib.util.spec_from_file_location("ml_forecast", Path("api/ml/forecast.py"))
 ml = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ml)
@@ -141,6 +143,63 @@ def test_portable_classifier_rejects_threshold_version_mismatch():
             np.zeros(len(ml.FEATURE_COLS)),
             {"threshold_version": "wrong"},
         )
+
+
+def test_private_tree_artifact_is_checksum_verified_and_cached():
+    artifact = {
+        "artifact_schema": ml.TREE_ARTIFACT_SCHEMA,
+        "task_type": "regression",
+        "model_family": "lightgbm",
+        "feature_version": "daily-pooled-v1",
+        "feature_cols": ["pm25_mean", "forecast_horizon_days"],
+        "trees": [{"leaf_value": 42.0}],
+    }
+    payload = encode_artifact(artifact)
+    digest = ml.hashlib.sha256(payload).hexdigest()
+    downloads = []
+
+    class Bucket:
+        def download(self, path):
+            downloads.append(path)
+            return payload
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "model-artifacts"
+            return Bucket()
+
+    class SB:
+        storage = Storage()
+
+    row = {
+        "feature_version": "daily-pooled-v1",
+        "runtime_artifact_uri": "storage://model-artifacts/run/pooled/regression/runtime.json.gz",
+        "runtime_artifact_sha256": digest,
+    }
+    cache = {}
+    loaded = ml.load_runtime_artifact(SB(), row, cache)
+    assert loaded == artifact
+    assert ml.load_runtime_artifact(SB(), row, cache) is loaded
+    assert downloads == ["run/pooled/regression/runtime.json.gz"]
+
+
+def test_pooled_feature_vector_contains_identity_coordinates_and_horizon():
+    vector = ml.build_feature_vector(
+        {"pm25_mean": 30},
+        [20.0, 25.0, 30.0],
+        date(2026, 8, 1),
+        [
+            "province_latitude",
+            "province_longitude",
+            "forecast_horizon_days",
+            "province_TH_30",
+            "province_TH_31",
+        ],
+        province_id="TH-30",
+        province_metadata={"TH-30": {"lat": 14.9, "lon": 102.1}},
+        forecast_horizon_days=7,
+    )
+    assert vector.tolist() == pytest.approx([14.9, 102.1, 7.0, 1.0, 0.0])
 
 
 def _forecast_sb(include_classifier=True):
