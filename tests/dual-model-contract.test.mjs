@@ -228,6 +228,16 @@ test("Colab entry points default to safe non-production behavior", () => {
   assert.match(canonical, /LightGBMRegressor/);
   assert.match(canonical, /RandomForestClassifier/);
   assert.match(canonical, /pooled_chronological_split/);
+  const canonicalNotebook = JSON.parse(canonical);
+  const cloneInstallCell = canonicalNotebook.cells.find(
+    (cell) => cell.metadata?.id === "clone_install",
+  );
+  const cloneInstallSource = cloneInstallCell?.source?.join("") ?? "";
+  assert.match(cloneInstallSource, /os\.chdir\(["\']\/content["\']\)/);
+  assert.match(cloneInstallSource, /shutil\.rmtree/);
+  assert.match(cloneInstallSource, /subprocess\.run\([\s\S]*check=True/);
+  assert.match(cloneInstallSource, /rev-parse/);
+  assert.doesNotMatch(cloneInstallSource, /!rm -rf/);
   assert.doesNotMatch(canonical, /train_province/);
   assert.doesNotMatch(canonical, /adaboost|gradient_boosting|xgboost|catboost/i);
   assert.match(legacy, /DEPRECATED/);
