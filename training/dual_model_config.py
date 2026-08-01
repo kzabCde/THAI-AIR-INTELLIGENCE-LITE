@@ -56,6 +56,9 @@ MODEL_FAMILIES = (
 POOLED_FEATURE_VERSION = "daily-pooled-v1"
 POOLED_REGRESSION_FAMILY = "lightgbm"
 POOLED_CLASSIFICATION_FAMILY = "random_forest"
+FALLBACK_MODEL_NAME = "recent-mean-v1"
+FALLBACK_STRATEGY = "recent_observed_mean"
+FALLBACK_WINDOW_DAYS = 7
 POOLED_PROVINCE_IDS = tuple(f"TH-{code}" for code in range(30, 50))
 POOLED_PROVINCE_COLUMNS = tuple(
     f"province_{province_id.replace('-', '_')}"
@@ -115,6 +118,8 @@ class PipelineConfig:
     forecast_horizon_days: int = 7
     random_seed: int = 42
     serving_policy: str = "classifier_with_regression_fallback"
+    fallback_strategy: str = FALLBACK_STRATEGY
+    fallback_window_days: int = FALLBACK_WINDOW_DAYS
     artifact_directory: Path = Path("training/artifacts")
     allowed_model_families: tuple[str, ...] = MODEL_FAMILIES
 
@@ -159,6 +164,12 @@ class PipelineConfig:
             raise ValueError("classifier temperatures must be positive")
         if self.serving_policy not in SERVING_POLICIES:
             raise ValueError(f"unsupported serving policy: {self.serving_policy}")
+        if self.fallback_strategy != FALLBACK_STRATEGY:
+            raise ValueError(
+                f"unsupported fallback strategy: {self.fallback_strategy}"
+            )
+        if self.fallback_window_days < 1:
+            raise ValueError("fallback_window_days must be positive")
         unsupported = set(self.allowed_model_families) - set(MODEL_FAMILIES)
         if unsupported or not self.allowed_model_families:
             raise ValueError(f"unsupported or empty model family set: {sorted(unsupported)}")

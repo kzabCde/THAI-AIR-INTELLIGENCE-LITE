@@ -72,6 +72,9 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
     const latest = rows[0];
     if (!latest?.province_id) return [];
     const active = rows.find((row) => row.is_active === true) ?? null;
+    const usesMeanFallback = latest.task_type === "regression"
+      && (!active || active.model_name === "persist-revert-v2");
+    const serving = usesMeanFallback ? null : active;
     const lifecycle = (row: typeof active): ModelStatus["activeLifecycle"] => {
       if (!row) return "fallback";
       return row.model_version === "pooled-dual-pm25-v1"
@@ -83,13 +86,17 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
     return [{
       provinceId: latest.province_id,
       taskType: latest.task_type as "regression" | "classification",
-      activeModelName: active?.model_name ?? null,
-      activeRunId: active?.run_id ?? null,
-      activeTrainedAt: active?.trained_at ?? null,
-      activeEligible: active?.eligibility_status === true,
-      activeLifecycle: lifecycle(active),
-      activeServingFamily: active?.serving_model_family ?? null,
-      activeFeatureVersion: active?.feature_version ?? null,
+      activeModelName: usesMeanFallback
+        ? "recent-mean-v1"
+        : (serving?.model_name ?? null),
+      activeRunId: serving?.run_id ?? null,
+      activeTrainedAt: serving?.trained_at ?? null,
+      activeEligible: serving?.eligibility_status === true,
+      activeLifecycle: usesMeanFallback ? "fallback" : lifecycle(serving),
+      activeServingFamily: usesMeanFallback
+        ? "arithmetic_mean"
+        : (serving?.serving_model_family ?? null),
+      activeFeatureVersion: serving?.feature_version ?? null,
       latestModelName: latest.model_name,
       latestRunId: latest.run_id,
       latestTrainedAt: latest.trained_at,

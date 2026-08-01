@@ -52,6 +52,14 @@ const dueEvaluationHotfix = readFileSync(
   "utf8",
 );
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
+const frontendForecast = readFileSync(
+  new URL("../services/forecast.service.ts", import.meta.url),
+  "utf8",
+);
+const systemService = readFileSync(
+  new URL("../services/system.service.ts", import.meta.url),
+  "utf8",
+);
 const pooledMigration = readFileSync(
   new URL(
     "../supabase/migrations/20260801052036_pooled_tree_runtime_contract.sql",
@@ -224,10 +232,16 @@ test("Colab entry points default to safe non-production behavior", () => {
     assert.match(notebook, /ACTIVATE = False/);
     assert.match(notebook, /APPROVED_CODE_SHA/);
   }
-  assert.match(canonical, /training\.train_pooled_models/);
-  assert.match(canonical, /LightGBMRegressor/);
-  assert.match(canonical, /RandomForestClassifier/);
-  assert.match(canonical, /pooled_chronological_split/);
+  for (const notebook of [canonical, compatibility]) {
+    assert.match(notebook, /training\.train_pooled_models/);
+    assert.match(notebook, /LightGBMRegressor/);
+    assert.match(notebook, /RandomForestClassifier/);
+    assert.match(notebook, /pooled_chronological_split/);
+    assert.doesNotMatch(
+      notebook,
+      /train_province|adaboost|gradient_boosting|xgboost|catboost/i,
+    );
+  }
   const canonicalNotebook = JSON.parse(canonical);
   const cloneInstallCell = canonicalNotebook.cells.find(
     (cell) => cell.metadata?.id === "clone_install",
@@ -238,8 +252,6 @@ test("Colab entry points default to safe non-production behavior", () => {
   assert.match(cloneInstallSource, /subprocess\.run\([\s\S]*check=True/);
   assert.match(cloneInstallSource, /rev-parse/);
   assert.doesNotMatch(cloneInstallSource, /!rm -rf/);
-  assert.doesNotMatch(canonical, /train_province/);
-  assert.doesNotMatch(canonical, /adaboost|gradient_boosting|xgboost|catboost/i);
   assert.match(legacy, /DEPRECATED/);
   assert.match(legacy, /REGISTER=False; ACTIVATE=False/);
   assert.match(legacy, /raise RuntimeError\(\\"Deprecated notebook/);
@@ -298,6 +310,25 @@ test("v5 runtime loads checksum-verified exact tree artifacts", () => {
   assert.match(runtime, /evaluate_random_forest_classifier/);
   assert.match(portableTrees, /portable-tree-ensemble-v1/);
   assert.doesNotMatch(portableTrees, /Ridge|LogisticRegression/);
+});
+
+test("v5 fallback is the explicit recent observed mean", () => {
+  assert.match(runtime, /def recent_mean_forecast/);
+  assert.match(runtime, /FALLBACK_MODEL_NAME/);
+  assert.match(runtime, /mean_regression_fallback/);
+  assert.doesNotMatch(runtime, /def persist_revert_forecast/);
+  assert.match(frontendForecast, /FORECAST_MODEL = "recent-mean-v1"/);
+  assert.match(frontendForecast, /slice\(-7\)/);
+  assert.doesNotMatch(frontendForecast, /linregSlope/);
+  assert.match(systemService, /usesMeanFallback/);
+  assert.match(systemService, /"recent-mean-v1"/);
+});
+
+test("portable Random Forest aligns public classes before calibration", () => {
+  const alignment = portableTrees.indexOf("public_index =");
+  const calibration = portableTrees.indexOf("temperature = float");
+  assert.ok(alignment >= 0);
+  assert.ok(calibration > alignment);
 });
 
 test("v5 migration keeps runtime artifacts private and activation separate", () => {

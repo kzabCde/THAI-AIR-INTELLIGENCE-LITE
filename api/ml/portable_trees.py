@@ -172,27 +172,39 @@ def evaluate_random_forest_classifier(
         np.vstack([_rf_leaf_probabilities(tree, vector) for tree in trees]),
         axis=0,
     )
-    temperature = float(artifact.get("temperature", 1.0))
-    if not math.isfinite(temperature) or temperature <= 0:
-        raise ValueError("invalid Random Forest calibration temperature")
-    if temperature != 1.0:
-        logits = np.log(np.clip(compact, 1e-12, 1.0)) / temperature
-        logits -= np.max(logits)
-        compact = np.exp(logits)
-        compact /= compact.sum()
-
     public_ids = [int(value) for value in class_ids]
     model_classes = [int(value) for value in artifact.get("classes") or []]
     if len(model_classes) != len(compact):
         raise ValueError("Random Forest artifact class schema mismatch")
-    aligned = {str(class_id): 0.0 for class_id in public_ids}
+
+    public_index = {
+        class_id: index for index, class_id in enumerate(public_ids)
+    }
+    aligned = np.zeros(len(public_ids), dtype=float)
     for index, class_id in enumerate(model_classes):
-        if class_id in public_ids:
-            aligned[str(class_id)] = float(compact[index])
-    total = sum(aligned.values())
+        if class_id in public_index:
+            aligned[public_index[class_id]] = compact[index]
+    total = float(aligned.sum())
     if total <= 0:
         raise ValueError("Random Forest artifact has no supported classes")
-    return {key: value / total for key, value in aligned.items()}
+    aligned /= total
+
+    # Match the native evaluation contract: align to all five public classes
+    # before calibration. Missing rare classes therefore receive the same
+    # clipped log-probability on both sides of the parity check.
+    temperature = float(artifact.get("temperature", 1.0))
+    if not math.isfinite(temperature) or temperature <= 0:
+        raise ValueError("invalid Random Forest calibration temperature")
+    if temperature != 1.0:
+        logits = np.log(np.clip(aligned, 1e-12, 1.0)) / temperature
+        logits -= np.max(logits)
+        aligned = np.exp(logits)
+        aligned /= aligned.sum()
+
+    return {
+        str(class_id): float(aligned[index])
+        for index, class_id in enumerate(public_ids)
+    }
 
 
 def evaluate_tree_artifact(features: np.ndarray, artifact: dict):

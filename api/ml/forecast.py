@@ -3,7 +3,7 @@
 The v5 path evaluates the exact portable LightGBM/Random Forest tree artifacts
 stored in the private model bucket.  Legacy Ridge/Logistic artifacts remain
 readable as a rollback path.  Missing, corrupt, or schema-mismatched artifacts
-fail closed to the explicit persistence/reversion baseline.
+fail closed to the explicit seven-day recent-observation mean baseline.
 """
 
 from __future__ import annotations
@@ -28,6 +28,11 @@ from api.ml.portable_trees import (
     evaluate_random_forest_classifier,
 )
 
+from training.dual_model_config import (
+    FALLBACK_MODEL_NAME,
+    FALLBACK_WINDOW_DAYS,
+)
+
 from training.pm25_classes import (
     CLASS_IDS,
     THRESHOLD_VERSION,
@@ -48,7 +53,7 @@ SURROGATE_MODEL = "surrogate-v2"
 ENSEMBLE6_MODEL = "ensemble6-pm25-v3"
 POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-pooled-v1"
 POOLED_RF_CLASSIFIER = "random-forest-aqi-classifier-pooled-v1"
-PERSIST_MODEL = "persist-revert-v2"
+LEGACY_PERSIST_MODEL = "persist-revert-v2"
 LEGACY_STACKING_MODEL = "stacking-v1"
 LEGACY_BASE_MODELS = {"lightgbm-v1", "xgboost-v1"}
 SERVING_POLICY = os.environ.get(
@@ -453,10 +458,17 @@ def evaluate_portable_classifier(features: np.ndarray, artifact: dict) -> dict[s
     }
 
 
-def persist_revert_forecast(rolling: list[float], h: int, alpha: float = 0.85) -> float:
-    current = rolling[-1] if rolling else 20.0
-    roll7 = float(np.mean(rolling[-7:])) if rolling else current
-    return float(np.clip(current + (1 - alpha**h) * (roll7 - current), 1.0, 500.0))
+def recent_mean_forecast(
+    rolling: list[float],
+    window_days: int = FALLBACK_WINDOW_DAYS,
+) -> float:
+    """Forecast from the arithmetic mean of recent trusted observations."""
+    if window_days < 1:
+        raise ValueError("mean fallback window must be positive")
+    values = np.asarray(rolling[-window_days:], dtype=float)
+    values = values[np.isfinite(values) & (values >= 0)]
+    baseline = float(values.mean()) if len(values) else 20.0
+    return float(np.clip(baseline, 1.0, 500.0))
 
 
 def legacy_weighted_forecast(
@@ -471,7 +483,7 @@ def legacy_weighted_forecast(
     weights = np.asarray([_fval(feature_importance, name) for name in feature_cols], dtype=float)
     total = float(np.sum(np.abs(weights)))
     if total <= 1e-12:
-        return persist_revert_forecast(rolling, h=1)
+        return recent_mean_forecast(rolling)
     raw = float(np.dot(weights / total, features))
     anchor = rolling[-1]
     rescaled = raw * anchor / max(abs(raw), 1e-6)
@@ -493,7 +505,7 @@ def _predict_model(
     last_row = last_row or {}
     feature_date = feature_date or datetime.now(BANGKOK).date()
     legacy_base_models = legacy_base_models or {}
-    fallback = persist_revert_forecast(rolling, h=1)
+    fallback = recent_mean_forecast(rolling)
     if runtime_artifact is not None:
         try:
             return evaluate_lightgbm_regressor(features, runtime_artifact)
@@ -719,11 +731,22 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             regression_tree = load_runtime_artifact(sb, model_row, runtime_cache)
         except Exception:
             regression_tree = None
-        fallback_regression = model_row is None or (
-            requires_tree_regression and regression_tree is None
+        fallback_regression = (
+            model_row is None
+            or model_row.get("eligibility_status") is False
+            or model_row.get("model_name") == LEGACY_PERSIST_MODEL
+            or (requires_tree_regression and regression_tree is None)
         )
-        model_name = model_row["model_name"] if model_row else PERSIST_MODEL
-        regression_run_id = model_row.get("run_id") if model_row else None
+        if fallback_regression:
+            # Never present a rejected/broken candidate or the retired
+            # persistence/reversion baseline as an ML forecast.
+            params = {}
+            regression_tree = None
+            model_name = FALLBACK_MODEL_NAME
+            regression_run_id = None
+        else:
+            model_name = model_row["model_name"]
+            regression_run_id = model_row.get("run_id")
         classifier_row = active_classifiers.get(province_id)
         classifier_params = (
             classifier_row.get("model_params") or {}
@@ -960,7 +983,7 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                 "classification_source": classification_source,
                 "fallback_used": fallback_used or fallback_regression,
                 "fallback_reason": (
-                    "persistence_regression_fallback"
+                    "mean_regression_fallback"
                     if fallback_regression else fallback_reason
                 ),
                 "data_freshness": f"{as_of.isoformat()}T23:59:59+07:00",

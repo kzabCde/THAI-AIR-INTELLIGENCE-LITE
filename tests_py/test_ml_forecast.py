@@ -58,11 +58,19 @@ def test_ensemble6_uses_registered_runtime_surrogate():
     assert prediction == 14.0
 
 
-def test_unknown_model_falls_back_to_persist_revert():
+def test_unknown_model_falls_back_to_recent_mean():
     rolling = [10.0, 20.0, 40.0]
     features = np.zeros(len(ml.FEATURE_COLS))
-    expected = ml.persist_revert_forecast(rolling, h=1)
+    expected = np.mean(rolling)
+    assert ml.recent_mean_forecast(rolling) == expected
     assert ml._predict_model("unknown", {}, features, rolling) == expected
+
+
+def test_recent_mean_fallback_uses_only_the_configured_window():
+    rolling = [500.0, 10.0, 20.0, 30.0]
+    assert ml.recent_mean_forecast(rolling, window_days=3) == 20.0
+    with pytest.raises(ValueError, match="window"):
+        ml.recent_mean_forecast(rolling, window_days=0)
 
 
 def test_duplicate_active_models_are_rejected():
@@ -137,6 +145,41 @@ def test_portable_classifier_can_blend_with_current_day_class():
     assert probabilities["2"] == pytest.approx(0.25, abs=1e-4)
 
 
+def test_random_forest_temperature_scaling_aligns_missing_classes_first():
+    compact = np.asarray([0.1, 0.2, 0.3, 0.4, 0.0], dtype=float)
+    logits = np.log(np.clip(compact, 1e-12, 1.0)) / 1.5
+    logits -= np.max(logits)
+    expected = np.exp(logits)
+    expected /= expected.sum()
+    artifact = {
+        "artifact_schema": ml.TREE_ARTIFACT_SCHEMA,
+        "task_type": "classification",
+        "model_family": "random_forest",
+        "feature_version": "test",
+        "feature_cols": ["x"],
+        "threshold_version": ml.THRESHOLD_VERSION,
+        "classes": [1, 2, 3, 4],
+        "temperature": 1.5,
+        "trees": [{
+            "children_left": [-1],
+            "children_right": [-1],
+            "features": [-2],
+            "thresholds": [-2.0],
+            "values": [[1.0, 2.0, 3.0, 4.0]],
+        }],
+    }
+    actual = ml.evaluate_random_forest_classifier(
+        np.asarray([0.0]),
+        artifact,
+        class_ids=ml.CLASS_IDS,
+    )
+    assert [actual[str(class_id)] for class_id in ml.CLASS_IDS] == pytest.approx(
+        expected,
+        abs=1e-12,
+        rel=1e-12,
+    )
+
+
 def test_portable_classifier_rejects_threshold_version_mismatch():
     with pytest.raises(ValueError, match="schema"):
         ml.evaluate_portable_classifier(
@@ -202,24 +245,26 @@ def test_pooled_feature_vector_contains_identity_coordinates_and_horizon():
     assert vector.tolist() == pytest.approx([14.9, 102.1, 7.0, 1.0, 0.0])
 
 
-def _forecast_sb(include_classifier=True):
+def _forecast_sb(include_classifier=True, include_regression=True):
     size = len(ml.FEATURE_COLS)
-    active = [{
-        "province_id": "TH-30",
-        "task_type": "regression",
-        "model_name": "gradient-boosting-regressor",
-        "run_id": "11111111-1111-4111-8111-111111111111",
-        "model_params": {
-            "surrogate": {
-                "feature_cols": ml.FEATURE_COLS,
-                "coefficients": [0.0] * size,
-                "intercept": 42.0,
-                "scaler_mean": [0.0] * size,
-                "scaler_scale": [1.0] * size,
+    active = []
+    if include_regression:
+        active.append({
+            "province_id": "TH-30",
+            "task_type": "regression",
+            "model_name": "gradient-boosting-regressor",
+            "run_id": "11111111-1111-4111-8111-111111111111",
+            "model_params": {
+                "surrogate": {
+                    "feature_cols": ml.FEATURE_COLS,
+                    "coefficients": [0.0] * size,
+                    "intercept": 42.0,
+                    "scaler_mean": [0.0] * size,
+                    "scaler_scale": [1.0] * size,
+                },
+                "feature_version": "daily-observed-v3",
             },
-            "feature_version": "daily-observed-v3",
-        },
-    }]
+        })
     if include_classifier:
         active.append({
             "province_id": "TH-30",
@@ -292,6 +337,19 @@ def test_dual_forecast_contains_direct_classification_and_consistency():
     assert row["classification_source"] == "active_classifier"
     assert row["fallback_used"] is False
     assert sum(row["class_probabilities"].values()) == pytest.approx(1.0)
+
+
+def test_missing_eligible_regressor_uses_recent_mean_forecast():
+    row = ml.make_forecasts(
+        _forecast_sb(include_classifier=False, include_regression=False),
+        horizon=1,
+    )[0]
+    assert row["pm25_mean_forecast"] == 35.0
+    assert row["model_name"] == ml.FALLBACK_MODEL_NAME
+    assert row["regression_model_name"] == ml.FALLBACK_MODEL_NAME
+    assert row["regression_run_id"] is None
+    assert row["fallback_used"] is True
+    assert row["fallback_reason"] == "mean_regression_fallback"
 
 
 def test_missing_classifier_uses_explicit_regression_fallback():
