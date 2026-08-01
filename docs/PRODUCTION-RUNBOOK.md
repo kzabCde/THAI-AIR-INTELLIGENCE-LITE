@@ -117,6 +117,14 @@ python -m training.train_pooled_models --register
 python -m training.train_pooled_models --register --activate
 ```
 
+The canonical Colab entry point is
+`training/train_dual_models_pm25.ipynb`. It imports the same
+`training.train_pooled_models` functions used above, defaults to shadow-only
+execution (`REGISTER = False`, `ACTIVATE = False`), and requires only
+`SUPABASE_URL` plus `SUPABASE_SERVICE_ROLE_KEY` in Colab Secrets. The retained
+`train_all_6_models_pm25.ipynb` notebook is a legacy comparison/rollback aid;
+it is not the production pooled training path.
+
 Registration uploads immutable native and exact portable tree artifacts and always inserts candidates
 inactive. Activation is a separate RPC gate. Classifiers cannot activate
 without fixed-five-class pooled metrics and at least five final-test samples in
