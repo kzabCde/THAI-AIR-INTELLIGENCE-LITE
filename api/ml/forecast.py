@@ -1026,8 +1026,12 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
             }).eq("forecast_at", rows[0]["forecast_at"]).execute()
         province_count = len({row["province_id"] for row in rows})
         expected_rows = len(PROVINCE_IDS) * horizon
+        required_fields_ok = all(
+            row.get("province_id") and row.get("target_date")
+            for row in rows
+        )
         unique_forecasts = {
-            (row["province_id"], row["target_date"])
+            (row.get("province_id"), row.get("target_date"))
             for row in rows
         }
         valid_values = all(
@@ -1037,7 +1041,8 @@ def execute_forecast_run(sb: Client, horizon: int) -> tuple[list[dict], int, int
             for row in rows
         )
         integrity_ok = (
-            province_count == len(PROVINCE_IDS)
+            required_fields_ok
+            and province_count == len(PROVINCE_IDS)
             and len(rows) == expected_rows
             and len(unique_forecasts) == expected_rows
             and count == expected_rows
