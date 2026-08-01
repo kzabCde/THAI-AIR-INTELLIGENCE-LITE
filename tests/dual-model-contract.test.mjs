@@ -52,6 +52,14 @@ const dueEvaluationHotfix = readFileSync(
   "utf8",
 );
 const runtime = readFileSync(new URL("../api/ml/forecast.py", import.meta.url), "utf8");
+const frontendForecast = readFileSync(
+  new URL("../services/forecast.service.ts", import.meta.url),
+  "utf8",
+);
+const systemService = readFileSync(
+  new URL("../services/system.service.ts", import.meta.url),
+  "utf8",
+);
 const pooledMigration = readFileSync(
   new URL(
     "../supabase/migrations/20260801052036_pooled_tree_runtime_contract.sql",
@@ -309,6 +317,11 @@ test("v5 fallback is the explicit recent observed mean", () => {
   assert.match(runtime, /FALLBACK_MODEL_NAME/);
   assert.match(runtime, /mean_regression_fallback/);
   assert.doesNotMatch(runtime, /def persist_revert_forecast/);
+  assert.match(frontendForecast, /FORECAST_MODEL = "recent-mean-v1"/);
+  assert.match(frontendForecast, /slice\(-7\)/);
+  assert.doesNotMatch(frontendForecast, /linregSlope/);
+  assert.match(systemService, /usesMeanFallback/);
+  assert.match(systemService, /"recent-mean-v1"/);
 });
 
 test("portable Random Forest aligns public classes before calibration", () => {
