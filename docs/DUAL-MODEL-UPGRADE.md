@@ -13,8 +13,8 @@ air-quality levels were derived from the numeric value; there was no
 independent classifier, probability vector, or classification metric contract.
 
 This upgrade preserves `training_daily_summary_v2`, strict consecutive-day
-targets, chronological evaluation, existing `ensemble6-pm25-v3` and persistence
-inference, inactive registration, explicit activation, existing forecast read
+targets, chronological evaluation, existing legacy artifact compatibility,
+inactive registration, explicit activation, existing forecast read
 paths, old-row compatibility, RLS, and service-role-only write RPCs.
 
 | Layer | Before | Upgrade |
@@ -113,10 +113,18 @@ Default policy: `classifier_with_regression_fallback`.
 2. Otherwise derive class from the numeric regression result and state why.
 3. At D+2–D+7, always label recursive output as experimental and use the
    regression threshold rather than presenting an unvalidated classifier.
-4. If no active regressor exists, use the persistence fallback.
+4. If the regressor is absent, explicitly ineligible, a retired
+   `persist-revert-v2` row, or its portable artifact fails validation, use
+   `recent-mean-v1`: the arithmetic mean of the latest seven trusted observed
+   daily PM2.5 values.
+5. The mean fallback has no ML run ID, sets
+   `fallback_reason=mean_regression_fallback`, and derives the displayed class
+   from that numeric mean.
 
 The database/API preserve classifier class, regression-derived class and
-`class_agreement`; disagreement is never hidden.
+`class_agreement`; disagreement is never hidden. An ineligible training run is
+never presented as an ML forecast, while activation remains atomic and does not
+delete the previous registry history.
 
 ## Artifacts
 
@@ -163,9 +171,11 @@ Use **Actions → PM2.5 Dual-Model Pipeline → Run workflow**.
 `forecast-only` skips training and uses currently active models. Forecast
 generation runs only after successful training or an explicit skip.
 
-Both Colab notebooks default to `REGISTER=False` and `ACTIVATE=False`, clone an
+Both Colab notebook entry points now run the same pooled LightGBM + Random
+Forest pipeline, default to `REGISTER=False` and `ACTIVATE=False`, clone an
 immutable approved commit SHA, and require the promotion cell to be changed
-deliberately. Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+deliberately. The former `train_all_6_models_pm25.ipynb` path is retained only
+as a compatibility alias; it no longer trains six model families. Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `ML_FORECAST_URL`, and `ML_SECRET`. Secret values are never printed.
 
 ## Production checklist
