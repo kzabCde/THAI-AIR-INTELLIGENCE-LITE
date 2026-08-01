@@ -148,7 +148,11 @@ def _rf_leaf_probabilities(tree: dict, features: np.ndarray) -> np.ndarray:
     node = 0
     while int(left[node]) != int(right[node]):
         feature_index = int(feature_indices[node])
-        node = int(left[node]) if features[feature_index] <= float(thresholds[node]) else int(right[node])
+        # scikit-learn converts dense classifier inputs to float32 before
+        # tree traversal. Mirror that boundary exactly so a feature near a
+        # split threshold cannot take a different portable branch.
+        value = float(np.float32(features[feature_index]))
+        node = int(left[node]) if value <= float(thresholds[node]) else int(right[node])
     values = np.asarray(tree["values"][node], dtype=float)
     total = float(values.sum())
     if total <= 0 or not np.all(np.isfinite(values)):
