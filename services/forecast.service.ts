@@ -13,7 +13,7 @@ import { getDailyHistory } from "./daily-summary.service";
 import { getLatestAir } from "./air-quality.service";
 import type { ForecastPoint, ProvinceForecast } from "./types";
 
-export const FORECAST_MODEL = "ewma-diurnal-v1";
+export const FORECAST_MODEL = "recent-mean-v1";
 export const FORECAST_HORIZON_HOURS = 168;
 const FORECAST_HORIZON_DAYS = 7;
 const HORIZON_RELIABILITY_VALUES = new Set([
@@ -44,20 +44,6 @@ function diurnal(hour: number): number {
   return 1 + 0.18 * (morning + 0.7 * evening) - 0.08;
 }
 
-function linregSlope(values: number[]): number {
-  const n = values.length;
-  if (n < 2) return 0;
-  const meanX = (n - 1) / 2;
-  const meanY = values.reduce((a, b) => a + b, 0) / n;
-  let num = 0;
-  let den = 0;
-  for (let i = 0; i < n; i++) {
-    num += (i - meanX) * (values[i] - meanY);
-    den += (i - meanX) ** 2;
-  }
-  return den === 0 ? 0 : num / den;
-}
-
 /**
  * Generate a PM2.5 forecast from recent daily history. Pure / deterministic so
  * it can run both on-the-fly (read path) and in the cron job (write path).
@@ -68,17 +54,18 @@ export function buildForecast(
   current: number | null,
   generatedAt: Date = new Date(),
 ): ProvinceForecast {
-  const recent = dailyMeans.slice(-14).filter((v) => Number.isFinite(v));
-  const base =
-    current ??
-    (recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 20);
-  const slope = recent.length >= 4 ? linregSlope(recent) : 0;
+  const recent = dailyMeans
+    .slice(-7)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  const base = recent.length
+    ? recent.reduce((sum, value) => sum + value, 0) / recent.length
+    : (current ?? 20);
 
   const daily: ForecastPoint[] = [];
   for (let d = 1; d <= FORECAST_HORIZON_DAYS; d++) {
-    // Damp the trend so long horizons regress toward the recent mean.
-    const damp = Math.exp(-d / 6);
-    const mean = Math.max(1, base + slope * d * damp);
+    // When no eligible ML result is available, every horizon uses the same
+    // transparent arithmetic mean of the latest seven trusted daily values.
+    const mean = Math.max(1, base);
     const date = new Date(generatedAt);
     date.setUTCDate(date.getUTCDate() + d);
     const classId = pm25ClassForValue(mean);
@@ -103,11 +90,11 @@ export function buildForecast(
       classAgreement: null,
       classificationSource: "regression_threshold",
       fallbackUsed: true,
-      fallbackReason: "typescript_forecast_fallback",
+      fallbackReason: "mean_regression_fallback",
       horizonDays: d,
       horizonReliability: "typescript_fallback",
       experimental: true,
-      uncertaintyMethod: "uncalibrated_typescript_fallback",
+      uncertaintyMethod: "uncalibrated_recent_mean_variability",
     });
   }
 
@@ -159,7 +146,7 @@ export function buildForecast(
     fallback: {
       used: true,
       source: "regression_threshold",
-      reason: "typescript_forecast_fallback",
+      reason: "mean_regression_fallback",
     },
   };
 }
@@ -391,11 +378,11 @@ export async function generateAndStoreForecasts(): Promise<number> {
         ),
         classification_source: "regression_threshold",
         fallback_used: true,
-        fallback_reason: "typescript_forecast_fallback",
+        fallback_reason: "mean_regression_fallback",
         forecast_horizon_days: p.horizonDays ?? null,
         horizon_reliability: "typescript_fallback",
         is_experimental: true,
-        uncertainty_method: p.uncertaintyMethod ?? "uncalibrated_typescript_fallback",
+        uncertainty_method: p.uncertaintyMethod ?? "uncalibrated_recent_mean_variability",
       });
     }
   }
