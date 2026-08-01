@@ -49,7 +49,7 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
   const { data, error } = await getServiceSupabase()
     .from("model_registry")
     .select(
-      "model_name,province_id,task_type,run_id,trained_at,eligibility_status,eligibility_reason,is_active",
+      "model_name,province_id,task_type,run_id,trained_at,eligibility_status,eligibility_reason,is_active,model_version,evidence_status,serving_model_family,feature_version",
     )
     .order("province_id", { ascending: true })
     .order("task_type", { ascending: true })
@@ -72,6 +72,14 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
     const latest = rows[0];
     if (!latest?.province_id) return [];
     const active = rows.find((row) => row.is_active === true) ?? null;
+    const lifecycle = (row: typeof active): ModelStatus["activeLifecycle"] => {
+      if (!row) return "fallback";
+      return row.model_version === "pooled-dual-pm25-v1"
+        && row.evidence_status === "validated"
+        && row.eligibility_status === true
+        ? "validated"
+        : "legacy";
+    };
     return [{
       provinceId: latest.province_id,
       taskType: latest.task_type as "regression" | "classification",
@@ -79,12 +87,16 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
       activeRunId: active?.run_id ?? null,
       activeTrainedAt: active?.trained_at ?? null,
       activeEligible: active?.eligibility_status === true,
+      activeLifecycle: lifecycle(active),
+      activeServingFamily: active?.serving_model_family ?? null,
+      activeFeatureVersion: active?.feature_version ?? null,
       latestModelName: latest.model_name,
       latestRunId: latest.run_id,
       latestTrainedAt: latest.trained_at,
       latestEligible: latest.eligibility_status === true,
       latestIsActive: latest.is_active === true,
       latestEligibilityReason: latest.eligibility_reason,
+      latestLifecycle: lifecycle(latest),
     }];
   });
 }

@@ -18,6 +18,7 @@ export const FORECAST_HORIZON_HOURS = 168;
 const FORECAST_HORIZON_DAYS = 7;
 const HORIZON_RELIABILITY_VALUES = new Set([
   "evaluated_d1",
+  "experimental_direct",
   "experimental_recursive",
   "legacy_unverified_d1",
   "legacy_unverified",

@@ -45,3 +45,4 @@ __pycache__/
 
 # generated ML artifacts (manifests and native teacher models)
 /training/artifacts/
+/supabase/.temp/

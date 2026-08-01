@@ -1,6 +1,9 @@
 # Research Evidence
 
-The project sources support using temporal history, meteorology, satellite/fire proxies, and spatial context for PM2.5 forecasting. They do not justify labeling the production runtime as native XGBoost or LightGBM when the deployed function only uses feature-importance-weighted surrogate inference.
+The project sources support using temporal history, meteorology and spatial
+context for PM2.5 forecasting. Production v5 now evaluates the exact exported
+LightGBM and Random Forest tree structures, so its public model names match the
+algorithms that produce the predictions.
 
 ## Evidence mapping
 
@@ -20,9 +23,10 @@ The project sources support using temporal history, meteorology, satellite/fire 
   after coverage, latency, provenance and ground-station validation exist.
 - ARIMA-LSTM and clustering-spatiotemporal research remain research tracks
   until there is leakage-safe temporal/external-province validation.
-- Dataset-dependent forecasting comparisons support retaining multiple model
-  families and selecting on the actual dataset rather than assuming LSTM or a
-  Transformer is best.
+- Dataset-dependent forecasting comparisons show that no family is universally
+  best. The project therefore fixes two complementary families for its current
+  tabular dataset and retains persistence/seasonal-naive baselines instead of
+  assuming an LSTM or Transformer must outperform them.
 
 ## Required promotion checklist
 
@@ -32,7 +36,8 @@ The project sources support using temporal history, meteorology, satellite/fire 
   persistence and seasonal-naive skill, interval coverage.
 - Classification metrics with fixed labels 1–5: per-class recall/PR-AUC,
   Macro F1, Brier score, ECE and confidence intervals.
-- External-province validation before promoting pooled regional/national models.
+- Per-province final-test gates inside the pooled model, followed by a future
+  leave-one-province-out research evaluation before nationwide expansion.
 - Error analysis for burning season, missing hours, nulls, outliers, drift and
   upstream outages.
 

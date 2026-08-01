@@ -3,29 +3,31 @@
 The staged upgrade trains numeric regression and five-class classification
 independently. See [DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md).
 
-This project serves PM2.5 forecasts through lightweight production-safe
-artifacts. Training compares Random Forest, AdaBoost, Gradient Boosting,
-XGBoost, LightGBM and CatBoost teachers on chronological validation data. It
-then tunes a standardized Ridge/persistence serving artifact for regression
-and a standardized Logistic/persistence serving artifact for classification.
-The classification artifact also tunes class weighting and temperature
-scaling. Teacher and serving families are always reported separately.
-Runtime evaluates the stored scaler, coefficients, intercept and feature order
-from `model_registry`; feature importance is never used as a prediction
-coefficient.
+Production v5 uses exactly two machine-learning families with one fixed role
+each: pooled `LightGBMRegressor` for numeric PM2.5 and pooled
+`RandomForestClassifier` for the five public air-quality classes. The tasks use
+the same observed source rows but independent targets and promotion gates.
+
+Both models are trained across all 20 provinces with province one-hot identity,
+coordinates and direct forecast horizon D+1 through D+7. Runtime downloads a
+checksum-verified gzip JSON artifact from the private `model-artifacts` bucket
+and evaluates the original tree splits/leaves. Ridge/Logistic and the six-model
+trainer remain readable only as rollback/legacy paths; they are not candidates
+in the v5 workflow.
 
 ## Production guardrails
 
 - Read training and runtime features from `training_daily_summary_v2`, which requires at least 18 trusted non-synthetic hourly PM2.5 values per Bangkok business date.
 - Use feature contract `daily-observed-v4`. Synthetic/mock/demo hotspot and FRP values are explicitly excluded until real FIRMS coverage has been backfilled and audited.
 - Exclude `synthetic`, `mock`, and `demo` sources from production accuracy metrics.
-- Select teachers and serving-artifact tuning only on chronological validation data, run five expanding-window folds inside the development period, and reserve the final 20% (at least 30 rows) as an untouched final test.
-- Report teacher metrics separately from the serving artifact's MAE, RMSE, R², skill, classification metrics and persistence baseline.
+- Keep all provinces from the same origin date in the same partition and purge seven dates between train/validation/test so a D+7 training target cannot overlap the next partition.
+- Select hyperparameters only on chronological validation data and reserve the latest 20% (at least 30 unique dates) as an untouched final test.
+- Report D+1 activation metrics separately from the experimental direct D+2-D+7 metrics and from persistence/seasonal-naive baselines.
 - Calculate five-class macro metrics with the fixed label set `[1,2,3,4,5]`. Missing Class 4 or 5 evidence is a hard `insufficient_evidence` state, not a warning.
 - Require classifiers to beat persistence on fixed-five-class macro F1, balanced accuracy and weighted F1; also store per-class recall confidence intervals, PR-AUC, Brier score and expected calibration error.
 - Register candidates as inactive. Promotion requires an explicit `fn_activate_model_task` call. Regression requires at least 5% skill versus current-day persistence; classification additionally requires at least five final-test samples in both Classes 4 and 5.
-- Determine promotion from the production artifact's final-holdout metrics, not from an unserved teacher score.
-- Treat only D+1 as validated by this target contract. D+2–D+7 are recursive experiments and must be labelled accordingly.
+- Determine promotion from the exact portable tree artifact's final-holdout metrics, checked against native library output before upload.
+- Treat only D+1 as production-evaluated. D+2-D+7 are direct-horizon experiments and are labelled `experimental_direct` until enough retrospective evidence accumulates.
 
 ## Baselines to keep reproducible
 
@@ -38,18 +40,19 @@ coefficient.
 
 ```bash
 pip install -r training/requirements.txt
-python training/train_dual_models.py --dry-run --province TH-30
-python training/train_dual_models.py --register            # inactive candidates
-python training/train_dual_models.py --register --activate # eligible candidates only
+python -m training.train_pooled_models --dry-run
+python -m training.train_pooled_models --shadow
+python -m training.train_pooled_models --register
+python -m training.train_pooled_models --register --activate # eligible tasks/provinces only
 ```
 
-Native teacher artifacts and run manifests are written under
+Native model artifacts, exact portable tree artifacts and run manifests are written under
 `training/artifacts/` and are intentionally ignored by Git. Registration first
-uploads the native artifact to the private `model-artifacts` bucket using an
-immutable run/province/task path. The registry stores its URI, SHA-256,
-dependency versions, teacher/serving families and portable-artifact checksum.
-Regression intervals use P10/P50/P90 residuals calibrated from expanding-window
-out-of-fold predictions.
+uploads both artifacts to the private `model-artifacts` bucket using an
+immutable run/pooled/task path. The registry stores both URIs and SHA-256
+digests, dependency versions, feature order and actual serving family.
+Regression intervals use P10/P50/P90 residuals calibrated by chronological
+validation and stored separately for each direct horizon.
 
 ## Candidate research tracks
 

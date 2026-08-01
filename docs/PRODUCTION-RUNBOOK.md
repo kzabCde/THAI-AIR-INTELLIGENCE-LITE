@@ -110,14 +110,15 @@ monitoring-station observation.
 ## Dual-model safe workflow
 
 ```bash
-python training/train_dual_models.py --dry-run --province TH-30
-python training/train_dual_models.py --register --province TH-30
+python -m training.train_pooled_models --dry-run
+python -m training.train_pooled_models --shadow
+python -m training.train_pooled_models --register
 # Review run_summary.json, evidence_status, checksums and shadow output.
-python training/train_dual_models.py --register --activate --province TH-30
+python -m training.train_pooled_models --register --activate
 ```
 
-Registration uploads immutable native artifacts and always inserts candidates
+Registration uploads immutable native and exact portable tree artifacts and always inserts candidates
 inactive. Activation is a separate RPC gate. Classifiers cannot activate
-without fixed-five-class metrics and at least five final-test samples in both
-critical classes. The Colab notebooks default to no registration and no
-activation and check out an approved immutable commit.
+without fixed-five-class pooled metrics and at least five final-test samples in
+both critical classes. The GitHub workflow defaults to dry-run; `shadow` writes
+artifacts and summaries without changing the registry.

@@ -173,12 +173,12 @@ function selfBaseUrl(): string {
 }
 
 /** ML forecast step → invokes the Vercel Python function `api/ml/forecast.py`,
- *  which evaluates the distilled XGBoost+LightGBM surrogate from model_registry
+ *  which evaluates the active checksum-verified tree artifact from model_registry
  *  and writes forecast_hourly / forecast_daily. The heavy training itself runs
- *  offline in Colab (training/train_xgb_lgbm.ipynb); this only triggers inference.
+ *  in the manual GitHub training workflow; this only triggers inference.
  *
  *  Returns 0 records if model_registry has no trained rows yet — run the
- *  notebook first so feature_importance / coef are present.
+ *  training workflow first so an eligible artifact can be registered.
  */
 export async function runMlForecast(): Promise<SyncResult> {
   const started = Date.now();

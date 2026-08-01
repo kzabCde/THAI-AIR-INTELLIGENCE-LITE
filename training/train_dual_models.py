@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train independent PM2.5 regressors and classifiers per province.
+"""Legacy per-province dual trainer retained as a rollback path.
 
 The classification target is derived from the *actual* next-day PM2.5 value.
 Model selection uses chronological validation data; the most recent test split
@@ -27,14 +27,8 @@ import joblib
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-import xgboost as xgb
-from catboost import CatBoostClassifier, CatBoostRegressor
-from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.base import clone
 from sklearn.ensemble import (
-    AdaBoostClassifier,
-    AdaBoostRegressor,
-    GradientBoostingClassifier,
-    GradientBoostingRegressor,
     RandomForestClassifier,
     RandomForestRegressor,
 )
@@ -126,36 +120,6 @@ class ProvinceResult:
     error: str | None = None
 
 
-class EncodedXGBClassifier(BaseEstimator, ClassifierMixin):
-    """XGBoost adapter that safely handles one-based and absent PM2.5 classes."""
-
-    def __init__(self, params: dict | None = None):
-        self.params = params or {}
-
-    def fit(self, X, y, sample_weight=None):
-        self.classes_ = np.unique(np.asarray(y, dtype=np.int64))
-        encoded = np.searchsorted(self.classes_, y)
-        params = dict(self.params)
-        params["objective"] = (
-            "multi:softprob" if len(self.classes_) > 2 else "binary:logistic"
-        )
-        if len(self.classes_) > 2:
-            params["num_class"] = len(self.classes_)
-        self.model_ = xgb.XGBClassifier(**params)
-        fit_kwargs = {}
-        if sample_weight is not None:
-            fit_kwargs["sample_weight"] = sample_weight
-        self.model_.fit(X, encoded, **fit_kwargs)
-        return self
-
-    def predict_proba(self, X):
-        return self.model_.predict_proba(X)
-
-    def predict(self, X):
-        encoded = np.asarray(self.model_.predict(X), dtype=np.int64)
-        return self.classes_[encoded]
-
-
 def _git_sha() -> str | None:
     try:
         return subprocess.check_output(
@@ -169,8 +133,7 @@ def _git_sha() -> str | None:
 
 def _library_versions() -> dict[str, str]:
     packages = (
-        "numpy", "pandas", "scikit-learn", "xgboost", "lightgbm",
-        "catboost", "joblib", "supabase",
+        "numpy", "pandas", "scikit-learn", "lightgbm", "joblib", "supabase",
     )
     result: dict[str, str] = {}
     for package in packages:
@@ -432,27 +395,10 @@ def regression_factories(seed: int) -> dict[str, Callable[[], object]]:
         "random_forest": lambda: RandomForestRegressor(
             n_estimators=300, min_samples_leaf=3, random_state=seed, n_jobs=-1
         ),
-        "adaboost": lambda: AdaBoostRegressor(
-            n_estimators=250, learning_rate=0.04, loss="square", random_state=seed
-        ),
-        "gradient_boosting": lambda: GradientBoostingRegressor(
-            n_estimators=300, max_depth=3, learning_rate=0.04,
-            min_samples_leaf=3, random_state=seed,
-        ),
-        "xgboost": lambda: xgb.XGBRegressor(
-            n_estimators=300, max_depth=4, learning_rate=0.04,
-            subsample=0.8, colsample_bytree=0.8, objective="reg:squarederror",
-            random_state=seed, n_jobs=-1, verbosity=0,
-        ),
         "lightgbm": lambda: lgb.LGBMRegressor(
             n_estimators=300, max_depth=4, learning_rate=0.04,
             subsample=0.8, colsample_bytree=0.8, min_child_samples=10,
             random_state=seed, n_jobs=-1, verbose=-1,
-        ),
-        "catboost": lambda: CatBoostRegressor(
-            iterations=300, depth=5, learning_rate=0.04,
-            loss_function="RMSE", random_seed=seed,
-            verbose=False, allow_writing_files=False,
         ),
     }
 
@@ -463,32 +409,10 @@ def classification_factories(seed: int) -> dict[str, Callable[[], object]]:
             n_estimators=300, min_samples_leaf=3, class_weight="balanced",
             random_state=seed, n_jobs=-1,
         ),
-        "adaboost": lambda: AdaBoostClassifier(
-            n_estimators=250, learning_rate=0.04, random_state=seed,
-        ),
-        "gradient_boosting": lambda: GradientBoostingClassifier(
-            n_estimators=300, max_depth=3, learning_rate=0.04,
-            min_samples_leaf=3, random_state=seed,
-        ),
-        "xgboost": lambda: EncodedXGBClassifier(params={
-            "n_estimators": 300,
-            "max_depth": 4,
-            "learning_rate": 0.04,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "random_state": seed,
-            "n_jobs": -1,
-            "verbosity": 0,
-        }),
         "lightgbm": lambda: lgb.LGBMClassifier(
             n_estimators=300, max_depth=4, learning_rate=0.04,
             subsample=0.8, colsample_bytree=0.8, min_child_samples=10,
             class_weight="balanced", random_state=seed, n_jobs=-1, verbose=-1,
-        ),
-        "catboost": lambda: CatBoostClassifier(
-            iterations=300, depth=5, learning_rate=0.04,
-            loss_function="MultiClass", auto_class_weights="Balanced",
-            random_seed=seed, verbose=False, allow_writing_files=False,
         ),
     }
 

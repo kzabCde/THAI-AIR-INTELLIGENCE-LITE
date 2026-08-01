@@ -65,3 +65,12 @@ test("legacy forecast rows are presented as threshold-based classification", () 
   assert.match(forecastService, /fallbackUsed: !usesDirectClassifier/);
   assert.match(forecastService, /"classifier_not_active"/);
 });
+
+test("system page distinguishes validated legacy and fallback lifecycle", () => {
+  for (const label of ["Validated", "Legacy", "Fallback", "Classification unavailable"]) {
+    assert.ok(systemPage.includes(label), `system page missing ${label}`);
+  }
+  assert.match(systemPage, /สรุปรายวัน/);
+  assert.match(systemPage, /พยากรณ์ ML/);
+  assert.match(systemPage, /รวมทั้งกระบวนการ/);
+});
