@@ -75,7 +75,7 @@ This reviewed Colab notebook trains 20 province-local residual LightGBM regresso
 
 The all-or-nothing deployment gate requires regression MAE Skill versus Persistence of at least 4.5% globally and for every province. Classification requires Test Accuracy ≥ 0.65, Macro F1 ≥ 0.50, Balanced Accuracy ≥ 0.50, Weighted F1 ≥ 0.60, and Recall ≥ 0.35 for Classes 4 and 5 with at least five examples each.
 
-Open-Meteo CAMS PM2.5 and Historical Weather data are used only as an in-memory archive before the first trusted database date. The archive is never written to Supabase, and database rows win at the boundary.
+Open-Meteo CAMS PM2.5 and Historical Weather data are used only as an in-memory archive before the first trusted database date. Successful archive responses are cached in the Colab runtime so a retry resumes instead of downloading completed batches again. The archive is never written to Supabase, and database rows win at the boundary.
 
 Promotion is all-or-nothing: the notebook creates 40 inactive task/province candidates backed by 20 residual LightGBM artifacts and one pooled Random Forest artifact, invokes one atomic activation RPC, generates seven forecast days, and verifies 40 active rows plus 140 forecast rows.
 
@@ -108,6 +108,10 @@ ARCHIVE_START_DATE = "2022-08-01"
 ARCHIVE_CHUNK_DAYS = 365
 ARCHIVE_PROVINCE_BATCH_SIZE = 5
 ARCHIVE_REQUEST_TIMEOUT_SECONDS = 180
+ARCHIVE_CACHE_DIRECTORY = "/content/open_meteo_archive_v5_6_2"
+ARCHIVE_REQUEST_MIN_INTERVAL_SECONDS = 15.0
+ARCHIVE_MAX_ATTEMPTS = 8
+ARCHIVE_MAX_BACKOFF_SECONDS = 300.0
 MINIMUM_ANNUAL_CYCLES = 3
 FULL_YEAR_HOLDOUT_DAYS = 365
 POOLED_EMBARGO_DAYS = 7
