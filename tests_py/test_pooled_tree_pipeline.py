@@ -22,9 +22,11 @@ from training.dual_model_config import (
 )
 from training.pm25_classes import THRESHOLD_VERSION
 from training.train_pooled_models import (
+    PooledResult,
     build_pooled_examples,
     pooled_chronological_split,
     pooled_walk_forward_folds,
+    upload_and_register,
 )
 
 
@@ -110,6 +112,36 @@ def test_lightgbm_portable_tree_matches_native_predictions():
     assert portable == pytest.approx(model.predict(X[:50]), abs=1e-10, rel=1e-10)
 
 
+def test_residual_lightgbm_portable_tree_applies_persistence_transform():
+    rng = np.random.default_rng(123)
+    X = rng.normal(size=(250, 5))
+    X[:, 0] = rng.uniform(5.0, 80.0, size=len(X))
+    residual = 0.4 * X[:, 1] - 0.2 * X[:, 2]
+    model = lgb.LGBMRegressor(
+        n_estimators=40,
+        max_depth=4,
+        random_state=42,
+        verbose=-1,
+    ).fit(X, residual)
+    correction_weight = 0.45
+    artifact = decode_artifact(encode_artifact(export_lightgbm_regressor(
+        model,
+        ["pm25_mean", "f1", "f2", "f3", "f4"],
+        feature_version="test-v2",
+        prediction_transform={
+            "kind": "persistence_residual_blend",
+            "persistence_feature": "pm25_mean",
+            "correction_weight": correction_weight,
+        },
+    )))
+    expected = X[:50, 0] + correction_weight * model.predict(X[:50])
+    portable = np.asarray([
+        evaluate_lightgbm_regressor(row, artifact)
+        for row in X[:50]
+    ])
+    assert portable == pytest.approx(expected, abs=1e-10, rel=1e-10)
+
+
 def test_random_forest_portable_tree_matches_native_probabilities():
     rng = np.random.default_rng(7)
     X = rng.normal(size=(250, 4))
@@ -187,3 +219,94 @@ def test_random_forest_portable_traversal_matches_sklearn_float32_boundary():
 
 def test_runtime_artifacts_are_not_checked_into_git():
     assert "training/artifacts" in Path(".gitignore").read_text()
+
+
+def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_path):
+    artifacts = {"regression": {}, "classification": {}}
+    province_ids = ("TH-30", "TH-31")
+    for province_id in province_ids:
+        target = tmp_path / province_id
+        target.mkdir()
+        native = target / "model.joblib"
+        runtime = target / "runtime.json.gz"
+        native.write_bytes(f"native-{province_id}".encode())
+        runtime.write_bytes(f"runtime-{province_id}".encode())
+        artifacts["regression"][province_id] = {
+            "native_path": native,
+            "runtime_path": runtime,
+            "native_sha256": "a" * 64,
+            "runtime_sha256": "b" * 64,
+        }
+    classifier_dir = tmp_path / "pooled"
+    classifier_dir.mkdir()
+    classifier_native = classifier_dir / "model.joblib"
+    classifier_runtime = classifier_dir / "runtime.json.gz"
+    classifier_native.write_bytes(b"native-classifier")
+    classifier_runtime.write_bytes(b"runtime-classifier")
+    artifacts["classification"]["pooled"] = {
+        "native_path": classifier_native,
+        "runtime_path": classifier_runtime,
+        "native_sha256": "c" * 64,
+        "runtime_sha256": "d" * 64,
+    }
+    registry_rows = [
+        {"province_id": province_id, "task_type": task_type}
+        for province_id in province_ids
+        for task_type in ("regression", "classification")
+    ]
+    result = PooledResult(
+        "00000000-0000-0000-0000-000000000001",
+        province_ids,
+        None,
+        None,
+        None,
+        registry_rows,
+        {},
+    )
+
+    class Response:
+        def execute(self):
+            return self
+
+    class Bucket:
+        def __init__(self, uploads):
+            self.uploads = uploads
+
+        def upload(self, remote, handle, options):
+            self.uploads.append((remote, handle.read(), options))
+            return Response()
+
+    class Storage:
+        def __init__(self, uploads):
+            self.uploads = uploads
+
+        def from_(self, name):
+            assert name == "model-artifacts"
+            return Bucket(self.uploads)
+
+    class Client:
+        def __init__(self):
+            self.uploads = []
+            self.rpc_calls = []
+            self.storage = Storage(self.uploads)
+
+        def rpc(self, name, arguments):
+            self.rpc_calls.append((name, arguments))
+            return Response()
+
+    client = Client()
+    upload_and_register(client, result, artifacts, activate=True)
+
+    assert len(client.uploads) == 6
+    assert client.rpc_calls[0] == ("fn_upsert_model_registry", {"rows": registry_rows})
+    assert client.rpc_calls[1] == (
+        "fn_activate_pooled_dual_model_run",
+        {
+            "p_run_id": result.run_id,
+            "p_required_provinces": len(province_ids),
+        },
+    )
+    assert len(client.rpc_calls) == 2
+    assert all(row["runtime_artifact_uri"].startswith("storage://model-artifacts/") for row in registry_rows)
+    assert len({row["runtime_artifact_uri"] for row in registry_rows if row["task_type"] == "regression"}) == 2
+    assert len({row["runtime_artifact_uri"] for row in registry_rows if row["task_type"] == "classification"}) == 1

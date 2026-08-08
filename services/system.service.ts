@@ -77,7 +77,9 @@ export async function getModelStatuses(): Promise<ModelStatus[]> {
     const serving = usesMeanFallback ? null : active;
     const lifecycle = (row: typeof active): ModelStatus["activeLifecycle"] => {
       if (!row) return "fallback";
-      return row.model_version === "pooled-dual-pm25-v1"
+      return ["pooled-dual-pm25-v1", "residual-dual-pm25-v2"].includes(
+        row.model_version ?? "",
+      )
         && row.evidence_status === "validated"
         && row.eligibility_status === true
         ? "validated"

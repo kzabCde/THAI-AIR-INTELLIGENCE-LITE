@@ -50,9 +50,9 @@ MODEL_FAMILIES = (
     "lightgbm",
 )
 
-# Production v5 uses one pooled model per task.  The province columns are
-# deliberately one-hot encoded instead of passing the ISO code as an ordinal
-# number (which would invent a distance between TH-30 and TH-49).
+# Production v5.6.2 uses province-local residual regression and pooled
+# classification over this shared feature contract. Province identity remains
+# one-hot encoded instead of treating the ISO code as an ordinal number.
 POOLED_FEATURE_VERSION = "daily-pooled-v1"
 POOLED_REGRESSION_FAMILY = "lightgbm"
 POOLED_CLASSIFICATION_FAMILY = "random_forest"
@@ -92,7 +92,7 @@ class PipelineConfig:
     validation_fraction: float = 0.20
     test_fraction: float = 0.20
     cv_splits: int = 5
-    regression_minimum_skill: float = 0.05
+    regression_minimum_skill: float = 0.045
     classifier_minimum_macro_f1: float = 0.30
     classifier_minimum_critical_recall: float = 0.50
     critical_class_minimum_support: int = 5

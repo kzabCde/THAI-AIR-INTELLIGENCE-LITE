@@ -67,6 +67,20 @@ const pooledMigration = readFileSync(
   ),
   "utf8",
 );
+const portableActivationMigration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260808055329_portable_pooled_activation_contract.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const atomicDualActivationMigration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260808055645_atomic_dual_pooled_activation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const pooledTrainer = readFileSync(
   new URL("../training/train_pooled_models.py", import.meta.url),
   "utf8",
@@ -292,11 +306,15 @@ test("technical operations tables are service-role only", () => {
   }
 });
 
-test("v5 trains exactly one pooled family per task", () => {
+test("v5.6.2 trains local residual regressors and one pooled classifier", () => {
   assert.match(pooledTrainer, /POOLED_REGRESSION_FAMILY/);
   assert.match(pooledTrainer, /POOLED_CLASSIFICATION_FAMILY/);
   assert.match(pooledTrainer, /LGBMRegressor/);
   assert.match(pooledTrainer, /RandomForestClassifier/);
+  assert.match(pooledTrainer, /target_pm25.*pm25_mean/);
+  assert.match(pooledTrainer, /correction_weight/);
+  assert.match(pooledTrainer, /prediction_transform/);
+  assert.match(pooledTrainer, /fn_activate_pooled_dual_model_run/);
   assert.doesNotMatch(pooledTrainer, /AdaBoost|XGBRegressor|CatBoost/);
   assert.match(pooledTrainer, /same_date_same_partition/);
   assert.match(pooledTrainer, /embargo_days/);
@@ -341,4 +359,33 @@ test("v5 migration keeps runtime artifacts private and activation separate", () 
     /revoke all on function public\.fn_upsert_model_registry\(jsonb\)[\s\S]+from public, anon, authenticated/i,
   );
   assert.doesNotMatch(pooledMigration, /fn_activate_model_task\s*\(/);
+});
+
+test("v5.6.2 activation accepts exact portable artifacts and stays service-only", () => {
+  assert.match(portableActivationMigration, /fn_activate_pooled_model_run/);
+  assert.match(portableActivationMigration, /serving_portable/);
+  assert.match(portableActivationMigration, /runtime_artifact_sha256/);
+  assert.match(
+    portableActivationMigration,
+    /revoke all on function public\.fn_activate_pooled_model_run[\s\S]+from public, anon, authenticated/i,
+  );
+  assert.match(
+    portableActivationMigration,
+    /grant execute on function public\.fn_activate_pooled_model_run[\s\S]+to service_role/i,
+  );
+});
+
+test("v5.6.2 dual activation promotes both tasks in one transaction", () => {
+  assert.match(atomicDualActivationMigration, /pg_advisory_xact_lock/);
+  assert.match(atomicDualActivationMigration, /'regression'/);
+  assert.match(atomicDualActivationMigration, /'classification'/);
+  assert.match(atomicDualActivationMigration, /activated_rows/);
+  assert.match(
+    atomicDualActivationMigration,
+    /revoke all on function public\.fn_activate_pooled_dual_model_run[\s\S]+from public, anon, authenticated/i,
+  );
+  assert.match(
+    atomicDualActivationMigration,
+    /grant execute on function public\.fn_activate_pooled_dual_model_run[\s\S]+to service_role/i,
+  );
 });

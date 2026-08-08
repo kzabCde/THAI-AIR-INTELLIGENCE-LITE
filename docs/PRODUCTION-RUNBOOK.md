@@ -30,9 +30,9 @@ and defaults to dry-run.
    registry artifact.
 
 The Production migration inventory is pinned in
-`supabase/production-migration-baseline.json`. As of 30 July 2026 it contains
-all 73 remote identifiers through
-`20260730154307_reconcile_runtime_contract_history`. The forward history represented in this
+`supabase/production-migration-baseline.json`. As of 8 August 2026 it contains
+all 76 remote identifiers through
+`20260808055645_atomic_dual_pooled_activation`. The forward history represented in this
 repository starts at `20260718084717`; every SQL file in
 `supabase/migrations` must have the same version and name as its Production
 record.
@@ -125,8 +125,10 @@ execution (`REGISTER = False`, `ACTIVATE = False`), and requires only
 `train_all_6_models_pm25.ipynb` notebook is a legacy comparison/rollback aid;
 it is not the production pooled training path.
 
-Registration uploads immutable native and exact portable tree artifacts and always inserts candidates
-inactive. Activation is a separate RPC gate. Classifiers cannot activate
+Registration uploads 20 immutable province-local residual LightGBM artifact
+pairs and one pooled Random Forest artifact pair, and always inserts candidates
+inactive. Activation is one atomic dual-task RPC gate. Regression requires at
+least 4.5% D+1 skill versus persistence globally and in every province. Classifiers cannot activate
 without fixed-five-class pooled metrics and at least five final-test samples in
 both critical classes. The GitHub workflow defaults to dry-run; `shadow` writes
 artifacts and summaries without changing the registry.

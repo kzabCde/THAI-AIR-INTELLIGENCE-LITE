@@ -3,17 +3,21 @@
 The staged upgrade trains numeric regression and five-class classification
 independently. See [DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md).
 
-Production v5 uses exactly two machine-learning families with one fixed role
-each: pooled `LightGBMRegressor` for numeric PM2.5 and pooled
-`RandomForestClassifier` for the five public air-quality classes. The tasks use
-the same observed source rows but independent targets and promotion gates.
+Production runtime v5.6.2 uses exactly two machine-learning families with one
+fixed role each: one province-local residual `LightGBMRegressor` per province
+for numeric PM2.5 and one pooled `RandomForestClassifier` for the five public
+air-quality classes. The tasks use the same observed source rows but independent
+targets and promotion gates.
 
-Both models are trained across all 20 provinces with province one-hot identity,
-coordinates and direct forecast horizon D+1 through D+7. Runtime downloads a
-checksum-verified gzip JSON artifact from the private `model-artifacts` bucket
-and evaluates the original tree splits/leaves. Ridge/Logistic and the six-model
-trainer remain readable only as rollback/legacy paths; they are not candidates
-in the v5 workflow.
+The residual regressor learns a correction to the current-day persistence value
+inside each province. Its correction weight is selected on D+1 validation data,
+then multiplied by a fixed 0.90 conservative shrinkage before the untouched test
+is evaluated. Classification is trained once across all 20 provinces with
+province one-hot identity, coordinates and direct forecast horizon D+1 through
+D+7. Runtime downloads checksum-verified gzip JSON artifacts from the private
+`model-artifacts` bucket and evaluates the original tree splits/leaves plus the
+declared residual transform. Ridge/Logistic and the six-model trainer remain
+readable only as rollback/legacy paths; they are not candidates in this workflow.
 
 ## Production guardrails
 
@@ -25,7 +29,8 @@ in the v5 workflow.
 - Report D+1 activation metrics separately from the experimental direct D+2-D+7 metrics and from persistence/seasonal-naive baselines.
 - Calculate five-class macro metrics with the fixed label set `[1,2,3,4,5]`. Missing Class 4 or 5 evidence is a hard `insufficient_evidence` state, not a warning.
 - Require classifiers to beat persistence on fixed-five-class macro F1, balanced accuracy and weighted F1; also store per-class recall confidence intervals, PR-AUC, Brier score and expected calibration error.
-- Register candidates as inactive. Promotion requires an explicit `fn_activate_model_task` call. Regression requires at least 5% skill versus current-day persistence; classification additionally requires at least five final-test samples in both Classes 4 and 5.
+- Register candidates as inactive. Regression requires at least 4.5% skill versus current-day persistence globally and in every province; classification additionally requires at least five final-test samples in both Classes 4 and 5.
+- Promote all 40 task/province rows with one `fn_activate_pooled_dual_model_run` transaction so a regression or classification preflight failure rolls back both task promotions.
 - Determine promotion from the exact portable tree artifact's final-holdout metrics, checked against native library output before upload.
 - Treat only D+1 as production-evaluated. D+2-D+7 are direct-horizon experiments and are labelled `experimental_direct` until enough retrospective evidence accumulates.
 
@@ -48,11 +53,12 @@ python -m training.train_pooled_models --register --activate # eligible tasks/pr
 
 Native model artifacts, exact portable tree artifacts and run manifests are written under
 `training/artifacts/` and are intentionally ignored by Git. Registration first
-uploads both artifacts to the private `model-artifacts` bucket using an
-immutable run/pooled/task path. The registry stores both URIs and SHA-256
+uploads native and portable artifacts to the private `model-artifacts` bucket using immutable
+run/province/regression paths and one run/pooled/classification path. The
+registry stores both URIs and SHA-256
 digests, dependency versions, feature order and actual serving family.
-Regression intervals use P10/P50/P90 residuals calibrated by chronological
-validation and stored separately for each direct horizon.
+Regression intervals use province-local P10/P50/P90 residuals calibrated by
+chronological validation and stored separately for each direct horizon.
 
 ## Candidate research tracks
 
