@@ -17,12 +17,17 @@ from api.ml.portable_trees import (
 )
 from training.dual_model_config import (
     FEATURE_COLUMNS,
+    POOLED_EMBARGO_DAYS,
     POOLED_FEATURE_COLUMNS,
+    POOLED_MINIMUM_ORIGIN_DAYS,
+    POOLED_TEST_DAYS,
+    POOLED_VALIDATION_DAYS,
     PipelineConfig,
 )
 from training.pm25_classes import THRESHOLD_VERSION
 from training.train_pooled_models import (
     PooledResult,
+    _record_global_eligibility_context,
     build_pooled_examples,
     pooled_chronological_split,
     pooled_walk_forward_folds,
@@ -74,20 +79,58 @@ def test_pooled_split_groups_dates_and_purges_horizon_overlap():
         {"province_id": "TH-31", "lat": 15.0, "lon": 103.1},
     ])
     split = pooled_chronological_split(
-        build_pooled_examples(observed_frame(), metadata),
-        PipelineConfig(minimum_rows=180),
+        build_pooled_examples(observed_frame(days=850), metadata),
+        PipelineConfig(minimum_rows=POOLED_MINIMUM_ORIGIN_DAYS),
     )
     assert set(split.train["date"]).isdisjoint(split.validation["date"])
     assert set(split.validation["date"]).isdisjoint(split.test["date"])
     assert split.train["target_date"].max() < split.validation["date"].min()
     assert split.validation["target_date"].max() < split.test["date"].min()
-    assert len(split.dropped_embargo_dates) == 14
+    assert split.validation["date"].nunique() == POOLED_VALIDATION_DAYS
+    assert split.test["date"].nunique() == POOLED_TEST_DAYS
+    assert len(split.dropped_embargo_dates) == 2 * POOLED_EMBARGO_DAYS
 
     folds = pooled_walk_forward_folds(split.train, 3)
     assert len(folds) == 3
     for fold_train, fold_validation in folds:
         assert set(fold_train["date"]).isdisjoint(fold_validation["date"])
         assert fold_train["target_date"].max() < fold_validation["date"].min()
+
+
+def test_pooled_split_rejects_less_than_full_production_history():
+    metadata = pd.DataFrame([
+        {"province_id": "TH-30", "lat": 14.9, "lon": 102.1},
+        {"province_id": "TH-31", "lat": 15.0, "lon": 103.1},
+    ])
+    examples = build_pooled_examples(observed_frame(days=500), metadata)
+
+    with pytest.raises(ValueError, match="validation=365, test=365, embargo=7x2"):
+        pooled_chronological_split(examples, PipelineConfig())
+
+
+def test_v5_6_2_default_critical_recall_is_035():
+    assert PipelineConfig().classifier_minimum_critical_recall == pytest.approx(0.35)
+
+
+def test_global_regression_gate_does_not_overwrite_local_eligibility():
+    province_metrics = {
+        "TH-30": {"eligible": True, "eligibility_reasons": ["eligible"]},
+        "TH-31": {
+            "eligible": False,
+            "eligibility_reasons": ["skill_below_threshold"],
+        },
+    }
+
+    _record_global_eligibility_context(province_metrics, global_eligible=False)
+
+    assert province_metrics["TH-30"]["eligible"] is True
+    assert province_metrics["TH-30"]["local_eligible"] is True
+    assert province_metrics["TH-31"]["eligible"] is False
+    assert province_metrics["TH-31"]["local_eligible"] is False
+    assert all(
+        metrics["global_gate_eligible"] is False
+        for metrics in province_metrics.values()
+    )
 
 
 def test_lightgbm_portable_tree_matches_native_predictions():

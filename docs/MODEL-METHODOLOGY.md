@@ -25,7 +25,7 @@ readable only as rollback/legacy paths; they are not candidates in this workflow
 - Use feature contract `daily-observed-v4`. Synthetic/mock/demo hotspot and FRP values are explicitly excluded until real FIRMS coverage has been backfilled and audited.
 - Exclude `synthetic`, `mock`, and `demo` sources from production accuracy metrics.
 - Keep all provinces from the same origin date in the same partition and purge seven dates between train/validation/test so a D+7 training target cannot overlap the next partition.
-- Select hyperparameters only on chronological validation data and reserve the latest 20% (at least 30 unique dates) as an untouched final test.
+- Select hyperparameters only on a fixed 365-origin-date chronological Validation window and reserve the latest 365 origin dates as untouched Test evidence, with a seven-day embargo on both boundaries. This requires at least 834 unique origin dates: 90 Train + 365 Validation + 365 Test + 14 purged dates.
 - Report D+1 activation metrics separately from the experimental direct D+2-D+7 metrics and from persistence/seasonal-naive baselines.
 - Calculate five-class macro metrics with the fixed label set `[1,2,3,4,5]`. Missing Class 4 or 5 evidence is a hard `insufficient_evidence` state, not a warning.
 - Require classifiers to beat persistence on fixed-five-class macro F1, balanced accuracy and weighted F1; also store per-class recall confidence intervals, PR-AUC, Brier score and expected calibration error.
