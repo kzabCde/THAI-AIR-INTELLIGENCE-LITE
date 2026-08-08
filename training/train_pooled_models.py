@@ -44,9 +44,14 @@ from training.dual_model_config import (
     POOLED_FEATURE_COLUMNS,
     POOLED_FEATURE_PROVENANCE,
     POOLED_FEATURE_VERSION,
+    POOLED_EMBARGO_DAYS,
+    POOLED_MINIMUM_ORIGIN_DAYS,
+    POOLED_MINIMUM_TRAINING_DAYS,
     POOLED_PROVINCE_COLUMNS,
     POOLED_PROVINCE_IDS,
     POOLED_REGRESSION_FAMILY,
+    POOLED_TEST_DAYS,
+    POOLED_VALIDATION_DAYS,
     PipelineConfig,
 )
 from training.pm25_classes import CLASS_IDS, THRESHOLD_VERSION, class_mapping, classes_for_pm25
@@ -112,8 +117,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--shadow", action="store_true", help="write artifacts and metrics without registry writes")
     parser.add_argument("--province", action="append", choices=POOLED_PROVINCE_IDS)
-    parser.add_argument("--min-rows", type=int, default=180, help="minimum unique origin dates")
-    parser.add_argument("--cv-splits", type=int, default=3)
+    parser.add_argument(
+        "--min-rows",
+        type=int,
+        default=POOLED_MINIMUM_ORIGIN_DAYS,
+        help="minimum unique origin dates (production policy: 834)",
+    )
+    parser.add_argument("--cv-splits", type=int, default=5)
     parser.add_argument("--artifact-dir", type=Path, default=Path("training/artifacts"))
     parser.add_argument("--allowed-source", action="append")
     args = parser.parse_args()
@@ -196,23 +206,28 @@ def pooled_chronological_split(
     examples: pd.DataFrame,
     config: PipelineConfig,
     *,
-    embargo_days: int = max(DIRECT_HORIZONS),
+    embargo_days: int = POOLED_EMBARGO_DAYS,
 ) -> PooledSplit:
     dates = pd.Index(sorted(pd.to_datetime(examples["date"]).unique()))
-    if len(dates) < config.minimum_rows:
-        raise ValueError(
-            f"insufficient unique origin dates: {len(dates)} < {config.minimum_rows}"
-        )
-    test_days = max(config.minimum_test_rows, round(len(dates) * config.test_fraction))
-    validation_days = max(
-        config.minimum_validation_rows,
-        round(len(dates) * config.validation_fraction),
+    required_dates = (
+        POOLED_MINIMUM_TRAINING_DAYS
+        + POOLED_VALIDATION_DAYS
+        + POOLED_TEST_DAYS
+        + 2 * embargo_days
     )
-    test_start = len(dates) - test_days
+    minimum_dates = max(config.minimum_rows, required_dates)
+    if len(dates) < minimum_dates:
+        raise ValueError(
+            f"insufficient unique origin dates: {len(dates)} < {minimum_dates} "
+            f"(train>={POOLED_MINIMUM_TRAINING_DAYS}, "
+            f"validation={POOLED_VALIDATION_DAYS}, test={POOLED_TEST_DAYS}, "
+            f"embargo={embargo_days}x2)"
+        )
+    test_start = len(dates) - POOLED_TEST_DAYS
     validation_end = test_start - embargo_days
-    validation_start = validation_end - validation_days
+    validation_start = validation_end - POOLED_VALIDATION_DAYS
     train_end = validation_start - embargo_days
-    if train_end < 90:
+    if train_end < POOLED_MINIMUM_TRAINING_DAYS:
         raise ValueError("purged chronological training split has fewer than 90 origin dates")
     train_dates = set(dates[:train_end])
     validation_dates = set(dates[validation_start:validation_end])
@@ -229,6 +244,10 @@ def pooled_chronological_split(
         raise ValueError("training target overlaps validation feature period")
     if split.validation["target_date"].max() >= split.test["date"].min():
         raise ValueError("validation target overlaps final-test feature period")
+    if split.validation["date"].nunique() != POOLED_VALIDATION_DAYS:
+        raise RuntimeError("validation split does not contain exactly 365 origin dates")
+    if split.test["date"].nunique() != POOLED_TEST_DAYS:
+        raise RuntimeError("test split does not contain exactly 365 origin dates")
     return split
 
 
@@ -312,6 +331,16 @@ def _temperature_scale(probabilities: np.ndarray, temperature: float) -> np.ndar
     logits -= logits.max(axis=1, keepdims=True)
     scaled = np.exp(logits)
     return scaled / scaled.sum(axis=1, keepdims=True)
+
+
+def _record_global_eligibility_context(
+    province_metrics: dict[str, dict],
+    global_eligible: bool,
+) -> None:
+    """Preserve province-local evidence while recording the aggregate gate."""
+    for metrics in province_metrics.values():
+        metrics["local_eligible"] = bool(metrics["eligible"])
+        metrics["global_gate_eligible"] = bool(global_eligible)
 
 
 def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
@@ -507,8 +536,7 @@ def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
     global_eligible = bool(aggregate_eligible and not failed_provinces)
     if failed_provinces:
         reasons = [*reasons, f"province_gate_failed:{','.join(failed_provinces)}"]
-    for metrics in province_metrics.values():
-        metrics["eligible"] = bool(global_eligible and metrics["eligible"])
+    _record_global_eligibility_context(province_metrics, global_eligible)
 
     residuals = y_validation - validation_predictions
     residual_quantiles: dict[str, dict[str, float]] = {}
@@ -704,7 +732,8 @@ def build_registry_rows(
     for province_id in province_ids:
         for task in (regression, classification):
             metrics = task.province_metrics[province_id]
-            eligible = bool(metrics["eligible"])
+            local_eligible = bool(metrics.get("local_eligible", metrics["eligible"]))
+            eligible = bool(task.global_eligible and local_eligible)
             name = REGRESSION_MODEL_NAME if task.task_type == "regression" else CLASSIFICATION_MODEL_NAME
             is_pooled = task.task_type == "classification"
             task_parameters = (
@@ -794,10 +823,16 @@ def build_registry_rows(
                 "eligibility_reason": (
                     "eligible"
                     if eligible
-                    else (
-                        ",".join(reason for reason in task.global_reasons if reason != "eligible")
-                        or "province_gate_failed"
+                    else ",".join(
+                        reason
+                        for reason in (
+                            metrics.get("eligibility_reasons", [])
+                            if not local_eligible
+                            else task.global_reasons
+                        )
+                        if reason != "eligible"
                     )
+                    or "province_gate_failed"
                 ),
                 "evidence_status": "validated" if eligible else ("insufficient_evidence" if task.task_type == "classification" else "ineligible"),
                 "is_active": False,

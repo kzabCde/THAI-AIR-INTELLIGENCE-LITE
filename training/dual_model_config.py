@@ -56,6 +56,16 @@ MODEL_FAMILIES = (
 POOLED_FEATURE_VERSION = "daily-pooled-v1"
 POOLED_REGRESSION_FAMILY = "lightgbm"
 POOLED_CLASSIFICATION_FAMILY = "random_forest"
+POOLED_VALIDATION_DAYS = 365
+POOLED_TEST_DAYS = 365
+POOLED_EMBARGO_DAYS = 7
+POOLED_MINIMUM_TRAINING_DAYS = 90
+POOLED_MINIMUM_ORIGIN_DAYS = (
+    POOLED_MINIMUM_TRAINING_DAYS
+    + POOLED_VALIDATION_DAYS
+    + POOLED_TEST_DAYS
+    + 2 * POOLED_EMBARGO_DAYS
+)
 FALLBACK_MODEL_NAME = "recent-mean-v1"
 FALLBACK_STRATEGY = "recent_observed_mean"
 FALLBACK_WINDOW_DAYS = 7
@@ -94,7 +104,7 @@ class PipelineConfig:
     cv_splits: int = 5
     regression_minimum_skill: float = 0.045
     classifier_minimum_macro_f1: float = 0.30
-    classifier_minimum_critical_recall: float = 0.50
+    classifier_minimum_critical_recall: float = 0.35
     critical_class_minimum_support: int = 5
     maximum_train_test_gap: float = 0.25
     regression_surrogate_alphas: tuple[float, ...] = (

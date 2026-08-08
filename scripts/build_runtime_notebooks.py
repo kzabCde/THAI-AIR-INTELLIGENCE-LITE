@@ -169,6 +169,7 @@ from training.dual_model_config import (
     POOLED_FEATURE_COLUMNS,
     POOLED_FEATURE_PROVENANCE,
     POOLED_FEATURE_VERSION,
+    POOLED_MINIMUM_ORIGIN_DAYS,
     POOLED_PROVINCE_IDS,
     PipelineConfig,
 )
@@ -206,7 +207,7 @@ CLASSIFICATION_DEPLOYMENT_THRESHOLDS = {{
     "critical_support": 5,
 }}
 config = PipelineConfig(
-    minimum_rows=180,
+    minimum_rows=POOLED_MINIMUM_ORIGIN_DAYS,
     minimum_validation_rows=FULL_YEAR_HOLDOUT_DAYS,
     minimum_test_rows=FULL_YEAR_HOLDOUT_DAYS,
     cv_splits=5,
@@ -234,6 +235,20 @@ else:
     selected_provinces = tuple(globals().get("selected_provinces", POOLED_PROVINCE_IDS))
 if "archive_audit" not in globals():
     raise RuntimeError("archive_audit is unavailable; rerun Cells 6-9")
+
+split_origin_dates = {{
+    "train": int(split.train["date"].nunique()),
+    "validation": int(split.validation["date"].nunique()),
+    "test": int(split.test["date"].nunique()),
+}}
+if split_origin_dates["validation"] != FULL_YEAR_HOLDOUT_DAYS:
+    raise RuntimeError(f"Validation must contain exactly 365 origin dates: {{split_origin_dates}}")
+if split_origin_dates["test"] != FULL_YEAR_HOLDOUT_DAYS:
+    raise RuntimeError(f"Test must contain exactly 365 origin dates: {{split_origin_dates}}")
+if len(split.dropped_embargo_dates) != 2 * POOLED_EMBARGO_DAYS:
+    raise RuntimeError(
+        f"Expected 14 embargo dates, found {{len(split.dropped_embargo_dates)}}"
+    )
 
 if "sb" not in globals():
     from google.colab import userdata
@@ -314,8 +329,16 @@ if classification_parity_max_abs_error > 1e-10 or not classification_decision_pa
 
 regression_eligible_provinces = sorted(
     province_id for province_id, metrics in regression.province_metrics.items()
-    if metrics["eligible"]
+    if metrics.get("local_eligible", metrics["eligible"])
 )
+regression_failed_provinces = sorted(
+    province_id for province_id, metrics in regression.province_metrics.items()
+    if not metrics.get("local_eligible", metrics["eligible"])
+)
+regression_failure_reasons = {{
+    province_id: list(regression.province_metrics[province_id].get("eligibility_reasons", []))
+    for province_id in regression_failed_provinces
+}}
 production_regression_gate = bool(
     regression.global_eligible
     and len(regression_eligible_provinces) == PRODUCTION_REQUIRED_PROVINCES
@@ -385,6 +408,9 @@ gate_summary = {{
     "regression": {{
         "eligible": production_regression_gate,
         "eligible_provinces": regression_eligible_provinces,
+        "failed_provinces": regression_failed_provinces,
+        "failure_reasons": regression_failure_reasons,
+        "global_reasons": list(regression.global_reasons),
         "required_skill": REGRESSION_MINIMUM_SKILL,
         "portable_parity_max_abs_error": regression_parity_max_abs_error,
         "portable_parity_by_province": regression_parity_errors,
@@ -399,11 +425,26 @@ gate_summary = {{
         "portable_parity_max_abs_error": classification_parity_max_abs_error,
         "decision_parity": classification_decision_parity,
     }},
+    "split_origin_dates": split_origin_dates,
+    "embargo_dates": len(split.dropped_embargo_dates),
     "dual_model_gate": production_dual_model_gate,
 }}
 print(json.dumps(_json_safe(gate_summary), ensure_ascii=False, indent=2))
 if not production_dual_model_gate:
-    raise RuntimeError("Production dual-model deployment gate failed; no Registry or activation write was made")
+    failures = []
+    if not production_regression_gate:
+        failures.append(
+            f"regression global={{regression.global_reasons}}, "
+            f"failed_provinces={{regression_failed_provinces}}, "
+            f"province_reasons={{regression_failure_reasons}}"
+        )
+    if not production_classification_gate:
+        failures.append(f"classification={{classification_deployment_reasons}}")
+    raise RuntimeError(
+        "Production dual-model deployment gate failed: "
+        + " | ".join(failures)
+        + "; no Registry or activation write was made"
+    )
 """,
     )
 
@@ -530,7 +571,7 @@ def update_safe_notebooks(approved_sha: str) -> None:
             f"""
 # Thai Air Intelligence — Residual PM2.5 Dual-Model Trainer{title_suffix}
 
-Canonical Google Colab workflow for the same Python pipeline used by GitHub Actions and Production: 20 province-local **LightGBMRegressor** artifacts learn corrections to current-day persistence, while one pooled **RandomForestClassifier** predicts the five air-quality classes. Both tasks use date-grouped chronological partitions, direct observed D+1 through D+7 targets, and a seven-day embargo. Regression correction weights are selected only on Validation, conservatively shrunk by 0.90, and frozen before Test.
+Canonical Google Colab workflow for the same Python pipeline used by GitHub Actions and Production: 20 province-local **LightGBMRegressor** artifacts learn corrections to current-day persistence, while one pooled **RandomForestClassifier** predicts the five air-quality classes. Both tasks use a fixed 365-origin-date Validation window, a fixed 365-origin-date Test window, direct observed D+1 through D+7 targets, and a seven-day embargo on both boundaries. Regression correction weights are selected only on Validation, conservatively shrunk by 0.90, and frozen before Test.
 
 Run every cell from top to bottom in a fresh Colab runtime. The notebook imports reviewed repository functions instead of maintaining a second copy of the training algorithm.
 
@@ -550,6 +591,19 @@ If regression training is ineligible or its serving artifact is unavailable, for
             ),
             f'APPROVED_CODE_SHA = "{approved_sha}"',
         )
+        configuration = configuration.replace(
+            "MINIMUM_ROWS = 180  # unique leakage-safe origin dates",
+            "MINIMUM_ROWS = 834  # 90 train + 365 validation + 365 test + 14 embargo",
+        )
+        configuration = configuration.replace("CV_SPLITS = 3", "CV_SPLITS = 5")
+        configuration = configuration.replace(
+            "if MINIMUM_ROWS < 180:",
+            "if MINIMUM_ROWS < 834:",
+        )
+        configuration = configuration.replace(
+            'raise ValueError("Do not lower MINIMUM_ROWS below the reviewed 180-day gate")',
+            'raise ValueError("Do not lower MINIMUM_ROWS below the reviewed 834-origin-date gate")',
+        )
         _set(notebook, "configuration", configuration)
         imports = "".join(_cell(notebook, "pipeline_imports")["source"])
         _set(
@@ -560,14 +614,28 @@ If regression training is ineligible or its serving artifact is unavailable, for
                 "# 5. Import the exact residual-regression and pooled-classification pipeline",
             ),
         )
-        regression = "".join(_cell(notebook, "train_regression")["source"])
         _set(
             notebook,
             "train_regression",
-            regression.replace(
-                "# 9. Train pooled LightGBM regression and evaluate untouched D+1 evidence",
-                "# 9. Train province-local residual LightGBM models and evaluate untouched D+1 evidence",
-            ),
+            """
+# 9. Train province-local residual LightGBM models and preserve local eligibility evidence
+regression = train_regression(split, config)
+print(json.dumps(_json_safe({
+    "model": REGRESSION_MODEL_NAME,
+    "global_eligible": regression.global_eligible,
+    "global_reasons": regression.global_reasons,
+    "validation_metrics": regression.validation_metrics,
+    "test_metrics": regression.test_metrics,
+}), ensure_ascii=False, indent=2))
+regression_by_province = pd.DataFrame([
+    {"province_id": province_id, **metrics}
+    for province_id, metrics in regression.province_metrics.items()
+]).sort_values("province_id")
+display(regression_by_province[[
+    "province_id", "mae", "rmse", "r2", "skill_vs_persistence",
+    "local_eligible", "global_gate_eligible", "eligibility_reasons",
+]])
+""",
         )
         artifacts = "".join(_cell(notebook, "artifacts")["source"])
         artifacts = artifacts.replace(
