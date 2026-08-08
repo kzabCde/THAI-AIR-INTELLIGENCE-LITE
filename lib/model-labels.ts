@@ -23,6 +23,7 @@ export const MODEL_LABELS: Record<string, string> = {
   "lightgbm-classifier": "LightGBM Classifier",
   "catboost-classifier": "CatBoost Classifier",
   "lightgbm-pm25-pooled-v1": "LightGBM พยากรณ์ PM2.5 แบบรวม 20 จังหวัด",
+  "lightgbm-pm25-residual-v2": "LightGBM พยากรณ์ PM2.5 แบบ Residual แยกรายจังหวัด",
   "random-forest-aqi-classifier-pooled-v1": "Random Forest จัดระดับคุณภาพอากาศแบบรวม 20 จังหวัด",
 };
 

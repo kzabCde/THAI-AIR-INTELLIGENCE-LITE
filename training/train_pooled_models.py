@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Train pooled LightGBM PM2.5 regression and Random Forest classification.
+"""Train residual LightGBM PM2.5 regressors and pooled RF classification.
 
 All provinces for the same origin date stay in the same chronological split.
 The targets are built directly from observed future PM2.5 for horizons D+1 to
-D+7.  Candidates are registered inactive; activation remains an explicit,
-per-task and per-province operation guarded by final-test evidence.
+D+7. Regression learns a province-specific correction to persistence and the
+classifier remains pooled across all provinces. Candidates are registered
+inactive; activation remains guarded by final-test evidence.
 """
 
 from __future__ import annotations
@@ -64,8 +65,8 @@ from training.train_dual_models import (
 )
 
 DIRECT_HORIZONS = tuple(range(1, 8))
-MODEL_VERSION = "pooled-dual-pm25-v1"
-REGRESSION_MODEL_NAME = "lightgbm-pm25-pooled-v1"
+MODEL_VERSION = "residual-dual-pm25-v2"
+REGRESSION_MODEL_NAME = "lightgbm-pm25-residual-v2"
 CLASSIFICATION_MODEL_NAME = "random-forest-aqi-classifier-pooled-v1"
 
 
@@ -314,109 +315,200 @@ def _temperature_scale(probabilities: np.ndarray, temperature: float) -> np.ndar
 
 
 def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
-    X_train, y_train = _xy(split.train, "target_pm25")
-    X_validation, y_validation = _xy(split.validation, "target_pm25")
-    cv_folds = pooled_walk_forward_folds(split.train, config.cv_splits)
-    candidates = (
-        {"num_leaves": 15, "max_depth": 5, "min_child_samples": 20},
-        {"num_leaves": 31, "max_depth": 7, "min_child_samples": 20},
-        {"num_leaves": 31, "max_depth": -1, "min_child_samples": 35},
-    )
-    best: tuple[tuple[float, float], dict, dict] | None = None
-    for candidate in candidates:
-        fold_metrics = []
-        fold_iterations = []
-        for fold_train, fold_validation in cv_folds:
-            X_fold_train, y_fold_train = _xy(fold_train, "target_pm25")
-            X_fold_validation, y_fold_validation = _xy(fold_validation, "target_pm25")
-            model = lgb.LGBMRegressor(
-                n_estimators=800,
-                learning_rate=0.03,
-                subsample=0.85,
-                colsample_bytree=0.85,
-                reg_lambda=1.0,
-                random_state=config.random_seed,
-                n_jobs=-1,
-                verbose=-1,
-                **candidate,
-            )
-            model.fit(
-                X_fold_train,
-                y_fold_train,
-                eval_set=[(X_fold_validation, y_fold_validation)],
-                callbacks=[lgb.early_stopping(50, verbose=False)],
-            )
-            prediction = model.predict(X_fold_validation)
-            metrics = regression_metrics(y_fold_validation, prediction)
-            _, baseline = _regression_baseline(fold_validation)
-            metrics["skill_vs_persistence"] = 1.0 - metrics["mae"] / baseline["mae"]
-            fold_metrics.append(metrics)
-            fold_iterations.append(int(model.best_iteration_ or 800))
-        cv_metrics = {
-            "folds": fold_metrics,
-            "mean_skill_vs_persistence": float(np.mean([row["skill_vs_persistence"] for row in fold_metrics])),
-            "mean_rmse": float(np.mean([row["rmse"] for row in fold_metrics])),
-        }
-        key = (cv_metrics["mean_skill_vs_persistence"], -cv_metrics["mean_rmse"])
-        if best is None or key > best[0]:
-            params = {**candidate, "cv_n_estimators_median": int(np.median(fold_iterations))}
-            best = (key, params, cv_metrics)
-    assert best is not None
-    parameters = best[1]
+    province_ids = sorted(split.train["province_id"].unique())
+    if province_ids != sorted(split.validation["province_id"].unique()) or province_ids != sorted(split.test["province_id"].unique()):
+        raise ValueError("regression provinces differ across chronological partitions")
 
-    validation_model = lgb.LGBMRegressor(
-        n_estimators=800,
-        learning_rate=0.03,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        reg_lambda=1.0,
-        random_state=config.random_seed,
-        n_jobs=-1,
-        verbose=-1,
-        **{key: parameters[key] for key in ("num_leaves", "max_depth", "min_child_samples")},
-    )
-    validation_model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_validation, y_validation)],
-        callbacks=[lgb.early_stopping(50, verbose=False)],
-    )
-    validation_predictions = np.asarray(validation_model.predict(X_validation), dtype=float)
+    fixed_parameters = {
+        "objective": "regression_l1",
+        "num_leaves": 31,
+        "max_depth": 7,
+        "min_child_samples": 30,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "reg_lambda": 2.0,
+        "learning_rate": 0.025,
+    }
+    validation_predictions = np.full(len(split.validation), np.nan, dtype=float)
+    test_predictions = np.full(len(split.test), np.nan, dtype=float)
+    models: dict[str, object] = {}
+    artifacts: dict[str, dict] = {}
+    province_metrics: dict[str, dict] = {}
+    parameters_by_province: dict[str, dict] = {}
+
+    for province_id in province_ids:
+        train_rows = split.train[split.train["province_id"] == province_id]
+        validation_rows = split.validation[split.validation["province_id"] == province_id]
+        test_rows = split.test[split.test["province_id"] == province_id]
+        X_train, y_train_raw = _xy(train_rows, "target_pm25")
+        X_validation, y_validation_raw = _xy(validation_rows, "target_pm25")
+        X_test, y_test = _xy(test_rows, "target_pm25")
+        baseline_train = train_rows["pm25_mean"].to_numpy(dtype=float)
+        baseline_validation = validation_rows["pm25_mean"].to_numpy(dtype=float)
+        baseline_test = test_rows["pm25_mean"].to_numpy(dtype=float)
+        y_train = y_train_raw - baseline_train
+        y_validation = y_validation_raw - baseline_validation
+
+        validation_model = lgb.LGBMRegressor(
+            n_estimators=1000,
+            random_state=config.random_seed,
+            n_jobs=-1,
+            verbose=-1,
+            **fixed_parameters,
+        )
+        validation_model.fit(
+            X_train,
+            y_train,
+            eval_set=[(X_validation, y_validation)],
+            callbacks=[lgb.early_stopping(80, verbose=False)],
+        )
+        raw_validation = np.asarray(validation_model.predict(X_validation), dtype=float)
+        d1_validation = validation_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+        selected_weight = max(
+            np.linspace(0.0, 1.5, 31),
+            key=lambda weight: (
+                1.0
+                - regression_metrics(
+                    y_validation_raw[d1_validation],
+                    baseline_validation[d1_validation] + float(weight) * raw_validation[d1_validation],
+                )["mae"]
+                / _regression_baseline(validation_rows.loc[d1_validation])[1]["mae"],
+                -regression_metrics(
+                    y_validation_raw[d1_validation],
+                    baseline_validation[d1_validation] + float(weight) * raw_validation[d1_validation],
+                )["mae"],
+            ),
+        )
+        correction_weight = float(selected_weight) * 0.90
+        local_validation_predictions = baseline_validation + correction_weight * raw_validation
+
+        fit_rows = pd.concat([train_rows, validation_rows], ignore_index=True)
+        X_fit, y_fit_raw = _xy(fit_rows, "target_pm25")
+        baseline_fit = fit_rows["pm25_mean"].to_numpy(dtype=float)
+        y_fit = y_fit_raw - baseline_fit
+        n_estimators = int(validation_model.best_iteration_ or 1000)
+        model = lgb.LGBMRegressor(
+            n_estimators=n_estimators,
+            random_state=config.random_seed,
+            n_jobs=-1,
+            verbose=-1,
+            **fixed_parameters,
+        ).fit(X_fit, y_fit)
+        raw_test = np.asarray(model.predict(X_test), dtype=float)
+        local_test_predictions = baseline_test + correction_weight * raw_test
+        artifact = export_lightgbm_regressor(
+            model,
+            POOLED_FEATURE_COLUMNS,
+            feature_version=POOLED_FEATURE_VERSION,
+            prediction_transform={
+                "kind": "persistence_residual_blend",
+                "persistence_feature": "pm25_mean",
+                "correction_weight": correction_weight,
+            },
+        )
+        portable = np.asarray(
+            [evaluate_lightgbm_regressor(row, artifact) for row in X_test[:100]],
+            dtype=float,
+        )
+        if not np.allclose(portable, local_test_predictions[:100], atol=1e-10, rtol=1e-10):
+            raise RuntimeError(
+                f"portable residual LightGBM artifact differs from native predictions for {province_id}"
+            )
+
+        validation_mask = split.validation["province_id"].to_numpy() == province_id
+        test_mask = split.test["province_id"].to_numpy() == province_id
+        validation_predictions[validation_mask] = local_validation_predictions
+        test_predictions[test_mask] = local_test_predictions
+        models[province_id] = model
+        artifacts[province_id] = artifact
+        parameters_by_province[province_id] = {
+            **fixed_parameters,
+            "n_estimators": n_estimators,
+            "validation_selected_correction_weight": float(selected_weight),
+            "correction_weight": correction_weight,
+            "selection_shrinkage": 0.90,
+            "target": "target_pm25_minus_pm25_mean",
+        }
+        local_residuals = y_validation_raw - local_validation_predictions
+        local_validation_horizons = validation_rows[
+            "forecast_horizon_days"
+        ].to_numpy(dtype=int)
+        parameters_by_province[province_id]["residual_quantiles_by_horizon"] = {
+            str(horizon): {
+                name: float(value)
+                for name, value in zip(
+                    ("p10", "p50", "p90"),
+                    np.quantile(
+                        local_residuals[local_validation_horizons == horizon],
+                        (0.10, 0.50, 0.90),
+                    ),
+                    strict=True,
+                )
+            }
+            for horizon in DIRECT_HORIZONS
+        }
+
+        d1_test = test_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+        local_test_metrics = regression_metrics(
+            y_test[d1_test],
+            local_test_predictions[d1_test],
+        )
+        _, local_baseline = _regression_baseline(test_rows.loc[d1_test])
+        local_test_metrics["skill_vs_persistence"] = (
+            1.0 - local_test_metrics["mae"] / local_baseline["mae"]
+        )
+        local_validation_metrics = regression_metrics(
+            y_validation_raw[d1_validation],
+            local_validation_predictions[d1_validation],
+        )
+        local_eligible, local_reasons = _regression_eligibility(
+            local_test_metrics,
+            local_baseline,
+            local_validation_metrics,
+            config,
+        )
+        local_test_metrics.update({
+            "eligible": bool(local_eligible),
+            "eligibility_reasons": local_reasons,
+            "baseline": local_baseline,
+            "validation": local_validation_metrics,
+            "correction_weight": correction_weight,
+        })
+        province_metrics[province_id] = local_test_metrics
+
+    if not np.all(np.isfinite(validation_predictions)) or not np.all(np.isfinite(test_predictions)):
+        raise RuntimeError("residual LightGBM did not produce complete predictions")
+
+    y_validation = split.validation["target_pm25"].to_numpy(dtype=float)
     validation_metrics = regression_metrics(y_validation, validation_predictions)
     _, validation_baseline = _regression_baseline(split.validation)
     validation_metrics["skill_vs_persistence"] = 1.0 - validation_metrics["mae"] / validation_baseline["mae"]
-    validation_metrics["rolling_cv"] = best[2]
-    parameters["n_estimators"] = int(validation_model.best_iteration_ or parameters["cv_n_estimators_median"])
-
-    fit_rows = pd.concat([split.train, split.validation], ignore_index=True)
-    X_fit, y_fit = _xy(fit_rows, "target_pm25")
-    model = lgb.LGBMRegressor(
-        n_estimators=parameters["n_estimators"],
-        learning_rate=0.03,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        reg_lambda=1.0,
-        random_state=config.random_seed,
-        n_jobs=-1,
-        verbose=-1,
-        **{key: parameters[key] for key in ("num_leaves", "max_depth", "min_child_samples")},
-    ).fit(X_fit, y_fit)
-    X_test, y_test = _xy(split.test, "target_pm25")
-    predictions = np.asarray(model.predict(X_test), dtype=float)
-    test_all = regression_metrics(y_test, predictions)
+    validation_metrics["selection"] = "per-province validation grid with 0.90 shrinkage"
+    y_test = split.test["target_pm25"].to_numpy(dtype=float)
+    test_all = regression_metrics(y_test, test_predictions)
     d1_mask = split.test["forecast_horizon_days"].to_numpy(dtype=int) == 1
     d1_rows = split.test.loc[d1_mask]
-    d1_metrics = regression_metrics(y_test[d1_mask], predictions[d1_mask])
+    d1_metrics = regression_metrics(y_test[d1_mask], test_predictions[d1_mask])
     _, baseline_d1 = _regression_baseline(d1_rows)
     d1_metrics["skill_vs_persistence"] = 1.0 - d1_metrics["mae"] / baseline_d1["mae"]
     d1_metrics["all_horizons"] = test_all
-    d1_metrics["by_horizon"] = _metrics_by_horizon(split.test, predictions, task="regression")
-    eligible, reasons = _regression_eligibility(
+    d1_metrics["by_horizon"] = _metrics_by_horizon(split.test, test_predictions, task="regression")
+    aggregate_eligible, reasons = _regression_eligibility(
         d1_metrics,
         baseline_d1,
         validation_metrics,
         config,
     )
+    failed_provinces = [
+        province_id
+        for province_id, metrics in province_metrics.items()
+        if not metrics["eligible"]
+    ]
+    global_eligible = bool(aggregate_eligible and not failed_provinces)
+    if failed_provinces:
+        reasons = [*reasons, f"province_gate_failed:{','.join(failed_provinces)}"]
+    for metrics in province_metrics.values():
+        metrics["eligible"] = bool(global_eligible and metrics["eligible"])
 
     residuals = y_validation - validation_predictions
     residual_quantiles: dict[str, dict[str, float]] = {}
@@ -427,43 +519,21 @@ def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
             name: float(value)
             for name, value in zip(("p10", "p50", "p90"), np.quantile(values, (0.10, 0.50, 0.90)), strict=True)
         }
-    artifact = export_lightgbm_regressor(
-        model,
-        POOLED_FEATURE_COLUMNS,
-        feature_version=POOLED_FEATURE_VERSION,
-    )
-    portable = np.asarray(
-        [evaluate_lightgbm_regressor(row, artifact) for row in X_test[:100]],
-        dtype=float,
-    )
-    if not np.allclose(portable, predictions[:100], atol=1e-10, rtol=1e-10):
-        raise RuntimeError("portable LightGBM artifact differs from native predictions")
-
-    province_metrics: dict[str, dict] = {}
-    for province_id in sorted(d1_rows["province_id"].unique()):
-        mask = d1_mask & (split.test["province_id"].to_numpy() == province_id)
-        metrics = regression_metrics(y_test[mask], predictions[mask])
-        _, baseline = _regression_baseline(split.test.loc[mask])
-        metrics["skill_vs_persistence"] = 1.0 - metrics["mae"] / baseline["mae"]
-        metrics["eligible"] = bool(
-            eligible
-            and metrics["test_rows"] >= config.minimum_test_rows
-            and metrics["skill_vs_persistence"] >= config.regression_minimum_skill
-            and metrics["mae"] < baseline["mae"]
-        )
-        metrics["baseline"] = baseline
-        province_metrics[province_id] = metrics
     return TrainedTask(
         "regression",
         POOLED_REGRESSION_FAMILY,
-        model,
+        models,
         validation_metrics,
         d1_metrics,
         baseline_d1,
-        parameters,
-        artifact,
+        {
+            "strategy": "per_province_residual_lightgbm",
+            "fixed_hyperparameters": fixed_parameters,
+            "by_province": parameters_by_province,
+        },
+        artifacts,
         residual_quantiles,
-        eligible,
+        global_eligible,
         reasons,
         province_metrics,
     )
@@ -636,6 +706,12 @@ def build_registry_rows(
             metrics = task.province_metrics[province_id]
             eligible = bool(metrics["eligible"])
             name = REGRESSION_MODEL_NAME if task.task_type == "regression" else CLASSIFICATION_MODEL_NAME
+            is_pooled = task.task_type == "classification"
+            task_parameters = (
+                task.parameters["by_province"][province_id]
+                if task.task_type == "regression"
+                else task.parameters
+            )
             model_params = {
                 "task_type": task.task_type,
                 "teacher_model_family": task.family,
@@ -644,9 +720,13 @@ def build_registry_rows(
                 "feature_cols": list(POOLED_FEATURE_COLUMNS),
                 "feature_version": POOLED_FEATURE_VERSION,
                 "feature_provenance": POOLED_FEATURE_PROVENANCE,
-                "pooled_model": True,
-                "pool_provinces": list(province_ids),
-                "target_strategy": "direct_observed_horizon",
+                "pooled_model": is_pooled,
+                "pool_provinces": list(province_ids) if is_pooled else [province_id],
+                "target_strategy": (
+                    "direct_residual_from_persistence"
+                    if task.task_type == "regression"
+                    else "direct_observed_horizon"
+                ),
                 "trained_horizons": list(DIRECT_HORIZONS),
                 "validated_horizons": [1],
                 "fallback": {
@@ -655,14 +735,18 @@ def build_registry_rows(
                     "window_days": FALLBACK_WINDOW_DAYS,
                     "trigger": "no_eligible_active_regressor_or_invalid_artifact",
                 },
-                "hyperparameters": task.parameters,
+                "hyperparameters": task_parameters,
                 "global_test_metrics": task.test_metrics,
                 "province_test_metrics": metrics,
                 "audit": audit,
             }
             if task.task_type == "regression":
-                model_params["residual_quantiles_by_horizon"] = task.residual_quantiles_by_horizon
-                model_params["residual_quantiles"] = task.residual_quantiles_by_horizon["1"]
+                local_quantiles = task_parameters["residual_quantiles_by_horizon"]
+                model_params["residual_quantiles_by_horizon"] = local_quantiles
+                model_params["residual_quantiles"] = local_quantiles["1"]
+                model_params["correction_weight"] = task_parameters[
+                    "correction_weight"
+                ]
             else:
                 model_params["threshold_version"] = THRESHOLD_VERSION
                 model_params["class_mapping"] = class_mapping()
@@ -676,7 +760,11 @@ def build_registry_rows(
                 "teacher_model_family": task.family,
                 "serving_model_family": task.family,
                 "model_version": MODEL_VERSION,
-                "artifact_ref": f"artifacts/{run_id}/pooled/{task.task_type}/model.joblib",
+                "artifact_ref": (
+                    f"artifacts/{run_id}/{province_id}/regression/model.joblib"
+                    if task.task_type == "regression"
+                    else f"artifacts/{run_id}/pooled/classification/model.joblib"
+                ),
                 "feature_schema": {"columns": list(POOLED_FEATURE_COLUMNS), "ordered": True, "count": len(POOLED_FEATURE_COLUMNS)},
                 "feature_version": POOLED_FEATURE_VERSION,
                 "threshold_version": THRESHOLD_VERSION,
@@ -686,8 +774,16 @@ def build_registry_rows(
                 "validation_end": validation_end,
                 "test_start": test_start,
                 "test_end": test_end,
-                "training_rows": len(split.train),
-                "validation_rows": len(split.validation),
+                "training_rows": (
+                    int((split.train["province_id"] == province_id).sum())
+                    if task.task_type == "regression"
+                    else len(split.train)
+                ),
+                "validation_rows": (
+                    int((split.validation["province_id"] == province_id).sum())
+                    if task.task_type == "regression"
+                    else len(split.validation)
+                ),
                 "test_rows": metrics["test_rows"],
                 "metrics": metrics,
                 "baseline_metrics": metrics["baseline"],
@@ -729,49 +825,75 @@ def _versions() -> dict[str, str]:
 def save_artifacts(result: PooledResult, root: Path, config: PipelineConfig) -> dict[str, dict]:
     output: dict[str, dict] = {}
     for task in (result.regression, result.classification):
-        target = root / result.run_id / "pooled" / task.task_type
-        target.mkdir(parents=True, exist_ok=True)
-        native_path = target / "model.joblib"
-        runtime_path = target / "runtime.json.gz"
-        joblib.dump(task.model, native_path)
-        runtime_payload = encode_artifact(task.runtime_artifact)
-        runtime_path.write_bytes(runtime_payload)
-        native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
-        runtime_sha = hashlib.sha256(runtime_payload).hexdigest()
-        metadata = {
-            "run_id": result.run_id,
-            "task_type": task.task_type,
-            "model_family": task.family,
-            "model_version": MODEL_VERSION,
-            "feature_version": POOLED_FEATURE_VERSION,
-            "features": list(POOLED_FEATURE_COLUMNS),
-            "metrics": task.test_metrics,
-            "baseline_metrics": task.baseline_metrics,
-            "province_metrics": task.province_metrics,
-            "global_eligibility": {"eligible": task.global_eligible, "reasons": task.global_reasons},
-            "native_artifact_sha256": native_sha,
-            "runtime_artifact_sha256": runtime_sha,
-            "libraries": _versions(),
-            "python": sys.version.split()[0],
-            "git_sha": _git_sha(),
-            "configuration": {
-                "minimum_origin_dates": config.minimum_rows,
-                "cv_splits": config.cv_splits,
-                "fallback": {
-                    "model_name": FALLBACK_MODEL_NAME,
-                    "strategy": config.fallback_strategy,
-                    "window_days": config.fallback_window_days,
+        if task.task_type == "regression":
+            entries = [
+                (
+                    province_id,
+                    task.model[province_id],
+                    task.runtime_artifact[province_id],
+                    root / result.run_id / province_id / "regression",
+                )
+                for province_id in result.province_ids
+            ]
+        else:
+            entries = [(
+                "pooled",
+                task.model,
+                task.runtime_artifact,
+                root / result.run_id / "pooled" / "classification",
+            )]
+        output[task.task_type] = {}
+        for artifact_key, native_model, runtime_artifact, target in entries:
+            target.mkdir(parents=True, exist_ok=True)
+            native_path = target / "model.joblib"
+            runtime_path = target / "runtime.json.gz"
+            joblib.dump(native_model, native_path)
+            runtime_payload = encode_artifact(runtime_artifact)
+            runtime_path.write_bytes(runtime_payload)
+            native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
+            runtime_sha = hashlib.sha256(runtime_payload).hexdigest()
+            metadata = {
+                "run_id": result.run_id,
+                "artifact_key": artifact_key,
+                "task_type": task.task_type,
+                "model_family": task.family,
+                "model_version": MODEL_VERSION,
+                "feature_version": POOLED_FEATURE_VERSION,
+                "features": list(POOLED_FEATURE_COLUMNS),
+                "global_metrics": task.test_metrics,
+                "baseline_metrics": task.baseline_metrics,
+                "province_metrics": (
+                    task.province_metrics.get(artifact_key)
+                    if artifact_key != "pooled"
+                    else task.province_metrics
+                ),
+                "global_eligibility": {"eligible": task.global_eligible, "reasons": task.global_reasons},
+                "native_artifact_sha256": native_sha,
+                "runtime_artifact_sha256": runtime_sha,
+                "libraries": _versions(),
+                "python": sys.version.split()[0],
+                "git_sha": _git_sha(),
+                "configuration": {
+                    "minimum_origin_dates": config.minimum_rows,
+                    "classification_cv_splits": config.cv_splits,
+                    "fallback": {
+                        "model_name": FALLBACK_MODEL_NAME,
+                        "strategy": config.fallback_strategy,
+                        "window_days": config.fallback_window_days,
+                    },
                 },
-            },
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        (target / "metadata.json").write_text(json.dumps(_json_safe(metadata), ensure_ascii=False, indent=2), encoding="utf-8")
-        output[task.task_type] = {
-            "native_path": native_path,
-            "runtime_path": runtime_path,
-            "native_sha256": native_sha,
-            "runtime_sha256": runtime_sha,
-        }
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            (target / "metadata.json").write_text(
+                json.dumps(_json_safe(metadata), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            output[task.task_type][artifact_key] = {
+                "native_path": native_path,
+                "runtime_path": runtime_path,
+                "native_sha256": native_sha,
+                "runtime_sha256": runtime_sha,
+            }
     return output
 
 
@@ -784,40 +906,44 @@ def upload_and_register(
 ) -> None:
     bucket = sb.storage.from_("model-artifacts")
     dependency_lock = _versions()
-    for task_type, paths in artifacts.items():
-        base = f"{result.run_id}/pooled/{task_type}"
-        native_remote = f"{base}/model.joblib"
-        runtime_remote = f"{base}/runtime.json.gz"
-        with paths["native_path"].open("rb") as handle:
-            bucket.upload(native_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
-        with paths["runtime_path"].open("rb") as handle:
-            bucket.upload(runtime_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
-        for row in result.registry_rows:
-            if row["task_type"] != task_type:
-                continue
-            row.update({
-                "artifact_uri": f"storage://model-artifacts/{native_remote}",
-                "artifact_sha256": paths["native_sha256"],
-                "artifact_byte_size": paths["native_path"].stat().st_size,
-                "artifact_content_type": "application/octet-stream",
-                "runtime_artifact_uri": f"storage://model-artifacts/{runtime_remote}",
-                "runtime_artifact_sha256": paths["runtime_sha256"],
-                "runtime_artifact_byte_size": paths["runtime_path"].stat().st_size,
-                "runtime_artifact_format": "json+gzip",
-                "dependency_lock": dependency_lock,
-            })
+    for task_type, task_artifacts in artifacts.items():
+        for artifact_key, paths in task_artifacts.items():
+            base = (
+                f"{result.run_id}/{artifact_key}/regression"
+                if task_type == "regression"
+                else f"{result.run_id}/pooled/classification"
+            )
+            native_remote = f"{base}/model.joblib"
+            runtime_remote = f"{base}/runtime.json.gz"
+            with paths["native_path"].open("rb") as handle:
+                bucket.upload(native_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
+            with paths["runtime_path"].open("rb") as handle:
+                bucket.upload(runtime_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
+            for row in result.registry_rows:
+                if row["task_type"] != task_type:
+                    continue
+                if task_type == "regression" and row["province_id"] != artifact_key:
+                    continue
+                row.update({
+                    "artifact_uri": f"storage://model-artifacts/{native_remote}",
+                    "artifact_sha256": paths["native_sha256"],
+                    "artifact_byte_size": paths["native_path"].stat().st_size,
+                    "artifact_content_type": "application/octet-stream",
+                    "runtime_artifact_uri": f"storage://model-artifacts/{runtime_remote}",
+                    "runtime_artifact_sha256": paths["runtime_sha256"],
+                    "runtime_artifact_byte_size": paths["runtime_path"].stat().st_size,
+                    "runtime_artifact_format": "json+gzip",
+                    "dependency_lock": dependency_lock,
+                })
     sb.rpc("fn_upsert_model_registry", {"rows": result.registry_rows}).execute()
     if activate:
-        for row in result.registry_rows:
-            if not row["eligibility_status"]:
-                continue
-            sb.rpc("fn_activate_model_task", {
-                "p_province_id": row["province_id"],
-                "p_task_type": row["task_type"],
-                "p_model_name": row["model_name"],
-                "p_run_id": row["run_id"],
-                "p_allow_ineligible": False,
-            }).execute()
+        sb.rpc(
+            "fn_activate_pooled_dual_model_run",
+            {
+                "p_run_id": result.run_id,
+                "p_required_provinces": len(result.province_ids),
+            },
+        ).execute()
 
 
 def main() -> int:
@@ -842,7 +968,7 @@ def main() -> int:
     classification = train_classification(split, config)
     run_id = str(uuid.uuid4())
     audit = {
-        "strategy": "pooled_purged_chronological_direct_horizon",
+        "strategy": "pooled_split_local_residual_regression_and_pooled_classification",
         "pool_provinces": list(province_ids),
         "feature_version": POOLED_FEATURE_VERSION,
         "feature_provenance": POOLED_FEATURE_PROVENANCE,

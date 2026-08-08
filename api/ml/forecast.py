@@ -51,7 +51,8 @@ OBSERVED_VIEW = "training_daily_summary_v2"
 STACKING_MODEL = "stacking-v2"
 SURROGATE_MODEL = "surrogate-v2"
 ENSEMBLE6_MODEL = "ensemble6-pm25-v3"
-POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-pooled-v1"
+LEGACY_POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-pooled-v1"
+POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-residual-v2"
 POOLED_RF_CLASSIFIER = "random-forest-aqi-classifier-pooled-v1"
 LEGACY_PERSIST_MODEL = "persist-revert-v2"
 LEGACY_STACKING_MODEL = "stacking-v1"
@@ -1130,6 +1131,7 @@ class handler(BaseHTTPRequestHandler):
                 SURROGATE_MODEL,
                 ENSEMBLE6_MODEL,
                 STACKING_MODEL,
+                LEGACY_POOLED_LIGHTGBM_MODEL,
                 POOLED_LIGHTGBM_MODEL,
                 POOLED_RF_CLASSIFIER,
             ],

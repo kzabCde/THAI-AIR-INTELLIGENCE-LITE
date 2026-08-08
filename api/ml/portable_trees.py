@@ -44,13 +44,14 @@ def export_lightgbm_regressor(
     feature_cols: Iterable[str],
     *,
     feature_version: str,
+    prediction_transform: dict | None = None,
 ) -> dict:
     booster = model.booster_
     dump = booster.dump_model()
     trees = [item["tree_structure"] for item in dump.get("tree_info", [])]
     if not trees:
         raise ValueError("LightGBM model has no trees")
-    return {
+    artifact = {
         "artifact_schema": ARTIFACT_SCHEMA,
         "task_type": "regression",
         "model_family": "lightgbm",
@@ -60,6 +61,22 @@ def export_lightgbm_regressor(
         "num_trees": len(trees),
         "trees": trees,
     }
+    if prediction_transform is not None:
+        kind = prediction_transform.get("kind")
+        persistence_feature = prediction_transform.get("persistence_feature")
+        correction_weight = float(prediction_transform.get("correction_weight", math.nan))
+        if kind != "persistence_residual_blend":
+            raise ValueError("unsupported LightGBM prediction transform")
+        if persistence_feature not in artifact["feature_cols"]:
+            raise ValueError("LightGBM persistence feature is missing")
+        if not math.isfinite(correction_weight) or not 0.0 <= correction_weight <= 2.0:
+            raise ValueError("LightGBM correction weight must be within [0, 2]")
+        artifact["prediction_transform"] = {
+            "kind": kind,
+            "persistence_feature": persistence_feature,
+            "correction_weight": correction_weight,
+        }
+    return artifact
 
 
 def export_random_forest_classifier(
@@ -135,6 +152,19 @@ def evaluate_lightgbm_regressor(features: np.ndarray, artifact: dict) -> float:
         _lightgbm_tree_value(tree, vector)
         for tree in artifact.get("trees") or []
     )
+    transform = artifact.get("prediction_transform")
+    if transform is not None:
+        if transform.get("kind") != "persistence_residual_blend":
+            raise ValueError("unsupported LightGBM prediction transform")
+        persistence_feature = transform.get("persistence_feature")
+        feature_cols = artifact.get("feature_cols") or []
+        if persistence_feature not in feature_cols:
+            raise ValueError("LightGBM persistence feature is missing")
+        correction_weight = float(transform.get("correction_weight", math.nan))
+        if not math.isfinite(correction_weight) or not 0.0 <= correction_weight <= 2.0:
+            raise ValueError("invalid LightGBM correction weight")
+        persistence = float(vector[feature_cols.index(persistence_feature)])
+        prediction = persistence + correction_weight * prediction
     if not math.isfinite(prediction):
         raise ValueError("LightGBM artifact returned a non-finite prediction")
     return float(prediction)

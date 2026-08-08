@@ -1,8 +1,9 @@
 # PM2.5 Dual-Model Upgrade
 
-> This document describes the v4 transition. Production v5 supersedes its
-> six-teacher/Ridge/Logistic training path with pooled LightGBM regression and
-> pooled Random Forest classification. See [MODEL-METHODOLOGY.md](./MODEL-METHODOLOGY.md).
+> This document describes the v4 transition. Runtime v5.6.2 supersedes its
+> six-teacher/Ridge/Logistic training path with province-local residual LightGBM
+> regression and pooled Random Forest classification. See
+> [MODEL-METHODOLOGY.md](./MODEL-METHODOLOGY.md).
 
 ## Repository audit
 
@@ -21,7 +22,7 @@ paths, old-row compatibility, RLS, and service-role-only write RPCs.
 |---|---|---|
 | Training | Numeric next-day target | Independent regression and classification targets |
 | Registry | One active model per province | One active model per province and task |
-| Inference | Portable Ridge regression | Portable Ridge + temperature-calibrated portable logistic classification |
+| Inference | Portable Ridge regression | Exact portable residual LightGBM + temperature-calibrated exact portable Random Forest |
 | Storage | Numeric PM2.5 | Classes, probabilities, calibrated interval, horizon and fallback evidence |
 | API/UI | PM2.5-derived band | Direct class, confidence, probabilities and task metrics |
 | Operations | Manual backfill | Manual dry-run/register/forecast dual-model workflow |
@@ -32,11 +33,13 @@ The actual next-day PM2.5 value is the regression target. The five-class target
 is derived independently from that same actual future value; a regression
 prediction is never a classification training target.
 
-Each province evaluates Random Forest, AdaBoost, Gradient Boosting, XGBoost,
-LightGBM and CatBoost for both tasks. Regression selection prioritizes positive
-Skill Score versus persistence, then MAE and RMSE. Classification selection
-prioritizes Macro F1, critical-class Recall and Balanced Accuracy. Accuracy is
-reported but never used alone.
+Runtime v5.6.2 fits one LightGBM model per province to predict the residual
+`target_pm25 - pm25_mean`. A D+1 validation grid selects the correction weight;
+the selected weight receives a fixed 0.90 shrinkage and is then frozen before
+the final test. The Random Forest classifier stays pooled across all provinces.
+Regression selection prioritizes Skill Score versus persistence, then MAE and
+RMSE. Classification prioritizes Macro F1, critical-class Recall and Balanced
+Accuracy. Accuracy is reported but never used alone.
 
 ## PM2.5 class contract
 
@@ -87,23 +90,22 @@ expected calibration error, per-class PR-AUC, recall confidence intervals,
 support and confusion matrix. Missing Class 4/5 support is an automatic
 `insufficient_evidence` failure.
 
-Teacher models and production artifacts are evaluated separately. Selection
-compares all six teacher families, then tunes the lightweight artifact on the
-chronological validation split:
+The superseded v4 selection compared six teacher families, then tuned a
+lightweight artifact on the chronological validation split:
 
 - Ridge distillation searches regularization strength and a persistence blend.
 - Logistic classification searches regularization, partial class weighting,
   temperature scaling and a probability blend with the current-day PM2.5
   class.
-- Final eligibility uses the reloaded production artifact's holdout metrics,
-  because that artifact—not the heavy teacher—is what Vercel serves.
+- Final eligibility used the reloaded production artifact's holdout metrics.
 - Classification promotion requires macro F1, balanced accuracy and weighted
   F1 to beat persistence, so a rare-class gain cannot hide a material loss
   across the majority of forecast days.
 
-Registration never activates. `fn_activate_model_task` validates province,
-task, eligibility, feature schema and portable artifact atomically. Existing
-`fn_activate_model` remains a regression-only compatibility wrapper.
+Registration never activates. `fn_activate_pooled_dual_model_run` validates all
+20 regression artifacts and all 20 classifier registry rows before promoting
+both tasks in one database transaction. Existing single-task activation RPCs
+remain compatibility paths.
 
 ## Serving and fallback
 
@@ -129,16 +131,15 @@ delete the previous registry history.
 ## Artifacts
 
 ```text
-training/artifacts/<run_id>/<province_id>/
-  regression/
-    model.joblib
-    metadata.json
-    feature_schema.json
-  classification/
-    model.joblib
-    metadata.json
-    feature_schema.json
-    class_mapping.json
+training/artifacts/<run_id>/<province_id>/regression/
+  model.joblib
+  runtime.json.gz
+  metadata.json
+
+training/artifacts/<run_id>/pooled/classification/
+  model.joblib
+  runtime.json.gz
+  metadata.json
 ```
 
 Saved models are immediately reloaded for a sample prediction. Native artifacts
@@ -171,8 +172,9 @@ Use **Actions → PM2.5 Dual-Model Pipeline → Run workflow**.
 `forecast-only` skips training and uses currently active models. Forecast
 generation runs only after successful training or an explicit skip.
 
-Both Colab notebook entry points now run the same pooled LightGBM + Random
-Forest pipeline, default to `REGISTER=False` and `ACTIVATE=False`, clone an
+Both repository Colab notebook entry points now run the same residual LightGBM
+and pooled Random Forest pipeline, default to `REGISTER=False` and
+`ACTIVATE=False`, clone an
 immutable approved commit SHA, and require the promotion cell to be changed
 deliberately. The former `train_all_6_models_pm25.ipynb` path is retained only
 as a compatibility alias; it no longer trains six model families. Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
@@ -206,7 +208,7 @@ active regression models.
 ## Known limitations
 
 - The source is daily, so the trained target is next-day PM2.5.
-- Heavy teachers stay in job/Colab artifacts; Vercel serves validated portable
-  surrogates to preserve cold-start limits.
+- Runtime v5.6.2 keeps native models offline and serves checksum-verified exact
+  portable tree structures to preserve cold-start limits.
 - Station, satellite/AOD, multi-year and national pooled-model tables/tracks do
   not imply that those sources are already ingested or validated.
