@@ -1,289 +1,322 @@
-"""Large immutable Supabase Storage uploads for reviewed PM2.5 artifacts.
+"""Supabase Free-plan artifact deployment for PM2.5 Production.
 
-The normal supabase-py Storage upload is intentionally retained for small
-artifacts. Files larger than the configured threshold are sent through
-Supabase Storage's TUS resumable endpoint using the required 6 MiB chunks.
+Supabase Free limits a single Storage object to 50 MB. The reviewed pooled
+Random Forest native model is therefore kept as a Google Drive training
+artifact, while its portable runtime payload is split into immutable 20 MiB
+Storage chunks plus a small deterministic gzip JSON manifest.
 
-Run-scoped artifact paths remain immutable. Existing objects are accepted only
-after a full streamed SHA-256 and byte-size verification. Registry writes and
-the atomic activation RPC remain owned by ``upload_and_register`` and therefore
-occur only after every artifact has been verified.
+All chunks and the manifest are checksum-verified before any Registry RPC.
+The existing fn_activate_pooled_dual_model_run remains the only activation
+transaction boundary, so Regression and Classification still promote together.
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
-import os
+import json
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from typing import Callable
 
-import requests
-
-TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024
-TUS_THRESHOLD_BYTES = 6 * 1024 * 1024
-STREAM_VERIFY_CHUNK_BYTES = 8 * 1024 * 1024
+FREE_PLAN_MAX_OBJECT_BYTES = 50 * 1024 * 1024
+FREE_PLAN_SAFE_OBJECT_BYTES = 45 * 1024 * 1024
+RUNTIME_CHUNK_BYTES = 20 * 1024 * 1024
+CHUNK_MANIFEST_SCHEMA = "portable-tree-chunk-manifest-v1"
 MODEL_ARTIFACT_BUCKET = "model-artifacts"
 
 
-def _service_credentials() -> tuple[str, str]:
-    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not supabase_url or not service_key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for Storage upload"
-        )
-    return supabase_url, service_key
-
-
-def _direct_storage_tus_endpoint(supabase_url: str) -> str:
-    parsed = urlparse(supabase_url)
-    host = parsed.hostname or ""
-    if host.endswith(".supabase.co"):
-        project_ref = host[: -len(".supabase.co")]
-        return (
-            f"https://{project_ref}.storage.supabase.co"
-            "/storage/v1/upload/resumable"
-        )
-    return f"{supabase_url}/storage/v1/upload/resumable"
-
-
-def _authenticated_object_url(
-    supabase_url: str,
-    remote_path: str,
-    *,
-    bucket_name: str = MODEL_ARTIFACT_BUCKET,
-) -> str:
-    encoded_bucket = quote(bucket_name, safe="")
-    encoded_path = quote(remote_path, safe="/")
-    return (
-        f"{supabase_url}/storage/v1/object/authenticated/"
-        f"{encoded_bucket}/{encoded_path}"
-    )
-
-
-def _stream_verify_storage_object(
-    remote_path: str,
-    local_path: Path,
-    expected_sha256: str,
-    *,
-    bucket_name: str = MODEL_ARTIFACT_BUCKET,
-    allow_missing: bool = False,
-    timeout_seconds: tuple[float, float] = (30.0, 300.0),
-) -> bool:
-    """Stream a private object and verify exact bytes without loading it in RAM."""
-    supabase_url, service_key = _service_credentials()
-    response = requests.get(
-        _authenticated_object_url(
-            supabase_url,
-            remote_path,
-            bucket_name=bucket_name,
-        ),
-        headers={
-            "Authorization": f"Bearer {service_key}",
-            "apikey": service_key,
-        },
-        stream=True,
-        timeout=timeout_seconds,
-    )
-    if response.status_code == 404 and allow_missing:
-        response.close()
-        return False
-    if not response.ok:
-        status = response.status_code
-        body = response.text[:500]
-        response.close()
-        raise RuntimeError(
-            f"Storage readback failed for {remote_path}: HTTP {status}: {body}"
-        )
-
+def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
-    observed_size = 0
-    try:
-        for chunk in response.iter_content(chunk_size=STREAM_VERIFY_CHUNK_BYTES):
-            if not chunk:
-                continue
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
-            observed_size += len(chunk)
-    finally:
-        response.close()
-
-    observed_sha256 = digest.hexdigest()
-    expected_size = Path(local_path).stat().st_size
-    if observed_sha256 != expected_sha256 or observed_size != expected_size:
-        raise RuntimeError(
-            "Refusing Storage artifact with mismatched bytes: "
-            f"{remote_path}; expected sha256={expected_sha256}, size={expected_size}; "
-            f"observed sha256={observed_sha256}, size={observed_size}. "
-            "No Registry or activation RPC was called."
-        )
-    return True
+    return digest.hexdigest()
 
 
-def _looks_like_conflict(error: Exception) -> bool:
-    text = f"{error.__class__.__name__} {error}".lower()
-    return "409" in text or "conflict" in text or "already exists" in text
-
-
-def _looks_like_size_limit(error: Exception) -> bool:
-    text = f"{error.__class__.__name__} {error}".lower()
-    return (
-        "413" in text
-        or "payload too large" in text
-        or "maximum allowed size" in text
-        or "entity too large" in text
-    )
-
-
-def _tus_upload_immutable(
-    remote_path: str,
-    local_path: Path,
-    expected_sha256: str,
+def _write_runtime_chunk_bundle(
+    runtime_path: Path,
+    expected_runtime_sha256: str,
     *,
-    bucket_name: str = MODEL_ARTIFACT_BUCKET,
-) -> bool:
-    """Upload one large object using Supabase TUS.
+    base_remote: str,
+) -> dict:
+    runtime_path = Path(runtime_path)
+    payload_size = runtime_path.stat().st_size
+    if _sha256_file(runtime_path) != expected_runtime_sha256:
+        raise RuntimeError("local runtime artifact checksum changed before chunking")
 
-    Returns True when an already-existing checksum-identical object was reused.
-    """
-    local_path = Path(local_path)
-
-    if _stream_verify_storage_object(
-        remote_path,
-        local_path,
-        expected_sha256,
-        bucket_name=bucket_name,
-        allow_missing=True,
-    ):
-        print(
-            {
-                "storage_large_object": remote_path,
-                "status": "reused_after_streamed_sha256_verification",
-                "bytes": local_path.stat().st_size,
-            }
-        )
-        return True
-
-    try:
-        from tusclient import client as tus_client
-    except ImportError as error:
-        raise RuntimeError(
-            "tuspy==1.1.0 is required for artifacts larger than 6 MiB. "
-            "Install it in the Colab bootstrap or Cell 13 before retrying."
-        ) from error
-
-    supabase_url, service_key = _service_credentials()
-    endpoint = _direct_storage_tus_endpoint(supabase_url)
-    tus = tus_client.TusClient(
-        endpoint,
-        headers={
-            "Authorization": f"Bearer {service_key}",
-            "apikey": service_key,
-            "x-upsert": "false",
-        },
-    )
-
-    print(
-        {
-            "storage_large_object": remote_path,
-            "status": "tus_upload_start",
-            "bytes": local_path.stat().st_size,
-            "chunk_bytes": TUS_CHUNK_SIZE_BYTES,
-            "endpoint_host": urlparse(endpoint).hostname,
-        }
-    )
-    try:
-        with local_path.open("rb") as handle:
-            uploader = tus.uploader(
-                file_stream=handle,
-                chunk_size=TUS_CHUNK_SIZE_BYTES,
-                metadata={
-                    "bucketName": bucket_name,
-                    "objectName": remote_path,
-                    "contentType": "application/octet-stream",
-                    "cacheControl": "3600",
-                    "metadata": (
-                        '{"sha256":"'
-                        + expected_sha256
-                        + '","immutable":true,"uploader":"pm25-cell13-tus"}'
-                    ),
-                },
-            )
-            uploader.upload()
-    except Exception as error:
-        if _looks_like_conflict(error) and _stream_verify_storage_object(
-            remote_path,
-            local_path,
-            expected_sha256,
-            bucket_name=bucket_name,
-            allow_missing=True,
-        ):
-            print(
+    bundle_dir = runtime_path.parent / "supabase_free_bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    chunks: list[dict] = []
+    with runtime_path.open("rb") as source:
+        index = 0
+        while True:
+            payload = source.read(RUNTIME_CHUNK_BYTES)
+            if not payload:
+                break
+            if len(payload) > FREE_PLAN_SAFE_OBJECT_BYTES:
+                raise RuntimeError("runtime chunk exceeds Free-plan safety limit")
+            part_name = f"runtime.part-{index:04d}.bin"
+            part_path = bundle_dir / part_name
+            part_path.write_bytes(payload)
+            part_sha = hashlib.sha256(payload).hexdigest()
+            chunks.append(
                 {
-                    "storage_large_object": remote_path,
-                    "status": "reused_after_tus_conflict_verification",
+                    "index": index,
+                    "storage_uri": (
+                        f"storage://{MODEL_ARTIFACT_BUCKET}/"
+                        f"{base_remote}/runtime.parts/{part_name}"
+                    ),
+                    "sha256": part_sha,
+                    "byte_size": len(payload),
+                    "local_path": part_path,
+                    "remote_path": f"{base_remote}/runtime.parts/{part_name}",
                 }
             )
-            return True
-        if _looks_like_size_limit(error):
-            raise RuntimeError(
-                f"Supabase rejected {remote_path} ({local_path.stat().st_size} bytes) "
-                "with HTTP 413. The project/global Storage file-size limit must be "
-                "raised above this artifact size; the bucket-level limit alone does "
-                "not override the global/plan limit. No Registry or activation RPC "
-                "was called."
-            ) from error
-        raise
+            index += 1
 
-    _stream_verify_storage_object(
-        remote_path,
-        local_path,
-        expected_sha256,
-        bucket_name=bucket_name,
-        allow_missing=False,
-    )
-    print(
-        {
-            "storage_large_object": remote_path,
-            "status": "tus_upload_verified",
-            "sha256": expected_sha256,
-            "bytes": local_path.stat().st_size,
-        }
-    )
-    return False
+    if not chunks:
+        raise RuntimeError("runtime artifact produced no chunks")
+    if sum(item["byte_size"] for item in chunks) != payload_size:
+        raise RuntimeError("runtime chunk sizes do not reconstruct the source payload")
+
+    manifest = {
+        "artifact_schema": CHUNK_MANIFEST_SCHEMA,
+        "payload_format": "json+gzip",
+        "payload_sha256": expected_runtime_sha256,
+        "payload_byte_size": payload_size,
+        "chunk_size_bytes": RUNTIME_CHUNK_BYTES,
+        "chunks": [
+            {
+                "index": item["index"],
+                "storage_uri": item["storage_uri"],
+                "sha256": item["sha256"],
+                "byte_size": item["byte_size"],
+            }
+            for item in chunks
+        ],
+    }
+    manifest_json = json.dumps(
+        manifest,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    manifest_payload = gzip.compress(manifest_json, compresslevel=9, mtime=0)
+    manifest_path = bundle_dir / "runtime.manifest.json.gz"
+    manifest_path.write_bytes(manifest_payload)
+    manifest_sha = hashlib.sha256(manifest_payload).hexdigest()
+    if manifest_path.stat().st_size > FREE_PLAN_SAFE_OBJECT_BYTES:
+        raise RuntimeError("runtime manifest unexpectedly exceeds Free-plan safety limit")
+
+    return {
+        "chunks": chunks,
+        "manifest_path": manifest_path,
+        "manifest_sha256": manifest_sha,
+        "manifest_byte_size": manifest_path.stat().st_size,
+        "manifest_remote_path": f"{base_remote}/runtime.manifest.json.gz",
+        "manifest_storage_uri": (
+            f"storage://{MODEL_ARTIFACT_BUCKET}/"
+            f"{base_remote}/runtime.manifest.json.gz"
+        ),
+        "payload_sha256": expected_runtime_sha256,
+        "payload_byte_size": payload_size,
+    }
 
 
-def install_large_artifact_upload_patch(upload_and_register) -> None:
-    """Patch only the artifact-transfer helper used by upload_and_register."""
-    globals_dict = getattr(upload_and_register, "__globals__", None)
+def make_free_plan_upload_and_register(
+    reviewed_upload_and_register: Callable,
+) -> Callable:
+    """Return a Free-plan-aware replacement for the reviewed Cell 13 function."""
+    globals_dict = getattr(reviewed_upload_and_register, "__globals__", None)
     if not isinstance(globals_dict, dict):
-        raise TypeError("upload_and_register is not a Python function with mutable globals")
+        raise TypeError("reviewed upload_and_register has no mutable globals")
+    upload_or_verify = globals_dict.get("_upload_or_verify_immutable_artifact")
+    versions = globals_dict.get("_versions")
+    if not callable(upload_or_verify) or not callable(versions):
+        raise RuntimeError("reviewed immutable Storage helpers are unavailable")
 
-    original = globals_dict.get("_upload_or_verify_immutable_artifact")
-    if not callable(original):
-        raise RuntimeError("Could not locate the reviewed immutable upload helper")
+    def upload_and_register_free(
+        sb,
+        result,
+        artifacts,
+        *,
+        activate: bool,
+    ) -> None:
+        bucket = sb.storage.from_(MODEL_ARTIFACT_BUCKET)
+        dependency_lock = versions()
+        reused_objects: list[str] = []
+        skipped_native: list[str] = []
+        uploaded_chunks = 0
 
-    if globals_dict.get("_pm25_tus_upload_patch_installed"):
-        return
+        for task_type, task_artifacts in artifacts.items():
+            for artifact_key, paths in task_artifacts.items():
+                base = (
+                    f"{result.run_id}/{artifact_key}/regression"
+                    if task_type == "regression"
+                    else f"{result.run_id}/pooled/classification"
+                )
+                native_path = Path(paths["native_path"])
+                runtime_path = Path(paths["runtime_path"])
 
-    def large_aware_upload(bucket, remote_path, local_path, expected_sha256):
-        path = Path(local_path)
-        if path.stat().st_size <= TUS_THRESHOLD_BYTES:
-            return original(bucket, remote_path, path, expected_sha256)
-        return _tus_upload_immutable(
-            remote_path,
-            path,
-            expected_sha256,
-            bucket_name=MODEL_ARTIFACT_BUCKET,
+                # Native artifacts are research/reproducibility evidence, not required
+                # by Vercel inference. Keep oversized RF teacher artifacts on Drive.
+                native_remote = f"{base}/model.joblib"
+                native_uploaded = native_path.stat().st_size <= FREE_PLAN_SAFE_OBJECT_BYTES
+                if native_uploaded:
+                    if upload_or_verify(
+                        bucket,
+                        native_remote,
+                        native_path,
+                        paths["native_sha256"],
+                    ):
+                        reused_objects.append(native_remote)
+                else:
+                    skipped_native.append(native_remote)
+
+                if runtime_path.stat().st_size <= FREE_PLAN_SAFE_OBJECT_BYTES:
+                    runtime_remote = f"{base}/runtime.json.gz"
+                    if upload_or_verify(
+                        bucket,
+                        runtime_remote,
+                        runtime_path,
+                        paths["runtime_sha256"],
+                    ):
+                        reused_objects.append(runtime_remote)
+                    runtime_fields = {
+                        "runtime_artifact_uri": (
+                            f"storage://{MODEL_ARTIFACT_BUCKET}/{runtime_remote}"
+                        ),
+                        "runtime_artifact_sha256": paths["runtime_sha256"],
+                        "runtime_artifact_byte_size": runtime_path.stat().st_size,
+                        "runtime_artifact_format": "json+gzip",
+                    }
+                    runtime_audit = {
+                        "runtime_storage_mode": "single_object",
+                        "runtime_payload_sha256": paths["runtime_sha256"],
+                        "runtime_payload_byte_size": runtime_path.stat().st_size,
+                    }
+                else:
+                    bundle = _write_runtime_chunk_bundle(
+                        runtime_path,
+                        paths["runtime_sha256"],
+                        base_remote=base,
+                    )
+                    for item in bundle["chunks"]:
+                        if upload_or_verify(
+                            bucket,
+                            item["remote_path"],
+                            item["local_path"],
+                            item["sha256"],
+                        ):
+                            reused_objects.append(item["remote_path"])
+                        uploaded_chunks += 1
+                    if upload_or_verify(
+                        bucket,
+                        bundle["manifest_remote_path"],
+                        bundle["manifest_path"],
+                        bundle["manifest_sha256"],
+                    ):
+                        reused_objects.append(bundle["manifest_remote_path"])
+                    runtime_fields = {
+                        # Keep json+gzip so the existing activation RPC remains
+                        # backward-compatible. decode_artifact resolves the manifest.
+                        "runtime_artifact_uri": bundle["manifest_storage_uri"],
+                        "runtime_artifact_sha256": bundle["manifest_sha256"],
+                        "runtime_artifact_byte_size": bundle["manifest_byte_size"],
+                        "runtime_artifact_format": "json+gzip",
+                    }
+                    runtime_audit = {
+                        "runtime_storage_mode": "supabase-free-chunk-manifest-v1",
+                        "runtime_payload_sha256": bundle["payload_sha256"],
+                        "runtime_payload_byte_size": bundle["payload_byte_size"],
+                        "runtime_chunk_count": len(bundle["chunks"]),
+                        "runtime_chunk_size_bytes": RUNTIME_CHUNK_BYTES,
+                        "runtime_manifest_schema": CHUNK_MANIFEST_SCHEMA,
+                    }
+
+                for row in result.registry_rows:
+                    if row["task_type"] != task_type:
+                        continue
+                    if task_type == "regression" and row["province_id"] != artifact_key:
+                        continue
+
+                    model_params = dict(row.get("model_params") or {})
+                    model_params.update(runtime_audit)
+                    model_params.update(
+                        {
+                            "native_artifact_sha256": paths["native_sha256"],
+                            "native_artifact_byte_size": native_path.stat().st_size,
+                            "native_artifact_storage": (
+                                "supabase"
+                                if native_uploaded
+                                else "google-drive-only-free-plan"
+                            ),
+                            "supabase_free_plan_compatible": True,
+                        }
+                    )
+                    row["model_params"] = model_params
+
+                    if native_uploaded:
+                        row.update(
+                            {
+                                "artifact_uri": (
+                                    f"storage://{MODEL_ARTIFACT_BUCKET}/{native_remote}"
+                                ),
+                                "artifact_sha256": paths["native_sha256"],
+                                "artifact_byte_size": native_path.stat().st_size,
+                                "artifact_content_type": "application/octet-stream",
+                            }
+                        )
+                    else:
+                        # Explicitly clear any values left by a prior failed retry.
+                        row["artifact_uri"] = None
+                        row["artifact_sha256"] = None
+                        row["artifact_byte_size"] = None
+                        row["artifact_content_type"] = None
+
+                    row.update(
+                        {
+                            **runtime_fields,
+                            "dependency_lock": dependency_lock,
+                        }
+                    )
+
+        runtime_rows = [
+            row for row in result.registry_rows
+            if row.get("runtime_artifact_uri")
+            and row.get("runtime_artifact_sha256")
+            and int(row.get("runtime_artifact_byte_size") or 0) > 0
+            and row.get("runtime_artifact_format") == "json+gzip"
+        ]
+        if len(runtime_rows) != len(result.registry_rows):
+            raise RuntimeError(
+                "Free-plan artifact preflight did not prepare all 40 runtime rows; "
+                "no Registry or activation RPC was called."
+            )
+
+        # Only after every immutable object has been checksum-verified.
+        sb.rpc("fn_upsert_model_registry", {"rows": result.registry_rows}).execute()
+        if activate:
+            sb.rpc(
+                "fn_activate_pooled_dual_model_run",
+                {
+                    "p_run_id": result.run_id,
+                    "p_required_provinces": len(result.province_ids),
+                },
+            ).execute()
+
+        print(
+            {
+                "supabase_plan": "free",
+                "runtime_chunk_bytes": RUNTIME_CHUNK_BYTES,
+                "runtime_chunks_uploaded_or_verified": uploaded_chunks,
+                "oversized_native_artifacts_kept_on_drive": len(skipped_native),
+                "storage_objects_reused_after_checksum_verification": len(reused_objects),
+                "registry_rows": len(result.registry_rows),
+                "atomic_activation_requested": bool(activate),
+                "run_id": result.run_id,
+            }
         )
 
-    globals_dict["_upload_or_verify_immutable_artifact"] = large_aware_upload
-    globals_dict["_pm25_tus_upload_patch_installed"] = True
-    globals_dict["_pm25_tus_original_upload_helper"] = original
-    print(
-        {
-            "cell13_storage_upload": "large_artifact_tus_patch_installed",
-            "threshold_bytes": TUS_THRESHOLD_BYTES,
-            "tus_chunk_bytes": TUS_CHUNK_SIZE_BYTES,
-            "immutability": "upsert_false_and_sha256_readback",
-        }
-    )
+    return upload_and_register_free
