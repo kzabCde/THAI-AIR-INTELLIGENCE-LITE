@@ -167,8 +167,8 @@ def _tus_upload_immutable(
         from tusclient import client as tus_client
     except ImportError as error:
         raise RuntimeError(
-            "tus-py-client is required for artifacts larger than 6 MiB. "
-            "Install it in the Colab bootstrap cell before rerunning Cell 13."
+            "tuspy==1.1.0 is required for artifacts larger than 6 MiB. "
+            "Install it in the Colab bootstrap or Cell 13 before retrying."
         ) from error
 
     supabase_url, service_key = _service_credentials()
