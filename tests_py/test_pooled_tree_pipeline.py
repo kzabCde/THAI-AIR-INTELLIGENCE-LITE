@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import lightgbm as lgb
@@ -346,8 +347,8 @@ def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_p
         artifacts["regression"][province_id] = {
             "native_path": native,
             "runtime_path": runtime,
-            "native_sha256": "a" * 64,
-            "runtime_sha256": "b" * 64,
+            "native_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+            "runtime_sha256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
         }
     classifier_dir = tmp_path / "pooled"
     classifier_dir.mkdir()
@@ -358,8 +359,8 @@ def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_p
     artifacts["classification"]["pooled"] = {
         "native_path": classifier_native,
         "runtime_path": classifier_runtime,
-        "native_sha256": "c" * 64,
-        "runtime_sha256": "d" * 64,
+        "native_sha256": hashlib.sha256(classifier_native.read_bytes()).hexdigest(),
+        "runtime_sha256": hashlib.sha256(classifier_runtime.read_bytes()).hexdigest(),
     }
     registry_rows = [
         {"province_id": province_id, "task_type": task_type}
@@ -381,26 +382,38 @@ def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_p
             return self
 
     class Bucket:
-        def __init__(self, uploads):
+        def __init__(self, uploads, objects, downloads):
             self.uploads = uploads
+            self.objects = objects
+            self.downloads = downloads
 
         def upload(self, remote, handle, options):
-            self.uploads.append((remote, handle.read(), options))
+            payload = handle.read()
+            self.uploads.append((remote, payload, options))
+            self.objects[remote] = payload
             return Response()
 
+        def download(self, remote):
+            self.downloads.append(remote)
+            return self.objects[remote]
+
     class Storage:
-        def __init__(self, uploads):
+        def __init__(self, uploads, objects, downloads):
             self.uploads = uploads
+            self.objects = objects
+            self.downloads = downloads
 
         def from_(self, name):
             assert name == "model-artifacts"
-            return Bucket(self.uploads)
+            return Bucket(self.uploads, self.objects, self.downloads)
 
     class Client:
         def __init__(self):
             self.uploads = []
+            self.objects = {}
+            self.downloads = []
             self.rpc_calls = []
-            self.storage = Storage(self.uploads)
+            self.storage = Storage(self.uploads, self.objects, self.downloads)
 
         def rpc(self, name, arguments):
             self.rpc_calls.append((name, arguments))
@@ -410,6 +423,8 @@ def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_p
     upload_and_register(client, result, artifacts, activate=True)
 
     assert len(client.uploads) == 6
+    assert len(client.downloads) == 6
+    assert all(upload[2]["upsert"] == "false" for upload in client.uploads)
     assert client.rpc_calls[0] == ("fn_upsert_model_registry", {"rows": registry_rows})
     assert client.rpc_calls[1] == (
         "fn_activate_pooled_dual_model_run",
@@ -422,3 +437,133 @@ def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_p
     assert all(row["runtime_artifact_uri"].startswith("storage://model-artifacts/") for row in registry_rows)
     assert len({row["runtime_artifact_uri"] for row in registry_rows if row["task_type"] == "regression"}) == 2
     assert len({row["runtime_artifact_uri"] for row in registry_rows if row["task_type"] == "classification"}) == 1
+
+
+def test_upload_rerun_reuses_only_checksum_identical_storage_objects(tmp_path):
+    native = tmp_path / "model.joblib"
+    runtime = tmp_path / "runtime.json.gz"
+    native.write_bytes(b"reviewed-native")
+    runtime.write_bytes(b"reviewed-runtime")
+    artifacts = {
+        "regression": {
+            "TH-30": {
+                "native_path": native,
+                "runtime_path": runtime,
+                "native_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+                "runtime_sha256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
+            }
+        },
+        "classification": {},
+    }
+    registry_rows = [{"province_id": "TH-30", "task_type": "regression"}]
+    result = PooledResult(
+        "00000000-0000-0000-0000-000000000001",
+        ("TH-30",),
+        None,
+        None,
+        None,
+        registry_rows,
+        {},
+    )
+
+    class DuplicateStorageError(Exception):
+        statusCode = 409
+        code = "Duplicate"
+
+    class Response:
+        def execute(self):
+            return self
+
+    class Bucket:
+        def __init__(self):
+            self.objects = {
+                f"{result.run_id}/TH-30/regression/model.joblib": native.read_bytes(),
+                f"{result.run_id}/TH-30/regression/runtime.json.gz": runtime.read_bytes(),
+            }
+
+        def upload(self, remote, handle, options):
+            raise DuplicateStorageError("The resource already exists")
+
+        def download(self, remote):
+            return self.objects[remote]
+
+    class Storage:
+        def __init__(self, bucket):
+            self.bucket = bucket
+
+        def from_(self, name):
+            assert name == "model-artifacts"
+            return self.bucket
+
+    class Client:
+        def __init__(self):
+            self.bucket = Bucket()
+            self.storage = Storage(self.bucket)
+            self.rpc_calls = []
+
+        def rpc(self, name, arguments):
+            self.rpc_calls.append((name, arguments))
+            return Response()
+
+    client = Client()
+    upload_and_register(client, result, artifacts, activate=False)
+
+    assert client.rpc_calls == [("fn_upsert_model_registry", {"rows": registry_rows})]
+
+
+def test_upload_rerun_rejects_checksum_mismatch_before_registry(tmp_path):
+    native = tmp_path / "model.joblib"
+    runtime = tmp_path / "runtime.json.gz"
+    native.write_bytes(b"reviewed-native")
+    runtime.write_bytes(b"reviewed-runtime")
+    artifacts = {
+        "regression": {
+            "TH-30": {
+                "native_path": native,
+                "runtime_path": runtime,
+                "native_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+                "runtime_sha256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
+            }
+        },
+        "classification": {},
+    }
+    registry_rows = [{"province_id": "TH-30", "task_type": "regression"}]
+    result = PooledResult(
+        "00000000-0000-0000-0000-000000000001",
+        ("TH-30",),
+        None,
+        None,
+        None,
+        registry_rows,
+        {},
+    )
+
+    class DuplicateStorageError(Exception):
+        statusCode = 409
+        code = "Duplicate"
+
+    class Bucket:
+        def upload(self, remote, handle, options):
+            raise DuplicateStorageError("The resource already exists")
+
+        def download(self, remote):
+            return b"different-bytes"
+
+    class Storage:
+        def from_(self, name):
+            assert name == "model-artifacts"
+            return Bucket()
+
+    class Client:
+        def __init__(self):
+            self.storage = Storage()
+            self.rpc_calls = []
+
+        def rpc(self, name, arguments):
+            self.rpc_calls.append((name, arguments))
+            raise AssertionError("Registry RPC must not run after checksum mismatch")
+
+    client = Client()
+    with pytest.raises(RuntimeError, match="mismatched bytes"):
+        upload_and_register(client, result, artifacts, activate=True)
+    assert client.rpc_calls == []
