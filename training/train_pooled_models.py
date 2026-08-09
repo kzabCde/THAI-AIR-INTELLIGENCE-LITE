@@ -1197,6 +1197,94 @@ def save_artifacts(result: PooledResult, root: Path, config: PipelineConfig) -> 
     return output
 
 
+def _is_duplicate_storage_error(error: Exception) -> bool:
+    """Recognize Supabase Storage's legacy and current duplicate responses."""
+    details: dict[str, object] = {}
+    if error.args and isinstance(error.args[0], Mapping):
+        details.update(error.args[0])
+    for name in ("status", "status_code", "statusCode", "code", "error", "message"):
+        value = getattr(error, name, None)
+        if value is not None:
+            details[name] = value
+
+    text = " ".join(
+        [str(error), *(str(value) for value in details.values())]
+    ).lower()
+    status_values = {
+        str(details.get(name, "")).strip()
+        for name in ("status", "status_code", "statusCode")
+    }
+    is_conflict = "409" in status_values or any(
+        token in text
+        for token in (
+            "'statuscode': 409",
+            '"statuscode": 409',
+            "status code 409",
+            "409 conflict",
+        )
+    )
+    is_duplicate = any(
+        token in text
+        for token in (
+            "duplicate",
+            "already exists",
+            "already_exists",
+            "resourcealreadyexists",
+            "keyalreadyexists",
+        )
+    )
+    return is_conflict and is_duplicate
+
+
+def _upload_or_verify_immutable_artifact(
+    bucket,
+    remote_path: str,
+    local_path: Path,
+    expected_sha256: str,
+) -> bool:
+    """Upload once, or reuse an identical object left by an interrupted run.
+
+    Run-scoped model objects are immutable. A duplicate is safe only when the
+    stored bytes still match the reviewed local artifact. A mismatch aborts
+    before any Registry or activation RPC instead of overwriting evidence.
+
+    Returns True when an existing identical object was reused.
+    """
+    reused = False
+    try:
+        with local_path.open("rb") as handle:
+            bucket.upload(
+                remote_path,
+                handle,
+                {
+                    "content-type": "application/octet-stream",
+                    "upsert": "false",
+                },
+            )
+    except Exception as error:
+        if not _is_duplicate_storage_error(error):
+            raise
+        reused = True
+
+    stored_payload = bucket.download(remote_path)
+    if not isinstance(stored_payload, (bytes, bytearray)):
+        raise RuntimeError(
+            f"Storage readback returned an unsupported payload for {remote_path}"
+        )
+    stored_payload = bytes(stored_payload)
+    stored_sha256 = hashlib.sha256(stored_payload).hexdigest()
+    expected_size = local_path.stat().st_size
+    if stored_sha256 != expected_sha256 or len(stored_payload) != expected_size:
+        action = "existing" if reused else "uploaded"
+        raise RuntimeError(
+            f"Refusing to use {action} Storage artifact with mismatched bytes: "
+            f"{remote_path}; expected sha256={expected_sha256}, "
+            f"size={expected_size}; observed sha256={stored_sha256}, "
+            f"size={len(stored_payload)}. No Registry or activation RPC was called."
+        )
+    return reused
+
+
 def upload_and_register(
     sb: Client,
     result: PooledResult,
@@ -1206,6 +1294,7 @@ def upload_and_register(
 ) -> None:
     bucket = sb.storage.from_("model-artifacts")
     dependency_lock = _versions()
+    reused_objects: list[str] = []
     for task_type, task_artifacts in artifacts.items():
         for artifact_key, paths in task_artifacts.items():
             base = (
@@ -1215,10 +1304,20 @@ def upload_and_register(
             )
             native_remote = f"{base}/model.joblib"
             runtime_remote = f"{base}/runtime.json.gz"
-            with paths["native_path"].open("rb") as handle:
-                bucket.upload(native_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
-            with paths["runtime_path"].open("rb") as handle:
-                bucket.upload(runtime_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
+            if _upload_or_verify_immutable_artifact(
+                bucket,
+                native_remote,
+                paths["native_path"],
+                paths["native_sha256"],
+            ):
+                reused_objects.append(native_remote)
+            if _upload_or_verify_immutable_artifact(
+                bucket,
+                runtime_remote,
+                paths["runtime_path"],
+                paths["runtime_sha256"],
+            ):
+                reused_objects.append(runtime_remote)
             for row in result.registry_rows:
                 if row["task_type"] != task_type:
                     continue
@@ -1244,6 +1343,11 @@ def upload_and_register(
                 "p_required_provinces": len(result.province_ids),
             },
         ).execute()
+    if reused_objects:
+        print({
+            "storage_objects_reused_after_checksum_verification": len(reused_objects),
+            "run_id": result.run_id,
+        })
 
 
 def main() -> int:
