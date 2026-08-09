@@ -16,6 +16,7 @@ import importlib.metadata
 import json
 import os
 import sys
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from supabase import Client, create_client
+from supabase.client import ClientOptions
 
 from api.ml.portable_trees import (
     ARTIFACT_SCHEMA,
@@ -81,6 +83,10 @@ CLASSIFICATION_FIXED_PARAMETERS = {
     "max_features": "sqrt",
 }
 CLASSIFICATION_TEMPERATURES = (0.75, 1.0, 1.25, 1.5)
+SUPABASE_POSTGREST_TIMEOUT_SECONDS = 120
+SUPABASE_STORAGE_TIMEOUT_SECONDS = 180
+STORAGE_MAX_ATTEMPTS = 4
+STORAGE_RETRY_BACKOFF_SECONDS = (1.0, 3.0, 7.0)
 
 
 @dataclass
@@ -169,7 +175,15 @@ def get_client() -> Client:
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     if not url or not key:
         raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
-    return create_client(url, key)
+    return create_client(
+        url,
+        key,
+        options=ClientOptions(
+            postgrest_client_timeout=SUPABASE_POSTGREST_TIMEOUT_SECONDS,
+            storage_client_timeout=SUPABASE_STORAGE_TIMEOUT_SECONDS,
+            schema="public",
+        ),
+    )
 
 
 def fetch_province_metadata(sb: Client, province_ids: tuple[str, ...]) -> pd.DataFrame:
@@ -1236,37 +1250,103 @@ def _is_duplicate_storage_error(error: Exception) -> bool:
     return is_conflict and is_duplicate
 
 
-def _upload_or_verify_immutable_artifact(
-    bucket,
+def _storage_exception_chain(error: Exception) -> list[Exception]:
+    """Return one copy of each wrapped transport/SDK exception."""
+    chain: list[Exception] = []
+    current: BaseException | None = error
+    while isinstance(current, Exception) and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _storage_error_text(error: Exception) -> str:
+    values: list[str] = []
+    for current in _storage_exception_chain(error):
+        values.extend((current.__class__.__name__, str(current)))
+        if current.args and isinstance(current.args[0], Mapping):
+            values.extend(str(value) for value in current.args[0].values())
+        for name in (
+            "status",
+            "status_code",
+            "statusCode",
+            "code",
+            "error",
+            "message",
+        ):
+            value = getattr(current, name, None)
+            if value is not None:
+                values.append(str(value))
+    return " ".join(values).lower()
+
+
+def _is_transient_storage_error(error: Exception) -> bool:
+    """Identify retryable transport failures and temporary Storage responses."""
+    text = _storage_error_text(error)
+    transport_failure = any(
+        token in text
+        for token in (
+            "readtimeout",
+            "writetimeout",
+            "connecttimeout",
+            "pooltimeout",
+            "remoteprotocolerror",
+            "readerror",
+            "writeerror",
+            "connecterror",
+            "networkerror",
+            "the read operation timed out",
+            "the write operation timed out",
+            "slowdown",
+            "temporarily unavailable",
+        )
+    )
+    temporary_status = any(
+        pattern in text
+        for status in (408, 425, 429, 500, 502, 503, 504)
+        for pattern in (
+            f"'statuscode': {status}",
+            f'"statuscode": {status}',
+            f"status code {status}",
+            f"http {status}",
+            f"{status} server error",
+        )
+    )
+    return transport_failure or temporary_status
+
+
+def _is_storage_not_found(error: Exception) -> bool:
+    text = _storage_error_text(error)
+    return any(
+        token in text
+        for token in (
+            "nosuchkey",
+            "not_found",
+            "not found",
+            "resource does not exist",
+            "'statuscode': 404",
+            '"statuscode": 404',
+            "status code 404",
+            "http 404",
+            "404 client error",
+        )
+    )
+
+
+def _storage_retry_delay(attempt_index: int) -> float:
+    return STORAGE_RETRY_BACKOFF_SECONDS[
+        min(attempt_index, len(STORAGE_RETRY_BACKOFF_SECONDS) - 1)
+    ]
+
+
+def _verify_storage_payload(
+    stored_payload: object,
     remote_path: str,
     local_path: Path,
     expected_sha256: str,
-) -> bool:
-    """Upload once, or reuse an identical object left by an interrupted run.
-
-    Run-scoped model objects are immutable. A duplicate is safe only when the
-    stored bytes still match the reviewed local artifact. A mismatch aborts
-    before any Registry or activation RPC instead of overwriting evidence.
-
-    Returns True when an existing identical object was reused.
-    """
-    reused = False
-    try:
-        with local_path.open("rb") as handle:
-            bucket.upload(
-                remote_path,
-                handle,
-                {
-                    "content-type": "application/octet-stream",
-                    "upsert": "false",
-                },
-            )
-    except Exception as error:
-        if not _is_duplicate_storage_error(error):
-            raise
-        reused = True
-
-    stored_payload = bucket.download(remote_path)
+    *,
+    reused: bool,
+) -> None:
     if not isinstance(stored_payload, (bytes, bytearray)):
         raise RuntimeError(
             f"Storage readback returned an unsupported payload for {remote_path}"
@@ -1282,6 +1362,119 @@ def _upload_or_verify_immutable_artifact(
             f"size={expected_size}; observed sha256={stored_sha256}, "
             f"size={len(stored_payload)}. No Registry or activation RPC was called."
         )
+
+
+def _download_and_verify_storage_artifact(
+    bucket,
+    remote_path: str,
+    local_path: Path,
+    expected_sha256: str,
+    *,
+    reused: bool,
+    allow_missing: bool,
+) -> bool:
+    """Read an object back with bounded retries; return False only for 404."""
+    for attempt_index in range(STORAGE_MAX_ATTEMPTS):
+        try:
+            stored_payload = bucket.download(remote_path)
+            _verify_storage_payload(
+                stored_payload,
+                remote_path,
+                local_path,
+                expected_sha256,
+                reused=reused,
+            )
+            return True
+        except Exception as error:
+            if allow_missing and _is_storage_not_found(error):
+                return False
+            if (
+                not _is_transient_storage_error(error)
+                or attempt_index == STORAGE_MAX_ATTEMPTS - 1
+            ):
+                raise
+            delay = _storage_retry_delay(attempt_index)
+            print({
+                "storage_readback_retry": attempt_index + 2,
+                "path": remote_path,
+                "delay_seconds": delay,
+                "error": error.__class__.__name__,
+            })
+            time.sleep(delay)
+    raise AssertionError("unreachable Storage readback retry state")
+
+
+def _upload_or_verify_immutable_artifact(
+    bucket,
+    remote_path: str,
+    local_path: Path,
+    expected_sha256: str,
+) -> bool:
+    """Upload once, or reuse an identical object left by an interrupted run.
+
+    Run-scoped model objects are immutable. A duplicate is safe only when the
+    stored bytes still match the reviewed local artifact. A mismatch aborts
+    before any Registry or activation RPC instead of overwriting evidence.
+
+    Returns True when an existing identical object was reused.
+    """
+    reused = False
+    for attempt_index in range(STORAGE_MAX_ATTEMPTS):
+        try:
+            with local_path.open("rb") as handle:
+                bucket.upload(
+                    remote_path,
+                    handle,
+                    {
+                        "content-type": "application/octet-stream",
+                        "upsert": "false",
+                    },
+                )
+            break
+        except Exception as error:
+            if _is_duplicate_storage_error(error):
+                reused = True
+                break
+            if not _is_transient_storage_error(error):
+                raise
+
+            # A timeout is ambiguous: Storage may have committed the object
+            # even though Colab did not receive the response. Verify first so
+            # a retry never overwrites or needlessly retransmits valid bytes.
+            if _download_and_verify_storage_artifact(
+                bucket,
+                remote_path,
+                local_path,
+                expected_sha256,
+                reused=True,
+                allow_missing=True,
+            ):
+                return True
+            if attempt_index == STORAGE_MAX_ATTEMPTS - 1:
+                raise RuntimeError(
+                    f"Storage upload remained unavailable after "
+                    f"{STORAGE_MAX_ATTEMPTS} attempts: {remote_path}. "
+                    "No Registry or activation RPC was called."
+                ) from error
+            delay = _storage_retry_delay(attempt_index)
+            print({
+                "storage_upload_retry": attempt_index + 2,
+                "path": remote_path,
+                "delay_seconds": delay,
+                "error": error.__class__.__name__,
+            })
+            time.sleep(delay)
+    else:
+        raise AssertionError("unreachable Storage upload retry state")
+
+    _download_and_verify_storage_artifact(
+        bucket,
+        remote_path,
+        local_path,
+        expected_sha256,
+        reused=reused,
+        allow_missing=False,
+    )
     return reused
 
 

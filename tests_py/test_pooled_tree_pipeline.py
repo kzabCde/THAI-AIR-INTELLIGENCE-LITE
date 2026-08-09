@@ -31,8 +31,11 @@ from training.train_pooled_models import (
     PooledSplit,
     PooledResult,
     RegressionProvinceResult,
+    SUPABASE_POSTGREST_TIMEOUT_SECONDS,
+    SUPABASE_STORAGE_TIMEOUT_SECONDS,
     _record_global_eligibility_context,
     build_pooled_examples,
+    get_client,
     pooled_chronological_split,
     pooled_walk_forward_folds,
     train_regression,
@@ -334,6 +337,35 @@ def test_runtime_artifacts_are_not_checked_into_git():
     assert "training/artifacts" in Path(".gitignore").read_text()
 
 
+def test_supabase_client_uses_explicit_database_and_storage_timeouts(monkeypatch):
+    captured = {}
+
+    def fake_create_client(url, key, *, options):
+        captured.update({"url": url, "key": key, "options": options})
+        return object()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "server-secret")
+    monkeypatch.setattr(
+        "training.train_pooled_models.create_client",
+        fake_create_client,
+    )
+
+    client = get_client()
+
+    assert client is not None
+    assert captured["url"] == "https://example.supabase.co"
+    assert captured["key"] == "server-secret"
+    assert (
+        captured["options"].postgrest_client_timeout
+        == SUPABASE_POSTGREST_TIMEOUT_SECONDS
+    )
+    assert (
+        captured["options"].storage_client_timeout
+        == SUPABASE_STORAGE_TIMEOUT_SECONDS
+    )
+
+
 def test_upload_uses_local_regressors_one_classifier_and_atomic_activation(tmp_path):
     artifacts = {"regression": {}, "classification": {}}
     province_ids = ("TH-30", "TH-31")
@@ -567,3 +599,162 @@ def test_upload_rerun_rejects_checksum_mismatch_before_registry(tmp_path):
     with pytest.raises(RuntimeError, match="mismatched bytes"):
         upload_and_register(client, result, artifacts, activate=True)
     assert client.rpc_calls == []
+
+
+def test_upload_retries_read_timeout_after_confirming_object_is_absent(
+    tmp_path,
+    monkeypatch,
+):
+    native = tmp_path / "model.joblib"
+    native.write_bytes(b"pooled-classifier")
+    artifacts = {
+        "regression": {
+            "TH-30": {
+                "native_path": native,
+                "runtime_path": native,
+                "native_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+                "runtime_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+            }
+        },
+        "classification": {},
+    }
+    registry_rows = [{"province_id": "TH-30", "task_type": "regression"}]
+    result = PooledResult(
+        "00000000-0000-0000-0000-000000000001",
+        ("TH-30",),
+        None,
+        None,
+        None,
+        registry_rows,
+        {},
+    )
+
+    class ReadTimeout(Exception):
+        pass
+
+    class StorageApiError(Exception):
+        def __init__(self):
+            super().__init__({
+                "statusCode": 404,
+                "error": "NoSuchKey",
+                "message": "The resource was not found",
+            })
+
+    class Response:
+        def execute(self):
+            return self
+
+    class Bucket:
+        def __init__(self):
+            self.objects = {}
+            self.upload_attempts = 0
+
+        def upload(self, remote, handle, options):
+            self.upload_attempts += 1
+            if self.upload_attempts == 1:
+                raise ReadTimeout("The read operation timed out")
+            self.objects[remote] = handle.read()
+
+        def download(self, remote):
+            if remote not in self.objects:
+                raise StorageApiError()
+            return self.objects[remote]
+
+    class Storage:
+        def __init__(self, bucket):
+            self.bucket = bucket
+
+        def from_(self, name):
+            assert name == "model-artifacts"
+            return self.bucket
+
+    class Client:
+        def __init__(self):
+            self.bucket = Bucket()
+            self.storage = Storage(self.bucket)
+            self.rpc_calls = []
+
+        def rpc(self, name, arguments):
+            self.rpc_calls.append((name, arguments))
+            return Response()
+
+    monkeypatch.setattr("training.train_pooled_models.time.sleep", lambda _delay: None)
+    client = Client()
+    upload_and_register(client, result, artifacts, activate=False)
+
+    assert client.bucket.upload_attempts == 3
+    assert client.rpc_calls == [("fn_upsert_model_registry", {"rows": registry_rows})]
+
+
+def test_upload_timeout_reuses_object_if_storage_committed_before_response(
+    tmp_path,
+    monkeypatch,
+):
+    native = tmp_path / "model.joblib"
+    native.write_bytes(b"pooled-classifier")
+    artifacts = {
+        "regression": {
+            "TH-30": {
+                "native_path": native,
+                "runtime_path": native,
+                "native_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+                "runtime_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+            }
+        },
+        "classification": {},
+    }
+    registry_rows = [{"province_id": "TH-30", "task_type": "regression"}]
+    result = PooledResult(
+        "00000000-0000-0000-0000-000000000001",
+        ("TH-30",),
+        None,
+        None,
+        None,
+        registry_rows,
+        {},
+    )
+
+    class ReadTimeout(Exception):
+        pass
+
+    class Response:
+        def execute(self):
+            return self
+
+    class Bucket:
+        def __init__(self):
+            self.objects = {}
+            self.upload_attempts = 0
+
+        def upload(self, remote, handle, options):
+            self.upload_attempts += 1
+            self.objects[remote] = handle.read()
+            raise ReadTimeout("The read operation timed out")
+
+        def download(self, remote):
+            return self.objects[remote]
+
+    class Storage:
+        def __init__(self, bucket):
+            self.bucket = bucket
+
+        def from_(self, name):
+            assert name == "model-artifacts"
+            return self.bucket
+
+    class Client:
+        def __init__(self):
+            self.bucket = Bucket()
+            self.storage = Storage(self.bucket)
+            self.rpc_calls = []
+
+        def rpc(self, name, arguments):
+            self.rpc_calls.append((name, arguments))
+            return Response()
+
+    monkeypatch.setattr("training.train_pooled_models.time.sleep", lambda _delay: None)
+    client = Client()
+    upload_and_register(client, result, artifacts, activate=False)
+
+    assert client.bucket.upload_attempts == 2
+    assert client.rpc_calls == [("fn_upsert_model_registry", {"rows": registry_rows})]
