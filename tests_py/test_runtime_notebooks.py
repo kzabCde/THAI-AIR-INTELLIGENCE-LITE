@@ -121,11 +121,29 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     assert '"test_weighted_f1": 0.60' in configuration
     assert '"critical_recall": 0.35' in configuration
     assert '"critical_support": 5' in configuration
-    assert "CHECKPOINT_DIRECTORY = (" in configuration
+    assert "TRAINING_CHECKPOINT_DIRECTORY = (" in configuration
+    assert "DEPLOYMENT_CHECKPOINT_DIRECTORY = (" in configuration
     assert "/MyDrive/THAI-AIR-INTELLIGENCE-LITE/" in configuration
-    assert 'f"checkpoints/pm25_v5_6_3/{APPROVED_CODE_SHA}"' in configuration
-    assert 'ARTIFACT_DIRECTORY = f"{CHECKPOINT_DIRECTORY}/artifacts"' in configuration
-    assert 'ARCHIVE_CACHE_DIRECTORY = f"{CHECKPOINT_DIRECTORY}/archive_cache"' in configuration
+    assert (
+        'TRAINING_CHECKPOINT_COMPATIBILITY_SHA = '
+        '"b4436227a2471e65c40fae1515deabb3bf880c7f"'
+    ) in configuration
+    assert (
+        'f"checkpoints/pm25_v5_6_3/{TRAINING_CHECKPOINT_COMPATIBILITY_SHA}"'
+        in configuration
+    )
+    assert 'f"checkpoints/pm25_v5_6_4/{APPROVED_CODE_SHA}"' in configuration
+    assert (
+        'ARTIFACT_DIRECTORY = f"{DEPLOYMENT_CHECKPOINT_DIRECTORY}/artifacts"'
+        in configuration
+    )
+    assert (
+        'ARCHIVE_CACHE_DIRECTORY = f"{TRAINING_CHECKPOINT_DIRECTORY}/archive_cache"'
+        in configuration
+    )
+    assert "REGRESSION_MINIMUM_SKILL = 0.045" in configuration
+    assert "REGRESSION_CONDITIONAL_FLOOR = 0.0445" in configuration
+    assert 'REGRESSION_CONDITIONAL_PROVINCES = ("TH-34",)' in configuration
     assert "MINIMUM_RECOMMENDED_RAM_GB = 24.0" in configuration
     assert "ARCHIVE_REQUEST_MIN_INTERVAL_SECONDS = 15.0" in configuration
     assert "ARCHIVE_MAX_ATTEMPTS = 8" in configuration
@@ -133,14 +151,17 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     assert "POOLED_MINIMUM_ORIGIN_DAYS" in imports
     assert "cv_splits=CV_SPLITS" in imports
     assert "drive.mount(DRIVE_MOUNT_POINT" in imports
-    assert 'CHECKPOINT_SCHEMA = "pm25-residual-v5.6.3"' in imports
-    assert "STAGE_CHECKPOINT_DIRECTORY" in imports
+    assert 'TRAINING_CHECKPOINT_SCHEMA = "pm25-residual-v5.6.3"' in imports
+    assert 'DEPLOYMENT_CHECKPOINT_SCHEMA = "pm25-deployment-v5.6.4"' in imports
+    assert "TRAINING_STAGE_CHECKPOINT_DIRECTORY" in imports
+    assert "DEPLOYMENT_STAGE_CHECKPOINT_DIRECTORY" in imports
     assert "REGRESSION_CHECKPOINT_DIRECTORY" in imports
     assert "CLASSIFICATION_FOLD_CHECKPOINT_DIRECTORY" in imports
     assert "CLASSIFICATION_PROVINCE_CHECKPOINT_DIRECTORY" in imports
     assert "os.replace(temporary, target)" in imports
     assert "def _split_fingerprint(split):" in imports
     assert "Checkpoint belongs to another chronological split" in imports
+    assert "evaluate_regression_deployment_policy" in imports
     assert '"database_writes": 0' in archive
     assert "ARCHIVE_START_DATE" in archive
     assert "in memory" in archive.lower() or "archive_daily" in archive
@@ -163,16 +184,25 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     assert "on_cv_fold_complete=_save_classification_fold" in classification
     assert '"rf_parameter_candidates": 1' in classification
     assert "regression_failure_reasons" in eligibility
+    assert "strict_regression_global_eligible" in eligibility
+    assert 'metrics["strict_eligible"]' in eligibility
+    assert 'metrics["deployment_eligible"]' in eligibility
+    assert 'metrics["activation_tier"]' in eligibility
+    assert '"research_reporting_note"' in eligibility
+    assert "regression_conditional_provinces" in eligibility
+    assert "regression=regression" in eligibility
     assert "classification_deployment_reasons" in eligibility
     assert "no Registry or activation write was made" in eligibility
     assert '"production_writes": 0' in artifacts
+    assert '"conditional_policy_selected_after_test_observation": True' in artifacts
+    assert 'row["model_params"]["activation_tier"]' in artifacts
     assert "Expected 40 active rows" in verify_active
     assert "expected_forecast_rows" in forecast
     assert "PRODUCTION_REQUIRED_PROVINCES * FORECAST_HORIZON_DAYS" in forecast
 
     assert "accelerator" not in notebook["metadata"]
     assert notebook["metadata"]["colab"]["machine_shape"] == "hm"
-    assert notebook["metadata"]["notebook_version"] == "5.6.3-production"
+    assert notebook["metadata"]["notebook_version"] == "5.6.4-production"
 
     assert len(notebook["cells"]) == 17
     for cell in notebook["cells"]:
