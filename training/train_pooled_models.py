@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +74,13 @@ DIRECT_HORIZONS = tuple(range(1, 8))
 MODEL_VERSION = "residual-dual-pm25-v2"
 REGRESSION_MODEL_NAME = "lightgbm-pm25-residual-v2"
 CLASSIFICATION_MODEL_NAME = "random-forest-aqi-classifier-pooled-v1"
+CLASSIFICATION_FIXED_PARAMETERS = {
+    "n_estimators": 400,
+    "max_depth": 14,
+    "min_samples_leaf": 2,
+    "max_features": "sqrt",
+}
+CLASSIFICATION_TEMPERATURES = (0.75, 1.0, 1.25, 1.5)
 
 
 @dataclass
@@ -97,6 +105,30 @@ class TrainedTask:
     global_eligible: bool
     global_reasons: list[str]
     province_metrics: dict[str, dict]
+    validation_predictions: np.ndarray | None = None
+    test_predictions: np.ndarray | None = None
+
+
+@dataclass
+class RegressionProvinceResult:
+    """Serializable unit of work used to resume province-local regression."""
+
+    province_id: str
+    model: object
+    runtime_artifact: dict
+    parameters: dict
+    validation_predictions: np.ndarray
+    test_predictions: np.ndarray
+    province_metrics: dict
+
+
+@dataclass
+class ClassificationFoldResult:
+    """Serializable out-of-fold probabilities for one pooled CV fold."""
+
+    fold_index: int
+    truth: np.ndarray
+    raw_probabilities: np.ndarray
 
 
 @dataclass
@@ -343,7 +375,7 @@ def _record_global_eligibility_context(
         metrics["global_gate_eligible"] = bool(global_eligible)
 
 
-def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
+def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
     province_ids = sorted(split.train["province_id"].unique())
     if province_ids != sorted(split.validation["province_id"].unique()) or province_ids != sorted(split.test["province_id"].unique()):
         raise ValueError("regression provinces differ across chronological partitions")
@@ -393,21 +425,13 @@ def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
         )
         raw_validation = np.asarray(validation_model.predict(X_validation), dtype=float)
         d1_validation = validation_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
-        selected_weight = max(
-            np.linspace(0.0, 1.5, 31),
-            key=lambda weight: (
-                1.0
-                - regression_metrics(
-                    y_validation_raw[d1_validation],
-                    baseline_validation[d1_validation] + float(weight) * raw_validation[d1_validation],
-                )["mae"]
-                / _regression_baseline(validation_rows.loc[d1_validation])[1]["mae"],
-                -regression_metrics(
-                    y_validation_raw[d1_validation],
-                    baseline_validation[d1_validation] + float(weight) * raw_validation[d1_validation],
-                )["mae"],
-            ),
+        candidate_weights = np.linspace(0.0, 1.5, 31)
+        d1_errors = np.abs(
+            y_validation_raw[d1_validation][None, :]
+            - baseline_validation[d1_validation][None, :]
+            - candidate_weights[:, None] * raw_validation[d1_validation][None, :]
         )
+        selected_weight = float(candidate_weights[np.argmin(d1_errors.mean(axis=1))])
         correction_weight = float(selected_weight) * 0.90
         local_validation_predictions = baseline_validation + correction_weight * raw_validation
 
@@ -564,54 +588,288 @@ def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
         global_eligible,
         reasons,
         province_metrics,
+        validation_predictions,
+        test_predictions,
     )
 
 
-def train_classification(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
+def train_regression(
+    split: PooledSplit,
+    config: PipelineConfig,
+    *,
+    province_results: Mapping[str, RegressionProvinceResult] | None = None,
+    on_province_complete: Callable[[RegressionProvinceResult], None] | None = None,
+) -> TrainedTask:
+    """Train or resume province-local regressors and assemble one global task.
+
+    Each province is an independent serializable unit. A caller can load prior
+    ``RegressionProvinceResult`` objects from durable storage and persist new
+    results through ``on_province_complete`` immediately after each province.
+    """
+    province_ids = sorted(split.train["province_id"].unique())
+    if (
+        province_ids != sorted(split.validation["province_id"].unique())
+        or province_ids != sorted(split.test["province_id"].unique())
+    ):
+        raise ValueError("regression provinces differ across chronological partitions")
+
+    completed = dict(province_results or {})
+    unexpected = sorted(set(completed) - set(province_ids))
+    if unexpected:
+        raise ValueError(f"unexpected regression province checkpoints: {unexpected}")
+
+    validation_predictions = np.full(len(split.validation), np.nan, dtype=float)
+    test_predictions = np.full(len(split.test), np.nan, dtype=float)
+    results: dict[str, RegressionProvinceResult] = {}
+
+    for province_id in province_ids:
+        validation_rows = split.validation[
+            split.validation["province_id"] == province_id
+        ]
+        test_rows = split.test[split.test["province_id"] == province_id]
+        result = completed.get(province_id)
+        if result is not None:
+            if result.province_id != province_id:
+                raise ValueError(
+                    f"regression checkpoint key {province_id} contains {result.province_id}"
+                )
+            if len(result.validation_predictions) != len(validation_rows):
+                raise ValueError(
+                    f"regression checkpoint validation rows changed for {province_id}"
+                )
+            if len(result.test_predictions) != len(test_rows):
+                raise ValueError(
+                    f"regression checkpoint test rows changed for {province_id}"
+                )
+            print(f"[Regression] resume completed province {province_id}", flush=True)
+        else:
+            local_split = PooledSplit(
+                train=split.train[split.train["province_id"] == province_id].copy(),
+                validation=validation_rows.copy(),
+                test=test_rows.copy(),
+                dropped_embargo_dates=list(split.dropped_embargo_dates),
+            )
+            local_task = _train_regression_batch(local_split, config)
+            if local_task.validation_predictions is None or local_task.test_predictions is None:
+                raise RuntimeError("province regression did not retain predictions")
+            result = RegressionProvinceResult(
+                province_id=province_id,
+                model=local_task.model[province_id],
+                runtime_artifact=local_task.runtime_artifact[province_id],
+                parameters=local_task.parameters["by_province"][province_id],
+                validation_predictions=np.asarray(
+                    local_task.validation_predictions, dtype=float
+                ),
+                test_predictions=np.asarray(local_task.test_predictions, dtype=float),
+                province_metrics=local_task.province_metrics[province_id],
+            )
+            if on_province_complete is not None:
+                on_province_complete(result)
+            print(f"[Regression] completed province {province_id}", flush=True)
+
+        validation_mask = split.validation["province_id"].to_numpy() == province_id
+        test_mask = split.test["province_id"].to_numpy() == province_id
+        validation_predictions[validation_mask] = result.validation_predictions
+        test_predictions[test_mask] = result.test_predictions
+        results[province_id] = result
+
+    if not np.all(np.isfinite(validation_predictions)) or not np.all(
+        np.isfinite(test_predictions)
+    ):
+        raise RuntimeError("residual LightGBM did not produce complete predictions")
+
+    y_validation = split.validation["target_pm25"].to_numpy(dtype=float)
+    validation_metrics = regression_metrics(y_validation, validation_predictions)
+    _, validation_baseline = _regression_baseline(split.validation)
+    validation_metrics["skill_vs_persistence"] = (
+        1.0 - validation_metrics["mae"] / validation_baseline["mae"]
+    )
+    validation_metrics["selection"] = (
+        "per-province validation grid with 0.90 shrinkage"
+    )
+    y_test = split.test["target_pm25"].to_numpy(dtype=float)
+    test_all = regression_metrics(y_test, test_predictions)
+    d1_mask = split.test["forecast_horizon_days"].to_numpy(dtype=int) == 1
+    d1_rows = split.test.loc[d1_mask]
+    d1_metrics = regression_metrics(y_test[d1_mask], test_predictions[d1_mask])
+    _, baseline_d1 = _regression_baseline(d1_rows)
+    d1_metrics["skill_vs_persistence"] = (
+        1.0 - d1_metrics["mae"] / baseline_d1["mae"]
+    )
+    d1_metrics["all_horizons"] = test_all
+    d1_metrics["by_horizon"] = _metrics_by_horizon(
+        split.test, test_predictions, task="regression"
+    )
+    aggregate_eligible, reasons = _regression_eligibility(
+        d1_metrics,
+        baseline_d1,
+        validation_metrics,
+        config,
+    )
+    province_metrics = {
+        province_id: result.province_metrics
+        for province_id, result in results.items()
+    }
+    failed_provinces = [
+        province_id
+        for province_id, metrics in province_metrics.items()
+        if not metrics["eligible"]
+    ]
+    global_eligible = bool(aggregate_eligible and not failed_provinces)
+    if failed_provinces:
+        reasons = [*reasons, f"province_gate_failed:{','.join(failed_provinces)}"]
+    _record_global_eligibility_context(province_metrics, global_eligible)
+
+    residuals = y_validation - validation_predictions
+    validation_horizons = split.validation["forecast_horizon_days"].to_numpy(
+        dtype=int
+    )
+    residual_quantiles = {
+        str(horizon): {
+            name: float(value)
+            for name, value in zip(
+                ("p10", "p50", "p90"),
+                np.quantile(
+                    residuals[validation_horizons == horizon],
+                    (0.10, 0.50, 0.90),
+                ),
+                strict=True,
+            )
+        }
+        for horizon in DIRECT_HORIZONS
+    }
+    return TrainedTask(
+        "regression",
+        POOLED_REGRESSION_FAMILY,
+        {province_id: result.model for province_id, result in results.items()},
+        validation_metrics,
+        d1_metrics,
+        baseline_d1,
+        {
+            "strategy": "per_province_residual_lightgbm",
+            "fixed_hyperparameters": {
+                key: value
+                for key, value in next(iter(results.values())).parameters.items()
+                if key
+                not in {
+                    "n_estimators",
+                    "validation_selected_correction_weight",
+                    "correction_weight",
+                    "selection_shrinkage",
+                    "target",
+                    "residual_quantiles_by_horizon",
+                }
+            },
+            "by_province": {
+                province_id: result.parameters
+                for province_id, result in results.items()
+            },
+        },
+        {
+            province_id: result.runtime_artifact
+            for province_id, result in results.items()
+        },
+        residual_quantiles,
+        global_eligible,
+        reasons,
+        province_metrics,
+        validation_predictions,
+        test_predictions,
+    )
+
+
+def train_classification(
+    split: PooledSplit,
+    config: PipelineConfig,
+    *,
+    cv_fold_results: Mapping[int, ClassificationFoldResult] | None = None,
+    on_cv_fold_complete: Callable[[ClassificationFoldResult], None] | None = None,
+) -> TrainedTask:
     X_train, y_train = _xy(split.train, "target_air_quality_class")
     X_validation, y_validation = _xy(split.validation, "target_air_quality_class")
     cv_folds = pooled_walk_forward_folds(split.train, config.cv_splits)
-    candidates = (
-        {"n_estimators": 400, "max_depth": 14, "min_samples_leaf": 2, "max_features": "sqrt"},
-        {"n_estimators": 500, "max_depth": None, "min_samples_leaf": 3, "max_features": "sqrt"},
-        {"n_estimators": 400, "max_depth": 18, "min_samples_leaf": 4, "max_features": 0.7},
-    )
-    best: tuple[tuple[float, ...], dict, dict] | None = None
-    for candidate in candidates:
-        fold_truth = []
-        fold_raw_probabilities = []
-        for fold_train, fold_validation in cv_folds:
-            X_fold_train, y_fold_train = _xy(fold_train, "target_air_quality_class")
-            X_fold_validation, y_fold_validation = _xy(fold_validation, "target_air_quality_class")
-            model = RandomForestClassifier(
+    cached_folds = dict(cv_fold_results or {})
+    unexpected_folds = sorted(set(cached_folds) - set(range(len(cv_folds))))
+    if unexpected_folds:
+        raise ValueError(
+            f"unexpected classification fold checkpoints: {unexpected_folds}"
+        )
+    candidate = dict(CLASSIFICATION_FIXED_PARAMETERS)
+    fold_truth = []
+    fold_raw_probabilities = []
+    for fold_index, (fold_train, fold_validation) in enumerate(cv_folds):
+        fold_result = cached_folds.get(fold_index)
+        if fold_result is not None:
+            if fold_result.fold_index != fold_index:
+                raise ValueError(
+                    f"classification fold checkpoint {fold_index} contains "
+                    f"fold {fold_result.fold_index}"
+                )
+            if len(fold_result.truth) != len(fold_validation):
+                raise ValueError(
+                    f"classification fold rows changed for fold {fold_index}"
+                )
+            if fold_result.raw_probabilities.shape != (
+                len(fold_validation),
+                len(CLASS_IDS),
+            ):
+                raise ValueError(
+                    f"classification probability shape changed for fold {fold_index}"
+                )
+            print(f"[Classification] resume completed CV fold {fold_index + 1}", flush=True)
+        else:
+            X_fold_train, y_fold_train = _xy(
+                fold_train, "target_air_quality_class"
+            )
+            X_fold_validation, y_fold_validation = _xy(
+                fold_validation, "target_air_quality_class"
+            )
+            fold_model = RandomForestClassifier(
                 class_weight="balanced_subsample",
                 random_state=config.random_seed,
                 n_jobs=-1,
                 **candidate,
             )
-            model.fit(X_fold_train, y_fold_train)
-            fold_truth.append(y_fold_validation)
-            fold_raw_probabilities.append(_aligned_rf_probabilities(model, X_fold_validation))
-        truth = np.concatenate(fold_truth)
-        raw_probabilities = np.concatenate(fold_raw_probabilities)
-        for temperature in (0.75, 1.0, 1.25, 1.5):
-            probabilities = _temperature_scale(raw_probabilities, temperature)
-            predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
-            metrics = classification_metrics(truth, predictions, probabilities)
-            critical = min(
-                metrics["per_class"][str(class_id)]["recall"]
-                if metrics["per_class"][str(class_id)]["support"] >= config.critical_class_minimum_support
-                else 0.0
-                for class_id in (4, 5)
+            fold_model.fit(X_fold_train, y_fold_train)
+            fold_result = ClassificationFoldResult(
+                fold_index=fold_index,
+                truth=np.asarray(y_fold_validation),
+                raw_probabilities=_aligned_rf_probabilities(
+                    fold_model, X_fold_validation
+                ),
             )
-            key = (
-                metrics["macro_f1"],
-                critical,
-                metrics["balanced_accuracy"],
-                -float(metrics["log_loss"] or 1e9),
-            )
-            if best is None or key > best[0]:
-                best = (key, {**candidate, "temperature": temperature}, metrics)
+            if on_cv_fold_complete is not None:
+                on_cv_fold_complete(fold_result)
+            print(f"[Classification] completed CV fold {fold_index + 1}", flush=True)
+        fold_truth.append(np.asarray(fold_result.truth))
+        fold_raw_probabilities.append(
+            np.asarray(fold_result.raw_probabilities, dtype=float)
+        )
+
+    truth = np.concatenate(fold_truth)
+    raw_probabilities = np.concatenate(fold_raw_probabilities)
+    best: tuple[tuple[float, ...], dict, dict] | None = None
+    for temperature in CLASSIFICATION_TEMPERATURES:
+        scaled_probabilities = _temperature_scale(raw_probabilities, temperature)
+        cv_predictions = np.asarray(CLASS_IDS)[
+            np.argmax(scaled_probabilities, axis=1)
+        ]
+        metrics = classification_metrics(truth, cv_predictions, scaled_probabilities)
+        critical = min(
+            metrics["per_class"][str(class_id)]["recall"]
+            if metrics["per_class"][str(class_id)]["support"]
+            >= config.critical_class_minimum_support
+            else 0.0
+            for class_id in (4, 5)
+        )
+        key = (
+            metrics["macro_f1"],
+            critical,
+            metrics["balanced_accuracy"],
+            -float(metrics["log_loss"] or 1e9),
+        )
+        if best is None or key > best[0]:
+            best = (key, {**candidate, "temperature": temperature}, metrics)
     assert best is not None
     parameters = best[1]
 
@@ -628,6 +886,13 @@ def train_classification(split: PooledSplit, config: PipelineConfig) -> TrainedT
     validation_predictions = np.asarray(CLASS_IDS)[np.argmax(validation_probabilities, axis=1)]
     validation_metrics = classification_metrics(y_validation, validation_predictions, validation_probabilities)
     validation_metrics["rolling_cv"] = best[2]
+    validation_metrics["rolling_cv_policy"] = {
+        "model_parameters": candidate,
+        "folds": len(cv_folds),
+        "model_parameter_candidates": 1,
+        "temperature_candidates": list(CLASSIFICATION_TEMPERATURES),
+        "selection": "one reviewed Random Forest configuration; temperature only",
+    }
 
     fit_rows = pd.concat([split.train, split.validation], ignore_index=True)
     X_fit, y_fit = _xy(fit_rows, "target_air_quality_class")

@@ -101,12 +101,14 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     archive = _cell_source(notebook, "fetch_quality")
     split = _cell_source(notebook, "split_audit")
     regression = _cell_source(notebook, "train_regression")
+    classification = _cell_source(notebook, "train_classification")
     eligibility = _cell_source(notebook, "eligibility")
     artifacts = _cell_source(notebook, "artifacts")
     verify_active = _cell_source(notebook, "verify_active")
     forecast = _cell_source(notebook, "forecast_verify")
 
     assert f'APPROVED_CODE_SHA = "{approved_sha}"' in configuration
+    assert 'os.environ["CUDA_VISIBLE_DEVICES"] = ""' in configuration
     assert "REGISTER = True" in configuration
     assert "ACTIVATE = True" in configuration
     assert "RUN_FORECAST = True" in configuration
@@ -119,12 +121,26 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     assert '"test_weighted_f1": 0.60' in configuration
     assert '"critical_recall": 0.35' in configuration
     assert '"critical_support": 5' in configuration
-    assert 'ARCHIVE_CACHE_DIRECTORY = "/content/open_meteo_archive_v5_6_2"' in configuration
+    assert "CHECKPOINT_DIRECTORY = (" in configuration
+    assert "/MyDrive/THAI-AIR-INTELLIGENCE-LITE/" in configuration
+    assert 'f"checkpoints/pm25_v5_6_3/{APPROVED_CODE_SHA}"' in configuration
+    assert 'ARTIFACT_DIRECTORY = f"{CHECKPOINT_DIRECTORY}/artifacts"' in configuration
+    assert 'ARCHIVE_CACHE_DIRECTORY = f"{CHECKPOINT_DIRECTORY}/archive_cache"' in configuration
+    assert "MINIMUM_RECOMMENDED_RAM_GB = 24.0" in configuration
     assert "ARCHIVE_REQUEST_MIN_INTERVAL_SECONDS = 15.0" in configuration
     assert "ARCHIVE_MAX_ATTEMPTS = 8" in configuration
     assert "ARCHIVE_MAX_BACKOFF_SECONDS = 300.0" in configuration
     assert "POOLED_MINIMUM_ORIGIN_DAYS" in imports
     assert "cv_splits=CV_SPLITS" in imports
+    assert "drive.mount(DRIVE_MOUNT_POINT" in imports
+    assert 'CHECKPOINT_SCHEMA = "pm25-residual-v5.6.3"' in imports
+    assert "STAGE_CHECKPOINT_DIRECTORY" in imports
+    assert "REGRESSION_CHECKPOINT_DIRECTORY" in imports
+    assert "CLASSIFICATION_FOLD_CHECKPOINT_DIRECTORY" in imports
+    assert "CLASSIFICATION_PROVINCE_CHECKPOINT_DIRECTORY" in imports
+    assert "os.replace(temporary, target)" in imports
+    assert "def _split_fingerprint(split):" in imports
+    assert "Checkpoint belongs to another chronological split" in imports
     assert '"database_writes": 0' in archive
     assert "ARCHIVE_START_DATE" in archive
     assert "in memory" in archive.lower() or "archive_daily" in archive
@@ -138,7 +154,14 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     assert 'split_origin_dates["validation"] != FULL_YEAR_HOLDOUT_DAYS' in split
     assert 'split_origin_dates["test"] != FULL_YEAR_HOLDOUT_DAYS' in split
     assert "2 * POOLED_EMBARGO_DAYS" in split
+    assert "training_split_fingerprint = _split_fingerprint(split)" in split
     assert '"local_eligible", "global_gate_eligible"' in regression
+    assert "province_results=completed_regression_provinces" in regression
+    assert "on_province_complete=_save_regression_province" in regression
+    assert "already complete; skipped all 20 province fits" in regression
+    assert "cv_fold_results=completed_classification_folds" in classification
+    assert "on_cv_fold_complete=_save_classification_fold" in classification
+    assert '"rf_parameter_candidates": 1' in classification
     assert "regression_failure_reasons" in eligibility
     assert "classification_deployment_reasons" in eligibility
     assert "no Registry or activation write was made" in eligibility
@@ -146,6 +169,10 @@ def test_production_builder_pins_reviewed_policy_and_archive(tmp_path):
     assert "Expected 40 active rows" in verify_active
     assert "expected_forecast_rows" in forecast
     assert "PRODUCTION_REQUIRED_PROVINCES * FORECAST_HORIZON_DAYS" in forecast
+
+    assert "accelerator" not in notebook["metadata"]
+    assert notebook["metadata"]["colab"]["machine_shape"] == "hm"
+    assert notebook["metadata"]["notebook_version"] == "5.6.3-production"
 
     assert len(notebook["cells"]) == 17
     for cell in notebook["cells"]:

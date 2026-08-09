@@ -26,11 +26,15 @@ from training.dual_model_config import (
 )
 from training.pm25_classes import THRESHOLD_VERSION
 from training.train_pooled_models import (
+    DIRECT_HORIZONS,
+    PooledSplit,
     PooledResult,
+    RegressionProvinceResult,
     _record_global_eligibility_context,
     build_pooled_examples,
     pooled_chronological_split,
     pooled_walk_forward_folds,
+    train_regression,
     upload_and_register,
 )
 
@@ -131,6 +135,71 @@ def test_global_regression_gate_does_not_overwrite_local_eligibility():
         metrics["global_gate_eligible"] is False
         for metrics in province_metrics.values()
     )
+
+
+def test_regression_resume_skips_every_completed_province(monkeypatch):
+    province_ids = ("TH-30", "TH-31")
+
+    def frame(target_offset):
+        rows = []
+        for province_index, province_id in enumerate(province_ids):
+            for horizon in DIRECT_HORIZONS:
+                rows.append({
+                    "province_id": province_id,
+                    "forecast_horizon_days": horizon,
+                    "target_pm25": 20.0 + province_index + horizon + target_offset,
+                    "pm25_mean": 19.0 + province_index + horizon + target_offset,
+                    "date": pd.Timestamp("2025-01-01") + pd.Timedelta(days=horizon),
+                })
+        return pd.DataFrame(rows)
+
+    split = PooledSplit(
+        train=frame(-2.0),
+        validation=frame(-1.0),
+        test=frame(0.0),
+        dropped_embargo_dates=[],
+    )
+    completed = {}
+    for province_id in province_ids:
+        validation_rows = split.validation.query("province_id == @province_id")
+        test_rows = split.test.query("province_id == @province_id")
+        completed[province_id] = RegressionProvinceResult(
+            province_id=province_id,
+            model=object(),
+            runtime_artifact={"province_id": province_id},
+            parameters={"num_leaves": 31},
+            validation_predictions=validation_rows["target_pm25"].to_numpy(),
+            test_predictions=test_rows["target_pm25"].to_numpy(),
+            province_metrics={
+                "eligible": True,
+                "eligibility_reasons": ["eligible"],
+                "mae": 0.0,
+                "rmse": 0.0,
+                "r2": 1.0,
+                "skill_vs_persistence": 1.0,
+            },
+        )
+
+    def fail_if_trained(*_args, **_kwargs):
+        raise AssertionError("completed province was retrained")
+
+    monkeypatch.setattr(
+        "training.train_pooled_models._train_regression_batch",
+        fail_if_trained,
+    )
+    callbacks = []
+    result = train_regression(
+        split,
+        PipelineConfig(minimum_validation_rows=1, minimum_test_rows=1),
+        province_results=completed,
+        on_province_complete=callbacks.append,
+    )
+
+    assert callbacks == []
+    assert set(result.model) == set(province_ids)
+    assert set(result.province_metrics) == set(province_ids)
+    assert result.test_predictions is not None
+    assert np.all(np.isfinite(result.test_predictions))
 
 
 def test_lightgbm_portable_tree_matches_native_predictions():
