@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: pm25-monthly-dry-run-smoke
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   retrain-evaluate-dry-run:
