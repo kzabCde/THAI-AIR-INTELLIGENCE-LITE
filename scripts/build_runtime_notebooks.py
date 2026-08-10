@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build reviewed v5.6.2 Colab notebooks from the checked-in templates."""
+"""Build reviewed v5.6.4 Colab notebooks from the checked-in templates."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ PRODUCTION_TEMPLATE = (
 SAFE_NOTEBOOKS = (
     ROOT / "training/train_dual_models_pm25.ipynb",
     ROOT / "training/train_all_6_models_pm25.ipynb",
+)
+TRAINING_CHECKPOINT_COMPATIBILITY_SHA = (
+    "b4436227a2471e65c40fae1515deabb3bf880c7f"
 )
 
 
@@ -65,19 +68,28 @@ def _build_current_production(
     output: Path,
 ) -> None:
     """Build the reviewed 17-cell Production notebook topology."""
+    metadata = notebook.setdefault("metadata", {})
+    metadata.pop("accelerator", None)
+    metadata["notebook_version"] = "5.6.4-production"
+    metadata["approved_code_sha"] = approved_sha
+    metadata.setdefault("colab", {})["machine_shape"] = "hm"
     _set(
         notebook,
         "intro",
         """
-# Thai Air Intelligence — Production Dual-Model PM2.5 v5.6.2
+# Thai Air Intelligence — Production Dual-Model PM2.5 v5.6.4
 
 This reviewed Colab notebook trains 20 province-local residual LightGBM regressors and one pooled Random Forest classifier. Validation and Test each contain exactly 365 origin dates, with a seven-day embargo at both chronological boundaries and at least 90 training origin dates.
 
-The all-or-nothing deployment gate requires regression MAE Skill versus Persistence of at least 4.5% globally and for every province. Classification requires Test Accuracy ≥ 0.65, Macro F1 ≥ 0.50, Balanced Accuracy ≥ 0.50, Weighted F1 ≥ 0.60, and Recall ≥ 0.35 for Classes 4 and 5 with at least five examples each.
+The strict research gate remains regression MAE Skill versus Persistence of at least 4.5% globally and for every province. The reviewed operational policy permits only TH-34 to deploy conditionally at Skill 4.45%–<4.50% when it is the sole strict failure, its only failure reason is `skill_below_threshold`, Validation and Test each contain 365 rows, and MAE remains below Persistence. The notebook records strict and deployment eligibility separately; it never reports a conditional deployment as a strict research pass. Classification requires Test Accuracy ≥ 0.65, Macro F1 ≥ 0.50, Balanced Accuracy ≥ 0.50, Weighted F1 ≥ 0.60, and Recall ≥ 0.35 for Classes 4 and 5 with at least five examples each.
 
-Open-Meteo CAMS PM2.5 and Historical Weather data are used only as an in-memory archive before the first trusted database date. The archive is never written to Supabase, and database rows win at the boundary.
+Open-Meteo CAMS PM2.5 and Historical Weather data are used only as an in-memory archive before the first trusted database date. Successful archive responses and training checkpoints persist under Google Drive so a replacement runtime resumes completed work. The archive is never written to Supabase, and database rows win at the boundary.
 
-Promotion is all-or-nothing: the notebook creates 40 inactive task/province candidates backed by 20 residual LightGBM artifacts and one pooled Random Forest artifact, invokes one atomic activation RPC, generates seven forecast days, and verifies 40 active rows plus 140 forecast rows.
+Run Regression and Classification as separate phases. v5.6.4 reuses the reviewed v5.6.3 Training checkpoints pinned to their original code SHA, while writing eligibility, artifacts, activation, and forecast state only under the new deployment SHA. Promotion remains all-or-nothing: only after both phases satisfy the reviewed deployment policy for all 20 provinces does the notebook create 40 inactive candidates, invoke one atomic activation RPC, generate seven forecast days, and verify 40 active rows plus 140 forecast rows.
+
+Recommended execution: run Cells 1–9 for the Regression phase. For a fresh Classification runtime, rerun Cells 1–5 and then Cell 10; it restores the split and Regression result from Drive. Run Cells 11–16 only after both phase summaries are complete. Do not use `Run all` for the first long training attempt.
+
+Use a CPU High-RAM runtime. LightGBM and Random Forest are configured for CPU parallelism; selecting a GPU wastes the separate Colab GPU quota without accelerating this pipeline.
 
 Required Colab Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ML_SECRET`, and either `ML_FORECAST_URL` or `WEBSITE_URL`.
 """,
@@ -86,28 +98,48 @@ Required Colab Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ML_SECRET`
         notebook,
         "configuration",
         f"""
-# 1. Reviewed Production configuration — v5.6.2
+# 1. Reviewed Production configuration — v5.6.4
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 REGISTER = True
 ACTIVATE = True
 RUN_FORECAST = True
-PRODUCTION_APPROVAL = "APPROVED_RESIDUAL_DUAL_MODEL_V5_6_2"
+PRODUCTION_APPROVAL = "APPROVED_RESIDUAL_DUAL_MODEL_V5_6_4_CONDITIONAL_TH34"
 APPROVED_CODE_SHA = "{approved_sha}"
+TRAINING_CHECKPOINT_COMPATIBILITY_SHA = "{TRAINING_CHECKPOINT_COMPATIBILITY_SHA}"
 
 PROVINCE = "all"
 MINIMUM_ROWS = 834  # 90 train + 365 validation + 365 test + 14 embargo
 CV_SPLITS = 5
-ARTIFACT_DIRECTORY = "training/artifacts"
 ALLOWED_SOURCES = {{"open-meteo"}}
 FORECAST_HORIZON_DAYS = 7
 PRODUCTION_REQUIRED_PROVINCES = 20
 REGRESSION_MINIMUM_SKILL = 0.045
-CHECKPOINT_FILE = "/content/pm25_v5_6_2_checkpoint.joblib"
+REGRESSION_CONDITIONAL_FLOOR = 0.0445
+REGRESSION_CONDITIONAL_PROVINCES = ("TH-34",)
+DRIVE_MOUNT_POINT = "/content/drive"
+TRAINING_CHECKPOINT_DIRECTORY = (
+    f"{{DRIVE_MOUNT_POINT}}/MyDrive/THAI-AIR-INTELLIGENCE-LITE/"
+    f"checkpoints/pm25_v5_6_3/{{TRAINING_CHECKPOINT_COMPATIBILITY_SHA}}"
+)
+DEPLOYMENT_CHECKPOINT_DIRECTORY = (
+    f"{{DRIVE_MOUNT_POINT}}/MyDrive/THAI-AIR-INTELLIGENCE-LITE/"
+    f"checkpoints/pm25_v5_6_4/{{APPROVED_CODE_SHA}}"
+)
+ARTIFACT_DIRECTORY = f"{{DEPLOYMENT_CHECKPOINT_DIRECTORY}}/artifacts"
+REQUEST_CPU_HIGH_RAM = True
+MINIMUM_RECOMMENDED_RAM_GB = 24.0
 
 USE_IN_MEMORY_ARCHIVE = True
 ARCHIVE_START_DATE = "2022-08-01"
 ARCHIVE_CHUNK_DAYS = 365
 ARCHIVE_PROVINCE_BATCH_SIZE = 5
 ARCHIVE_REQUEST_TIMEOUT_SECONDS = 180
+ARCHIVE_CACHE_DIRECTORY = f"{{TRAINING_CHECKPOINT_DIRECTORY}}/archive_cache"
+ARCHIVE_REQUEST_MIN_INTERVAL_SECONDS = 15.0
+ARCHIVE_MAX_ATTEMPTS = 8
+ARCHIVE_MAX_BACKOFF_SECONDS = 300.0
 MINIMUM_ANNUAL_CYCLES = 3
 FULL_YEAR_HOLDOUT_DAYS = 365
 POOLED_EMBARGO_DAYS = 7
@@ -123,8 +155,8 @@ CLASSIFICATION_DEPLOYMENT_THRESHOLDS = {{
 }}
 
 if not (REGISTER and ACTIVATE and RUN_FORECAST):
-    raise ValueError("v5.6.2 Production requires REGISTER=True, ACTIVATE=True, RUN_FORECAST=True")
-if PRODUCTION_APPROVAL != "APPROVED_RESIDUAL_DUAL_MODEL_V5_6_2":
+    raise ValueError("v5.6.4 Production requires REGISTER=True, ACTIVATE=True, RUN_FORECAST=True")
+if PRODUCTION_APPROVAL != "APPROVED_RESIDUAL_DUAL_MODEL_V5_6_4_CONDITIONAL_TH34":
     raise ValueError("Production approval token is missing")
 if len(APPROVED_CODE_SHA) != 40:
     raise ValueError("APPROVED_CODE_SHA must be a reviewed 40-character commit SHA")
@@ -133,12 +165,74 @@ if PROVINCE != "all" or PRODUCTION_REQUIRED_PROVINCES != 20:
 if MINIMUM_ROWS < 834 or CV_SPLITS != 5:
     raise ValueError("Production requires at least 834 origin dates and exactly five CV splits")
 print({{
-    "notebook_version": "5.6.2",
+    "notebook_version": "5.6.4",
     "mode": "production_register_activate_forecast",
     "approved_code_sha": APPROVED_CODE_SHA,
+    "training_checkpoint_compatibility_sha": TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
     "regression_minimum_skill": REGRESSION_MINIMUM_SKILL,
+    "regression_conditional_floor": REGRESSION_CONDITIONAL_FLOOR,
+    "regression_conditional_provinces": list(REGRESSION_CONDITIONAL_PROVINCES),
+    "runtime": "cpu_high_ram_requested",
+    "training_checkpoint_directory": TRAINING_CHECKPOINT_DIRECTORY,
+    "deployment_checkpoint_directory": DEPLOYMENT_CHECKPOINT_DIRECTORY,
     "archive_database_writes": 0,
 }})
+""",
+    )
+    _set(
+        notebook,
+        "abi_preflight",
+        """
+# 3. CPU High-RAM and scientific-stack preflight
+import os
+import platform
+from pathlib import Path
+
+import lightgbm
+import numpy as np
+import pandas as pd
+import sklearn
+from lightgbm import LGBMRegressor
+from sklearn.ensemble import RandomForestClassifier
+
+cpu_count = os.cpu_count() or 1
+try:
+    runtime_ram_gb = (
+        os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3)
+    )
+except (AttributeError, OSError, ValueError):
+    runtime_ram_gb = float("nan")
+gpu_allocated = Path("/dev/nvidia0").exists()
+if gpu_allocated:
+    print(
+        "WARNING: This notebook is CPU-only. Choose Runtime > Change runtime type > "
+        "Hardware accelerator: None to preserve GPU quota."
+    )
+if np.isfinite(runtime_ram_gb) and runtime_ram_gb < MINIMUM_RECOMMENDED_RAM_GB:
+    print(
+        f"WARNING: {runtime_ram_gb:.1f} GiB RAM detected; CPU High-RAM "
+        f"({MINIMUM_RECOMMENDED_RAM_GB:.0f}+ GiB recommended) was requested but is not available."
+    )
+
+probe_X = np.asarray([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+LGBMRegressor(n_estimators=2, n_jobs=-1, verbose=-1).fit(
+    probe_X, probe_X[:, 0]
+).predict(probe_X[:1])
+RandomForestClassifier(n_estimators=2, n_jobs=-1, random_state=42).fit(
+    probe_X, [1, 1, 2, 2]
+).predict_proba(probe_X[:1])
+print({
+    "runtime": "cpu_high_ram",
+    "cpu_threads": cpu_count,
+    "ram_gib": None if not np.isfinite(runtime_ram_gb) else round(runtime_ram_gb, 1),
+    "gpu_allocated_but_disabled": gpu_allocated,
+    "python": platform.python_version(),
+    "numpy": np.__version__,
+    "pandas": pd.__version__,
+    "scikit_learn": sklearn.__version__,
+    "lightgbm": lightgbm.__version__,
+})
+print("CPU/scientific environment check passed")
 """,
     )
     _set(
@@ -149,6 +243,7 @@ print({{
 import hashlib
 import json
 import math
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -156,8 +251,14 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from google.colab import drive
 
 from api.ml.portable_trees import ARTIFACT_SCHEMA, decode_artifact
+from training.deployment_policy import (
+    REGRESSION_CONDITIONAL_OVERRIDE_REASON,
+    REGRESSION_CONDITIONAL_POLICY,
+    evaluate_regression_deployment_policy,
+)
 from training.dual_model_config import (
     FALLBACK_MODEL_NAME,
     FALLBACK_STRATEGY,
@@ -180,7 +281,9 @@ from training.train_pooled_models import (
     CLASSIFICATION_MODEL_NAME,
     DIRECT_HORIZONS,
     REGRESSION_MODEL_NAME,
+    ClassificationFoldResult,
     PooledResult,
+    RegressionProvinceResult,
     build_pooled_examples,
     build_registry_rows,
     fetch_province_metadata,
@@ -191,6 +294,33 @@ from training.train_pooled_models import (
     train_regression,
     upload_and_register,
 )
+
+drive.mount(DRIVE_MOUNT_POINT, force_remount=False)
+TRAINING_CHECKPOINT_ROOT = Path(TRAINING_CHECKPOINT_DIRECTORY)
+DEPLOYMENT_CHECKPOINT_ROOT = Path(DEPLOYMENT_CHECKPOINT_DIRECTORY)
+TRAINING_STAGE_CHECKPOINT_DIRECTORY = TRAINING_CHECKPOINT_ROOT / "stages"
+DEPLOYMENT_STAGE_CHECKPOINT_DIRECTORY = DEPLOYMENT_CHECKPOINT_ROOT / "stages"
+REGRESSION_CHECKPOINT_DIRECTORY = (
+    TRAINING_CHECKPOINT_ROOT / "regression" / "provinces"
+)
+CLASSIFICATION_FOLD_CHECKPOINT_DIRECTORY = (
+    TRAINING_CHECKPOINT_ROOT / "classification" / "folds"
+)
+CLASSIFICATION_PROVINCE_CHECKPOINT_DIRECTORY = (
+    DEPLOYMENT_CHECKPOINT_ROOT / "classification" / "provinces"
+)
+for directory in (
+    TRAINING_CHECKPOINT_ROOT,
+    DEPLOYMENT_CHECKPOINT_ROOT,
+    TRAINING_STAGE_CHECKPOINT_DIRECTORY,
+    DEPLOYMENT_STAGE_CHECKPOINT_DIRECTORY,
+    REGRESSION_CHECKPOINT_DIRECTORY,
+    CLASSIFICATION_FOLD_CHECKPOINT_DIRECTORY,
+    CLASSIFICATION_PROVINCE_CHECKPOINT_DIRECTORY,
+    Path(ARTIFACT_DIRECTORY),
+    Path(ARCHIVE_CACHE_DIRECTORY),
+):
+    directory.mkdir(parents=True, exist_ok=True)
 
 if MINIMUM_ROWS != POOLED_MINIMUM_ORIGIN_DAYS:
     raise ValueError(
@@ -228,41 +358,267 @@ print({
     "activate": ACTIVATE,
 })
 
-CHECKPOINT_PATH = Path(CHECKPOINT_FILE)
-CHECKPOINT_SCHEMA = "pm25-residual-v5.6.2"
+TRAINING_CHECKPOINT_SCHEMA = "pm25-residual-v5.6.3"
+DEPLOYMENT_CHECKPOINT_SCHEMA = "pm25-deployment-v5.6.4"
+TRAINING_CHECKPOINT_STAGES = (
+    "split",
+    "regression",
+    "classification",
+)
+DEPLOYMENT_CHECKPOINT_STAGES = (
+    "eligibility",
+    "artifacts",
+    "activated",
+)
+CHECKPOINT_STAGES = TRAINING_CHECKPOINT_STAGES + DEPLOYMENT_CHECKPOINT_STAGES
+
+def _checkpoint_contract(stage):
+    if stage in TRAINING_CHECKPOINT_STAGES:
+        return (
+            TRAINING_STAGE_CHECKPOINT_DIRECTORY,
+            TRAINING_CHECKPOINT_SCHEMA,
+            TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
+        )
+    if stage in DEPLOYMENT_CHECKPOINT_STAGES:
+        return (
+            DEPLOYMENT_STAGE_CHECKPOINT_DIRECTORY,
+            DEPLOYMENT_CHECKPOINT_SCHEMA,
+            APPROVED_CODE_SHA,
+        )
+    raise ValueError(f"Unknown checkpoint stage: {stage}")
+
+def _stage_checkpoint_path(stage):
+    directory, _, _ = _checkpoint_contract(stage)
+    return directory / f"{stage}.joblib"
+
+def _atomic_joblib_dump(payload, target):
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    joblib.dump(payload, temporary, compress=3)
+    os.replace(temporary, target)
+
+def _load_checkpoint_payload(
+    path,
+    expected_split_fingerprint=None,
+    *,
+    expected_schema,
+    expected_code_sha,
+):
+    path = Path(path)
+    payload = joblib.load(path)
+    if payload.get("schema") != expected_schema:
+        raise RuntimeError(f"Checkpoint schema mismatch: {path}")
+    if payload.get("approved_code_sha") != expected_code_sha:
+        raise RuntimeError(f"Checkpoint belongs to another reviewed commit: {path}")
+    if (
+        expected_split_fingerprint is not None
+        and payload.get("split_fingerprint") != expected_split_fingerprint
+    ):
+        raise RuntimeError(f"Checkpoint belongs to another chronological split: {path}")
+    return payload
+
+def _split_fingerprint(split):
+    digest = hashlib.sha256()
+    columns = [
+        "province_id",
+        "date",
+        "target_date",
+        "forecast_horizon_days",
+        "target_pm25",
+        "target_air_quality_class",
+        *POOLED_FEATURE_COLUMNS,
+    ]
+    for split_name, frame in (
+        ("train", split.train),
+        ("validation", split.validation),
+        ("test", split.test),
+    ):
+        digest.update(split_name.encode("utf-8"))
+        digest.update(
+            pd.util.hash_pandas_object(
+                frame.loc[:, columns], index=False, categorize=True
+            ).to_numpy().tobytes()
+        )
+    return digest.hexdigest()
 
 def _save_checkpoint(stage, **state):
+    target = _stage_checkpoint_path(stage)
+    _, schema, checkpoint_code_sha = _checkpoint_contract(stage)
     payload = {
-        "schema": CHECKPOINT_SCHEMA,
-        "approved_code_sha": APPROVED_CODE_SHA,
+        "schema": schema,
+        "approved_code_sha": checkpoint_code_sha,
+        "deployment_code_sha": APPROVED_CODE_SHA,
         "stage": stage,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
         **state,
     }
-    joblib.dump(payload, CHECKPOINT_PATH, compress=3)
-    print({"checkpoint": str(CHECKPOINT_PATH), "stage": stage})
+    if "training_split_fingerprint" in globals():
+        payload.setdefault("split_fingerprint", training_split_fingerprint)
+    _atomic_joblib_dump(payload, target)
+    print({"checkpoint": str(target), "stage": stage})
 
-def _restore_checkpoint(required):
-    if not CHECKPOINT_PATH.exists():
-        raise RuntimeError(
-            "No compatible checkpoint exists. Run Configuration through the chronological split first."
-        )
-    payload = joblib.load(CHECKPOINT_PATH)
-    if payload.get("schema") != CHECKPOINT_SCHEMA:
-        raise RuntimeError("Checkpoint schema does not match v5.6.2")
-    if payload.get("approved_code_sha") != APPROVED_CODE_SHA:
-        raise RuntimeError("Checkpoint belongs to a different reviewed code commit")
+def _restore_stage(stage, required):
+    target = _stage_checkpoint_path(stage)
+    if not target.exists():
+        return False
+    _, schema, checkpoint_code_sha = _checkpoint_contract(stage)
+    payload = _load_checkpoint_payload(
+        target,
+        globals().get("training_split_fingerprint"),
+        expected_schema=schema,
+        expected_code_sha=checkpoint_code_sha,
+    )
     missing = [name for name in required if name not in payload]
     if missing:
-        raise RuntimeError(f"Checkpoint stage {payload.get('stage')} is missing: {missing}")
+        raise RuntimeError(f"Checkpoint stage {stage} is missing: {missing}")
     globals().update({name: payload[name] for name in required})
-    print({"restored_checkpoint": str(CHECKPOINT_PATH), "stage": payload.get("stage")})
+    print({"restored_checkpoint": str(target), "stage": stage})
+    return True
+
+def _restore_checkpoint(required):
+    restored = {}
+    split_target = _stage_checkpoint_path("split")
+    _, split_schema, split_code_sha = _checkpoint_contract("split")
+    split_payload = (
+        _load_checkpoint_payload(
+            split_target,
+            expected_schema=split_schema,
+            expected_code_sha=split_code_sha,
+        )
+        if split_target.exists()
+        else None
+    )
+    expected_split_fingerprint = (
+        split_payload.get("split_fingerprint") if split_payload else None
+    )
+    if split_payload and "training_split_fingerprint" in split_payload:
+        restored["training_split_fingerprint"] = split_payload[
+            "training_split_fingerprint"
+        ]
+    for stage in reversed(CHECKPOINT_STAGES):
+        target = _stage_checkpoint_path(stage)
+        if not target.exists():
+            continue
+        _, schema, checkpoint_code_sha = _checkpoint_contract(stage)
+        payload = _load_checkpoint_payload(
+            target,
+            expected_split_fingerprint,
+            expected_schema=schema,
+            expected_code_sha=checkpoint_code_sha,
+        )
+        for name in required:
+            if name not in restored and name in payload:
+                restored[name] = payload[name]
+    missing = [name for name in required if name not in restored]
+    if missing:
+        raise RuntimeError(
+            "No compatible persistent checkpoint contains: " + ", ".join(missing)
+        )
+    globals().update(restored)
+    print({
+        "training_checkpoint_root": str(TRAINING_CHECKPOINT_ROOT),
+        "deployment_checkpoint_root": str(DEPLOYMENT_CHECKPOINT_ROOT),
+        "variables": sorted(restored),
+    })
+
+def _regression_checkpoint_path(province_id):
+    return REGRESSION_CHECKPOINT_DIRECTORY / f"{province_id}.joblib"
+
+def _save_regression_province(result):
+    if not isinstance(result, RegressionProvinceResult):
+        raise TypeError("Expected RegressionProvinceResult")
+    target = _regression_checkpoint_path(result.province_id)
+    _atomic_joblib_dump({
+        "schema": TRAINING_CHECKPOINT_SCHEMA,
+        "approved_code_sha": TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
+        "deployment_code_sha": APPROVED_CODE_SHA,
+        "kind": "regression_province",
+        "province_id": result.province_id,
+        "split_fingerprint": training_split_fingerprint,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "result": result,
+    }, target)
+    print({"regression_checkpoint": result.province_id, "path": str(target)})
+
+def _load_regression_provinces():
+    completed = {}
+    for province_id in selected_provinces:
+        target = _regression_checkpoint_path(province_id)
+        if not target.exists():
+            continue
+        payload = _load_checkpoint_payload(
+            target,
+            training_split_fingerprint,
+            expected_schema=TRAINING_CHECKPOINT_SCHEMA,
+            expected_code_sha=TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
+        )
+        if payload.get("kind") != "regression_province":
+            raise RuntimeError(f"Invalid regression checkpoint: {target}")
+        result = payload.get("result")
+        if not isinstance(result, RegressionProvinceResult):
+            raise RuntimeError(f"Invalid regression result: {target}")
+        completed[province_id] = result
+    return completed
+
+def _classification_fold_checkpoint_path(fold_index):
+    return CLASSIFICATION_FOLD_CHECKPOINT_DIRECTORY / f"fold_{fold_index + 1}.joblib"
+
+def _save_classification_fold(result):
+    if not isinstance(result, ClassificationFoldResult):
+        raise TypeError("Expected ClassificationFoldResult")
+    target = _classification_fold_checkpoint_path(result.fold_index)
+    _atomic_joblib_dump({
+        "schema": TRAINING_CHECKPOINT_SCHEMA,
+        "approved_code_sha": TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
+        "deployment_code_sha": APPROVED_CODE_SHA,
+        "kind": "classification_cv_fold",
+        "fold_index": result.fold_index,
+        "split_fingerprint": training_split_fingerprint,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "result": result,
+    }, target)
+    print({"classification_fold_checkpoint": result.fold_index + 1, "path": str(target)})
+
+def _load_classification_folds():
+    completed = {}
+    for fold_index in range(CV_SPLITS):
+        target = _classification_fold_checkpoint_path(fold_index)
+        if not target.exists():
+            continue
+        payload = _load_checkpoint_payload(
+            target,
+            training_split_fingerprint,
+            expected_schema=TRAINING_CHECKPOINT_SCHEMA,
+            expected_code_sha=TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
+        )
+        if payload.get("kind") != "classification_cv_fold":
+            raise RuntimeError(f"Invalid classification fold checkpoint: {target}")
+        result = payload.get("result")
+        if not isinstance(result, ClassificationFoldResult):
+            raise RuntimeError(f"Invalid classification fold result: {target}")
+        completed[fold_index] = result
+    return completed
+
+def _save_classification_province_evidence(classification):
+    for province_id in selected_provinces:
+        target = CLASSIFICATION_PROVINCE_CHECKPOINT_DIRECTORY / f"{province_id}.joblib"
+        _atomic_joblib_dump({
+            "schema": DEPLOYMENT_CHECKPOINT_SCHEMA,
+            "approved_code_sha": APPROVED_CODE_SHA,
+            "kind": "classification_province_evidence",
+            "province_id": province_id,
+            "split_fingerprint": training_split_fingerprint,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "metrics": classification.province_metrics[province_id],
+        }, target)
 """,
     )
 
     fetch_quality = "".join(_cell(notebook, "fetch_quality")["source"])
     fetch_quality = fetch_quality.replace(
         "thai-air-intelligence-shadow-lab-v5.2",
-        "thai-air-intelligence-production-v5.6.2",
+        "thai-air-intelligence-production-v5.6.4",
     )
     _set(notebook, "fetch_quality", fetch_quality)
 
@@ -305,12 +661,15 @@ if len(split.dropped_embargo_dates) != 2 * POOLED_EMBARGO_DAYS:
         f"Expected 14 embargo dates, found {len(split.dropped_embargo_dates)}"
     )
 
+training_split_fingerprint = _split_fingerprint(split)
+print({"training_split_fingerprint": training_split_fingerprint})
 _save_checkpoint(
     "split",
     split=split,
     config=config,
     selected_provinces=selected_provinces,
     archive_audit=archive_audit,
+    training_split_fingerprint=training_split_fingerprint,
 )
 """,
     )
@@ -323,10 +682,30 @@ if "_restore_checkpoint" not in globals():
         "Session restarted. Rerun Configuration through Pipeline Imports, then rerun this cell."
     )
 if "split" not in globals():
-    _restore_checkpoint(("split", "config", "selected_provinces", "archive_audit"))
+    _restore_checkpoint((
+        "split", "config", "selected_provinces", "archive_audit",
+        "training_split_fingerprint"
+    ))
 
-# 9. Train province-local residual LightGBM models and preserve local evidence
-regression = train_regression(split, config)
+# 9. Regression phase — resume completed provinces and train only missing LightGBM models
+if not _restore_stage("regression", ("regression",)):
+    completed_regression_provinces = _load_regression_provinces()
+    print({
+        "regression_phase": "resume_or_train",
+        "completed_provinces": sorted(completed_regression_provinces),
+        "remaining_provinces": sorted(
+            set(selected_provinces) - set(completed_regression_provinces)
+        ),
+    })
+    regression = train_regression(
+        split,
+        config,
+        province_results=completed_regression_provinces,
+        on_province_complete=_save_regression_province,
+    )
+    _save_checkpoint("regression", regression=regression)
+else:
+    print("Regression phase already complete; skipped all 20 province fits.")
 print(json.dumps(_json_safe({
     "model": REGRESSION_MODEL_NAME,
     "global_eligible": regression.global_eligible,
@@ -342,15 +721,6 @@ display(regression_by_province[[
     "province_id", "mae", "rmse", "r2", "skill_vs_persistence",
     "local_eligible", "global_gate_eligible", "eligibility_reasons",
 ]])
-
-_save_checkpoint(
-    "regression",
-    split=split,
-    config=config,
-    selected_provinces=selected_provinces,
-    archive_audit=archive_audit,
-    regression=regression,
-)
 """,
     )
     _set(
@@ -362,14 +732,36 @@ if "_restore_checkpoint" not in globals():
         "Session restarted. Rerun Configuration through Pipeline Imports, then rerun this cell."
     )
 if any(name not in globals() for name in (
-    "split", "config", "selected_provinces", "archive_audit", "regression"
+    "split", "config", "selected_provinces", "training_split_fingerprint"
 )):
     _restore_checkpoint((
-        "split", "config", "selected_provinces", "archive_audit", "regression"
+        "split", "config", "selected_provinces", "training_split_fingerprint"
     ))
+if "regression" not in globals():
+    _restore_checkpoint(("regression",))
 
-# 10. Train pooled Random Forest classification and evaluate class imbalance
-classification = train_classification(split, config)
+# 10. Classification phase — resume CV folds; keep Regression untouched
+if not _restore_stage("classification", ("classification",)):
+    completed_classification_folds = _load_classification_folds()
+    print({
+        "classification_phase": "resume_or_train",
+        "completed_cv_folds": sorted(index + 1 for index in completed_classification_folds),
+        "remaining_cv_folds": sorted(
+            index + 1 for index in set(range(CV_SPLITS)) - set(completed_classification_folds)
+        ),
+        "rf_parameter_candidates": 1,
+        "cv_splits": CV_SPLITS,
+    })
+    classification = train_classification(
+        split,
+        config,
+        cv_fold_results=completed_classification_folds,
+        on_cv_fold_complete=_save_classification_fold,
+    )
+    _save_classification_province_evidence(classification)
+    _save_checkpoint("classification", classification=classification)
+else:
+    print("Classification phase already complete; skipped pooled Random Forest fitting.")
 metrics = classification.test_metrics
 print(json.dumps(_json_safe({
     "model": CLASSIFICATION_MODEL_NAME,
@@ -390,16 +782,6 @@ display(pd.DataFrame(
     index=[f"actual_{class_id}" for class_id in CLASS_IDS],
     columns=[f"predicted_{class_id}" for class_id in CLASS_IDS],
 ))
-
-_save_checkpoint(
-    "classification",
-    split=split,
-    config=config,
-    selected_provinces=selected_provinces,
-    archive_audit=archive_audit,
-    regression=regression,
-    classification=classification,
-)
 """,
     )
     _set(
@@ -417,35 +799,89 @@ if any(name not in globals() for name in (
         "split", "config", "selected_provinces", "archive_audit", "regression", "classification"
     ))
 
-# 11. Apply the reviewed all-or-nothing v5.6.2 deployment policy before any write
+# 11. Apply the reviewed all-or-nothing v5.6.4 deployment policy before any write
 split_origin_dates = {
     "train": int(split.train["date"].nunique()),
     "validation": int(split.validation["date"].nunique()),
     "test": int(split.test["date"].nunique()),
 }
+prior_regression_policy = regression.parameters.get("deployment_policy_audit")
+strict_regression_global_eligible = bool(
+    prior_regression_policy["original_global_eligible"]
+    if prior_regression_policy
+    else regression.global_eligible
+)
+strict_regression_global_reasons = list(
+    prior_regression_policy["original_global_reasons"]
+    if prior_regression_policy
+    else regression.global_reasons
+)
+regression_policy = evaluate_regression_deployment_policy(
+    regression.province_metrics,
+    original_global_eligible=strict_regression_global_eligible,
+    original_global_reasons=strict_regression_global_reasons,
+    expected_provinces=PRODUCTION_REQUIRED_PROVINCES,
+    minimum_validation_rows=FULL_YEAR_HOLDOUT_DAYS,
+    minimum_test_rows=FULL_YEAR_HOLDOUT_DAYS,
+    strict_minimum_skill=REGRESSION_MINIMUM_SKILL,
+    conditional_floor=REGRESSION_CONDITIONAL_FLOOR,
+    conditional_provinces=REGRESSION_CONDITIONAL_PROVINCES,
+)
+regression.parameters["deployment_policy_audit"] = regression_policy
+
+for province_id, metrics in regression.province_metrics.items():
+    decision = regression_policy["province_decisions"][province_id]
+    metrics["strict_eligible"] = decision["strict_eligible"]
+    metrics["strict_eligibility_reasons"] = decision[
+        "strict_eligibility_reasons"
+    ]
+    metrics["deployment_eligible"] = decision["deployment_eligible"]
+    metrics["activation_tier"] = decision["activation_tier"]
+    metrics["observed_skill"] = decision["observed_skill"]
+    metrics["target_skill"] = decision["target_skill"]
+    metrics["conditional_floor"] = decision["conditional_floor"]
+    metrics["override_reason"] = decision["override_reason"]
+    metrics["deployment_policy"] = REGRESSION_CONDITIONAL_POLICY
+    metrics["deployment_eligibility_reasons"] = (
+        [REGRESSION_CONDITIONAL_OVERRIDE_REASON]
+        if decision["activation_tier"] == "conditional"
+        else ["eligible_under_strict_policy"]
+        if decision["deployment_eligible"]
+        else regression_policy["deployment_reasons"]
+    )
+    # build_registry_rows uses these operational fields. Strict evidence above
+    # remains immutable and is also written to the Registry metrics JSON.
+    metrics["eligible"] = decision["deployment_eligible"]
+    metrics["local_eligible"] = decision["deployment_eligible"]
+    metrics["global_gate_eligible"] = regression_policy["deployment_eligible"]
+
+regression.global_eligible = regression_policy["deployment_eligible"]
+regression.global_reasons = regression_policy["deployment_reasons"]
 regression_failed_provinces = sorted(
     province_id
-    for province_id, metrics in regression.province_metrics.items()
-    if not metrics.get("local_eligible", metrics["eligible"])
+    for province_id, decision in regression_policy["province_decisions"].items()
+    if not decision["strict_eligible"]
 )
 regression_failure_reasons = {
-    province_id: list(
-        regression.province_metrics[province_id].get("eligibility_reasons", [])
-    )
+    province_id: regression_policy["province_decisions"][province_id][
+        "strict_eligibility_reasons"
+    ]
     for province_id in regression_failed_provinces
 }
+regression_conditional_provinces = list(
+    regression_policy["conditional_provinces"]
+)
+regression_deployment_failed_provinces = list(
+    regression_policy["deployment_failed_provinces"]
+)
 regression_eligible_provinces = sorted(
     province_id
-    for province_id, metrics in regression.province_metrics.items()
-    if metrics.get("local_eligible", metrics["eligible"])
+    for province_id, decision in regression_policy["province_decisions"].items()
+    if decision["deployment_eligible"]
 )
 production_regression_gate = bool(
-    regression.global_eligible
+    regression_policy["deployment_eligible"]
     and len(regression_eligible_provinces) == PRODUCTION_REQUIRED_PROVINCES
-    and min(
-        metrics["skill_vs_persistence"]
-        for metrics in regression.province_metrics.values()
-    ) >= REGRESSION_MINIMUM_SKILL
 )
 
 thresholds = CLASSIFICATION_DEPLOYMENT_THRESHOLDS
@@ -515,9 +951,12 @@ production_dual_model_gate = bool(
 eligibility = pd.DataFrame([
     {
         "province_id": province_id,
-        "regression_eligible": province_id in regression_eligible_provinces,
+        "regression_strict_eligible": regression.province_metrics[province_id]["strict_eligible"],
+        "regression_deployment_eligible": province_id in regression_eligible_provinces,
+        "regression_activation_tier": regression.province_metrics[province_id]["activation_tier"],
         "regression_skill": regression.province_metrics[province_id]["skill_vs_persistence"],
-        "regression_reasons": regression.province_metrics[province_id].get("eligibility_reasons", []),
+        "regression_strict_reasons": regression.province_metrics[province_id]["strict_eligibility_reasons"],
+        "regression_override_reason": regression.province_metrics[province_id]["override_reason"],
         "classification_eligible": classification.province_metrics[province_id]["eligible"],
     }
     for province_id in selected_provinces
@@ -527,11 +966,21 @@ display(eligibility)
 gate_summary = {
     "regression": {
         "eligible": production_regression_gate,
+        "policy": REGRESSION_CONDITIONAL_POLICY,
+        "strict_global_eligible": regression_policy["strict_global_eligible"],
+        "original_global_eligible": regression_policy["original_global_eligible"],
+        "original_global_reasons": regression_policy["original_global_reasons"],
+        "strict_eligible_provinces": regression_policy["strict_provinces"],
         "eligible_provinces": regression_eligible_provinces,
-        "failed_provinces": regression_failed_provinces,
-        "failure_reasons": regression_failure_reasons,
-        "global_reasons": list(regression.global_reasons),
-        "required_skill": REGRESSION_MINIMUM_SKILL,
+        "strict_failed_provinces": regression_failed_provinces,
+        "strict_failure_reasons": regression_failure_reasons,
+        "conditional_provinces": regression_conditional_provinces,
+        "deployment_failed_provinces": regression_deployment_failed_provinces,
+        "deployment_reasons": regression_policy["deployment_reasons"],
+        "strict_required_skill": REGRESSION_MINIMUM_SKILL,
+        "conditional_floor": REGRESSION_CONDITIONAL_FLOOR,
+        "conditional_allowlist": list(REGRESSION_CONDITIONAL_PROVINCES),
+        "research_reporting_note": regression_policy["research_reporting_note"],
     },
     "classification": {
         "eligible": production_classification_gate,
@@ -550,9 +999,9 @@ if not production_dual_model_gate:
     failures = []
     if not production_regression_gate:
         failures.append(
-            f"regression global={regression.global_reasons}, "
-            f"failed_provinces={regression_failed_provinces}, "
-            f"province_reasons={regression_failure_reasons}"
+            f"regression deployment={regression_policy['deployment_reasons']}, "
+            f"strict_failed_provinces={regression_failed_provinces}, "
+            f"strict_province_reasons={regression_failure_reasons}"
         )
     if not production_classification_gate:
         failures.append(f"classification={classification_deployment_reasons}")
@@ -562,16 +1011,16 @@ if not production_dual_model_gate:
         + "; no Registry or activation write was made"
     )
 
+_save_classification_province_evidence(classification)
 _save_checkpoint(
     "eligibility",
-    split=split,
-    config=config,
-    selected_provinces=selected_provinces,
-    archive_audit=archive_audit,
     regression=regression,
     classification=classification,
     eligibility=eligibility,
     gate_summary=gate_summary,
+    regression_eligible_provinces=regression_eligible_provinces,
+    regression_conditional_provinces=regression_conditional_provinces,
+    classification_eligible_provinces=classification_eligible_provinces,
 )
 """,
     )
@@ -585,17 +1034,19 @@ if "_restore_checkpoint" not in globals():
     )
 if any(name not in globals() for name in (
     "split", "config", "selected_provinces", "archive_audit", "regression",
-    "classification", "eligibility", "gate_summary"
+    "classification", "eligibility", "gate_summary",
+    "regression_eligible_provinces", "classification_eligible_provinces"
 )):
     _restore_checkpoint((
         "split", "config", "selected_provinces", "archive_audit", "regression",
-        "classification", "eligibility", "gate_summary"
+        "classification", "eligibility", "gate_summary",
+        "regression_eligible_provinces", "classification_eligible_provinces"
     ))
 
 # 12. Build 21 auditable artifacts and 40 inactive registry candidates
 run_id = str(uuid.uuid4())
 audit = {
-    "notebook_version": "5.6.2",
+    "notebook_version": "5.6.4",
     "strategy": "pooled_split_local_residual_regression_and_pooled_classification",
     "pool_provinces": list(selected_provinces),
     "feature_version": POOLED_FEATURE_VERSION,
@@ -614,12 +1065,41 @@ audit = {
     },
     "archive": archive_audit,
     "deployment_policy": gate_summary,
+    "strict_research_result_preserved": True,
+    "conditional_activation_scope": list(REGRESSION_CONDITIONAL_PROVINCES),
+    "conditional_policy_selected_after_test_observation": True,
     "approved_code_sha": APPROVED_CODE_SHA,
+    "training_checkpoint_compatibility_sha": TRAINING_CHECKPOINT_COMPATIBILITY_SHA,
     "activation_contract": "fn_activate_pooled_dual_model_run",
 }
 registry_rows = build_registry_rows(
     run_id, selected_provinces, split, regression, classification, audit
 )
+for row in registry_rows:
+    if row["task_type"] != "regression":
+        continue
+    deployment_metrics = regression.province_metrics[row["province_id"]]
+    activation_tier = deployment_metrics["activation_tier"]
+    row["model_params"]["strict_eligible"] = deployment_metrics[
+        "strict_eligible"
+    ]
+    row["model_params"]["deployment_eligible"] = deployment_metrics[
+        "deployment_eligible"
+    ]
+    row["model_params"]["activation_tier"] = activation_tier
+    row["model_params"]["observed_skill"] = deployment_metrics[
+        "observed_skill"
+    ]
+    row["model_params"]["strict_target_skill"] = REGRESSION_MINIMUM_SKILL
+    row["model_params"]["conditional_floor"] = REGRESSION_CONDITIONAL_FLOOR
+    row["model_params"]["override_reason"] = deployment_metrics[
+        "override_reason"
+    ]
+    if activation_tier == "conditional":
+        row["eligibility_reason"] = (
+            "conditional_near_threshold_operational_acceptance;"
+            "strict_research_gate_failed"
+        )
 result = PooledResult(
     run_id, selected_provinces, split, regression, classification, registry_rows, audit
 )
@@ -696,6 +1176,57 @@ _save_checkpoint(
 )
 """,
     )
+    _set(
+        notebook,
+        "register_activate",
+        """
+if "_restore_checkpoint" not in globals():
+    raise RuntimeError(
+        "Session restarted. Rerun Configuration through Pipeline Imports, then rerun this cell."
+    )
+if any(name not in globals() for name in (
+    "config", "selected_provinces", "regression", "classification", "eligibility",
+    "run_id", "result", "artifacts", "run_summary", "summary_path"
+)):
+    _restore_checkpoint((
+        "config", "selected_provinces", "regression", "classification", "eligibility",
+        "run_id", "result", "artifacts", "run_summary", "summary_path"
+    ))
+if "sb" not in globals():
+    sb = get_client()
+
+# 13. Atomic promotion — only after both persisted phases cover all 20 provinces
+if len(regression.province_metrics) != PRODUCTION_REQUIRED_PROVINCES:
+    raise RuntimeError("Regression checkpoint does not cover all 20 provinces")
+if len(classification.province_metrics) != PRODUCTION_REQUIRED_PROVINCES:
+    raise RuntimeError("Classification checkpoint does not cover all 20 provinces")
+if len(result.registry_rows) != PRODUCTION_REQUIRED_PROVINCES * 2:
+    raise RuntimeError("Atomic activation requires exactly 40 task/province candidates")
+
+if _restore_stage("activated", ("activated_run_id",)):
+    if activated_run_id != run_id:
+        raise RuntimeError(
+            f"Activation checkpoint run {activated_run_id} differs from artifact run {run_id}"
+        )
+    print({"registered": True, "activated": True, "resumed": True, "run_id": run_id})
+elif REGISTER:
+    # upload_and_register first upserts all 40 inactive candidates, then invokes
+    # fn_activate_pooled_dual_model_run exactly once. The database function is
+    # the transaction boundary; a failure cannot activate only one task/province.
+    upload_and_register(sb, result, artifacts, activate=ACTIVATE)
+    _save_checkpoint("activated", activated_run_id=run_id)
+    print({
+        "registered": True,
+        "activate_requested": ACTIVATE,
+        "atomic_rpc": "fn_activate_pooled_dual_model_run",
+        "run_id": run_id,
+    })
+else:
+    print("REGISTER is False; no Storage, Registry, activation, or forecast write occurred.")
+""",
+    )
+    download = "".join(_cell(notebook, "download")["source"])
+    _set(notebook, "download", download.replace("v5.6.2", "v5.6.4"))
     _write_notebook(notebook, output)
 
 

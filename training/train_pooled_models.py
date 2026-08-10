@@ -16,7 +16,9 @@ import importlib.metadata
 import json
 import os
 import sys
+import time
 import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from supabase import Client, create_client
+from supabase.client import ClientOptions
 
 from api.ml.portable_trees import (
     ARTIFACT_SCHEMA,
@@ -73,6 +76,17 @@ DIRECT_HORIZONS = tuple(range(1, 8))
 MODEL_VERSION = "residual-dual-pm25-v2"
 REGRESSION_MODEL_NAME = "lightgbm-pm25-residual-v2"
 CLASSIFICATION_MODEL_NAME = "random-forest-aqi-classifier-pooled-v1"
+CLASSIFICATION_FIXED_PARAMETERS = {
+    "n_estimators": 400,
+    "max_depth": 14,
+    "min_samples_leaf": 2,
+    "max_features": "sqrt",
+}
+CLASSIFICATION_TEMPERATURES = (0.75, 1.0, 1.25, 1.5)
+SUPABASE_POSTGREST_TIMEOUT_SECONDS = 120
+SUPABASE_STORAGE_TIMEOUT_SECONDS = 180
+STORAGE_MAX_ATTEMPTS = 4
+STORAGE_RETRY_BACKOFF_SECONDS = (1.0, 3.0, 7.0)
 
 
 @dataclass
@@ -97,6 +111,30 @@ class TrainedTask:
     global_eligible: bool
     global_reasons: list[str]
     province_metrics: dict[str, dict]
+    validation_predictions: np.ndarray | None = None
+    test_predictions: np.ndarray | None = None
+
+
+@dataclass
+class RegressionProvinceResult:
+    """Serializable unit of work used to resume province-local regression."""
+
+    province_id: str
+    model: object
+    runtime_artifact: dict
+    parameters: dict
+    validation_predictions: np.ndarray
+    test_predictions: np.ndarray
+    province_metrics: dict
+
+
+@dataclass
+class ClassificationFoldResult:
+    """Serializable out-of-fold probabilities for one pooled CV fold."""
+
+    fold_index: int
+    truth: np.ndarray
+    raw_probabilities: np.ndarray
 
 
 @dataclass
@@ -137,7 +175,15 @@ def get_client() -> Client:
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     if not url or not key:
         raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
-    return create_client(url, key)
+    return create_client(
+        url,
+        key,
+        options=ClientOptions(
+            postgrest_client_timeout=SUPABASE_POSTGREST_TIMEOUT_SECONDS,
+            storage_client_timeout=SUPABASE_STORAGE_TIMEOUT_SECONDS,
+            schema="public",
+        ),
+    )
 
 
 def fetch_province_metadata(sb: Client, province_ids: tuple[str, ...]) -> pd.DataFrame:
@@ -343,7 +389,7 @@ def _record_global_eligibility_context(
         metrics["global_gate_eligible"] = bool(global_eligible)
 
 
-def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
+def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
     province_ids = sorted(split.train["province_id"].unique())
     if province_ids != sorted(split.validation["province_id"].unique()) or province_ids != sorted(split.test["province_id"].unique()):
         raise ValueError("regression provinces differ across chronological partitions")
@@ -393,21 +439,13 @@ def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
         )
         raw_validation = np.asarray(validation_model.predict(X_validation), dtype=float)
         d1_validation = validation_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
-        selected_weight = max(
-            np.linspace(0.0, 1.5, 31),
-            key=lambda weight: (
-                1.0
-                - regression_metrics(
-                    y_validation_raw[d1_validation],
-                    baseline_validation[d1_validation] + float(weight) * raw_validation[d1_validation],
-                )["mae"]
-                / _regression_baseline(validation_rows.loc[d1_validation])[1]["mae"],
-                -regression_metrics(
-                    y_validation_raw[d1_validation],
-                    baseline_validation[d1_validation] + float(weight) * raw_validation[d1_validation],
-                )["mae"],
-            ),
+        candidate_weights = np.linspace(0.0, 1.5, 31)
+        d1_errors = np.abs(
+            y_validation_raw[d1_validation][None, :]
+            - baseline_validation[d1_validation][None, :]
+            - candidate_weights[:, None] * raw_validation[d1_validation][None, :]
         )
+        selected_weight = float(candidate_weights[np.argmin(d1_errors.mean(axis=1))])
         correction_weight = float(selected_weight) * 0.90
         local_validation_predictions = baseline_validation + correction_weight * raw_validation
 
@@ -564,54 +602,288 @@ def train_regression(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
         global_eligible,
         reasons,
         province_metrics,
+        validation_predictions,
+        test_predictions,
     )
 
 
-def train_classification(split: PooledSplit, config: PipelineConfig) -> TrainedTask:
+def train_regression(
+    split: PooledSplit,
+    config: PipelineConfig,
+    *,
+    province_results: Mapping[str, RegressionProvinceResult] | None = None,
+    on_province_complete: Callable[[RegressionProvinceResult], None] | None = None,
+) -> TrainedTask:
+    """Train or resume province-local regressors and assemble one global task.
+
+    Each province is an independent serializable unit. A caller can load prior
+    ``RegressionProvinceResult`` objects from durable storage and persist new
+    results through ``on_province_complete`` immediately after each province.
+    """
+    province_ids = sorted(split.train["province_id"].unique())
+    if (
+        province_ids != sorted(split.validation["province_id"].unique())
+        or province_ids != sorted(split.test["province_id"].unique())
+    ):
+        raise ValueError("regression provinces differ across chronological partitions")
+
+    completed = dict(province_results or {})
+    unexpected = sorted(set(completed) - set(province_ids))
+    if unexpected:
+        raise ValueError(f"unexpected regression province checkpoints: {unexpected}")
+
+    validation_predictions = np.full(len(split.validation), np.nan, dtype=float)
+    test_predictions = np.full(len(split.test), np.nan, dtype=float)
+    results: dict[str, RegressionProvinceResult] = {}
+
+    for province_id in province_ids:
+        validation_rows = split.validation[
+            split.validation["province_id"] == province_id
+        ]
+        test_rows = split.test[split.test["province_id"] == province_id]
+        result = completed.get(province_id)
+        if result is not None:
+            if result.province_id != province_id:
+                raise ValueError(
+                    f"regression checkpoint key {province_id} contains {result.province_id}"
+                )
+            if len(result.validation_predictions) != len(validation_rows):
+                raise ValueError(
+                    f"regression checkpoint validation rows changed for {province_id}"
+                )
+            if len(result.test_predictions) != len(test_rows):
+                raise ValueError(
+                    f"regression checkpoint test rows changed for {province_id}"
+                )
+            print(f"[Regression] resume completed province {province_id}", flush=True)
+        else:
+            local_split = PooledSplit(
+                train=split.train[split.train["province_id"] == province_id].copy(),
+                validation=validation_rows.copy(),
+                test=test_rows.copy(),
+                dropped_embargo_dates=list(split.dropped_embargo_dates),
+            )
+            local_task = _train_regression_batch(local_split, config)
+            if local_task.validation_predictions is None or local_task.test_predictions is None:
+                raise RuntimeError("province regression did not retain predictions")
+            result = RegressionProvinceResult(
+                province_id=province_id,
+                model=local_task.model[province_id],
+                runtime_artifact=local_task.runtime_artifact[province_id],
+                parameters=local_task.parameters["by_province"][province_id],
+                validation_predictions=np.asarray(
+                    local_task.validation_predictions, dtype=float
+                ),
+                test_predictions=np.asarray(local_task.test_predictions, dtype=float),
+                province_metrics=local_task.province_metrics[province_id],
+            )
+            if on_province_complete is not None:
+                on_province_complete(result)
+            print(f"[Regression] completed province {province_id}", flush=True)
+
+        validation_mask = split.validation["province_id"].to_numpy() == province_id
+        test_mask = split.test["province_id"].to_numpy() == province_id
+        validation_predictions[validation_mask] = result.validation_predictions
+        test_predictions[test_mask] = result.test_predictions
+        results[province_id] = result
+
+    if not np.all(np.isfinite(validation_predictions)) or not np.all(
+        np.isfinite(test_predictions)
+    ):
+        raise RuntimeError("residual LightGBM did not produce complete predictions")
+
+    y_validation = split.validation["target_pm25"].to_numpy(dtype=float)
+    validation_metrics = regression_metrics(y_validation, validation_predictions)
+    _, validation_baseline = _regression_baseline(split.validation)
+    validation_metrics["skill_vs_persistence"] = (
+        1.0 - validation_metrics["mae"] / validation_baseline["mae"]
+    )
+    validation_metrics["selection"] = (
+        "per-province validation grid with 0.90 shrinkage"
+    )
+    y_test = split.test["target_pm25"].to_numpy(dtype=float)
+    test_all = regression_metrics(y_test, test_predictions)
+    d1_mask = split.test["forecast_horizon_days"].to_numpy(dtype=int) == 1
+    d1_rows = split.test.loc[d1_mask]
+    d1_metrics = regression_metrics(y_test[d1_mask], test_predictions[d1_mask])
+    _, baseline_d1 = _regression_baseline(d1_rows)
+    d1_metrics["skill_vs_persistence"] = (
+        1.0 - d1_metrics["mae"] / baseline_d1["mae"]
+    )
+    d1_metrics["all_horizons"] = test_all
+    d1_metrics["by_horizon"] = _metrics_by_horizon(
+        split.test, test_predictions, task="regression"
+    )
+    aggregate_eligible, reasons = _regression_eligibility(
+        d1_metrics,
+        baseline_d1,
+        validation_metrics,
+        config,
+    )
+    province_metrics = {
+        province_id: result.province_metrics
+        for province_id, result in results.items()
+    }
+    failed_provinces = [
+        province_id
+        for province_id, metrics in province_metrics.items()
+        if not metrics["eligible"]
+    ]
+    global_eligible = bool(aggregate_eligible and not failed_provinces)
+    if failed_provinces:
+        reasons = [*reasons, f"province_gate_failed:{','.join(failed_provinces)}"]
+    _record_global_eligibility_context(province_metrics, global_eligible)
+
+    residuals = y_validation - validation_predictions
+    validation_horizons = split.validation["forecast_horizon_days"].to_numpy(
+        dtype=int
+    )
+    residual_quantiles = {
+        str(horizon): {
+            name: float(value)
+            for name, value in zip(
+                ("p10", "p50", "p90"),
+                np.quantile(
+                    residuals[validation_horizons == horizon],
+                    (0.10, 0.50, 0.90),
+                ),
+                strict=True,
+            )
+        }
+        for horizon in DIRECT_HORIZONS
+    }
+    return TrainedTask(
+        "regression",
+        POOLED_REGRESSION_FAMILY,
+        {province_id: result.model for province_id, result in results.items()},
+        validation_metrics,
+        d1_metrics,
+        baseline_d1,
+        {
+            "strategy": "per_province_residual_lightgbm",
+            "fixed_hyperparameters": {
+                key: value
+                for key, value in next(iter(results.values())).parameters.items()
+                if key
+                not in {
+                    "n_estimators",
+                    "validation_selected_correction_weight",
+                    "correction_weight",
+                    "selection_shrinkage",
+                    "target",
+                    "residual_quantiles_by_horizon",
+                }
+            },
+            "by_province": {
+                province_id: result.parameters
+                for province_id, result in results.items()
+            },
+        },
+        {
+            province_id: result.runtime_artifact
+            for province_id, result in results.items()
+        },
+        residual_quantiles,
+        global_eligible,
+        reasons,
+        province_metrics,
+        validation_predictions,
+        test_predictions,
+    )
+
+
+def train_classification(
+    split: PooledSplit,
+    config: PipelineConfig,
+    *,
+    cv_fold_results: Mapping[int, ClassificationFoldResult] | None = None,
+    on_cv_fold_complete: Callable[[ClassificationFoldResult], None] | None = None,
+) -> TrainedTask:
     X_train, y_train = _xy(split.train, "target_air_quality_class")
     X_validation, y_validation = _xy(split.validation, "target_air_quality_class")
     cv_folds = pooled_walk_forward_folds(split.train, config.cv_splits)
-    candidates = (
-        {"n_estimators": 400, "max_depth": 14, "min_samples_leaf": 2, "max_features": "sqrt"},
-        {"n_estimators": 500, "max_depth": None, "min_samples_leaf": 3, "max_features": "sqrt"},
-        {"n_estimators": 400, "max_depth": 18, "min_samples_leaf": 4, "max_features": 0.7},
-    )
-    best: tuple[tuple[float, ...], dict, dict] | None = None
-    for candidate in candidates:
-        fold_truth = []
-        fold_raw_probabilities = []
-        for fold_train, fold_validation in cv_folds:
-            X_fold_train, y_fold_train = _xy(fold_train, "target_air_quality_class")
-            X_fold_validation, y_fold_validation = _xy(fold_validation, "target_air_quality_class")
-            model = RandomForestClassifier(
+    cached_folds = dict(cv_fold_results or {})
+    unexpected_folds = sorted(set(cached_folds) - set(range(len(cv_folds))))
+    if unexpected_folds:
+        raise ValueError(
+            f"unexpected classification fold checkpoints: {unexpected_folds}"
+        )
+    candidate = dict(CLASSIFICATION_FIXED_PARAMETERS)
+    fold_truth = []
+    fold_raw_probabilities = []
+    for fold_index, (fold_train, fold_validation) in enumerate(cv_folds):
+        fold_result = cached_folds.get(fold_index)
+        if fold_result is not None:
+            if fold_result.fold_index != fold_index:
+                raise ValueError(
+                    f"classification fold checkpoint {fold_index} contains "
+                    f"fold {fold_result.fold_index}"
+                )
+            if len(fold_result.truth) != len(fold_validation):
+                raise ValueError(
+                    f"classification fold rows changed for fold {fold_index}"
+                )
+            if fold_result.raw_probabilities.shape != (
+                len(fold_validation),
+                len(CLASS_IDS),
+            ):
+                raise ValueError(
+                    f"classification probability shape changed for fold {fold_index}"
+                )
+            print(f"[Classification] resume completed CV fold {fold_index + 1}", flush=True)
+        else:
+            X_fold_train, y_fold_train = _xy(
+                fold_train, "target_air_quality_class"
+            )
+            X_fold_validation, y_fold_validation = _xy(
+                fold_validation, "target_air_quality_class"
+            )
+            fold_model = RandomForestClassifier(
                 class_weight="balanced_subsample",
                 random_state=config.random_seed,
                 n_jobs=-1,
                 **candidate,
             )
-            model.fit(X_fold_train, y_fold_train)
-            fold_truth.append(y_fold_validation)
-            fold_raw_probabilities.append(_aligned_rf_probabilities(model, X_fold_validation))
-        truth = np.concatenate(fold_truth)
-        raw_probabilities = np.concatenate(fold_raw_probabilities)
-        for temperature in (0.75, 1.0, 1.25, 1.5):
-            probabilities = _temperature_scale(raw_probabilities, temperature)
-            predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
-            metrics = classification_metrics(truth, predictions, probabilities)
-            critical = min(
-                metrics["per_class"][str(class_id)]["recall"]
-                if metrics["per_class"][str(class_id)]["support"] >= config.critical_class_minimum_support
-                else 0.0
-                for class_id in (4, 5)
+            fold_model.fit(X_fold_train, y_fold_train)
+            fold_result = ClassificationFoldResult(
+                fold_index=fold_index,
+                truth=np.asarray(y_fold_validation),
+                raw_probabilities=_aligned_rf_probabilities(
+                    fold_model, X_fold_validation
+                ),
             )
-            key = (
-                metrics["macro_f1"],
-                critical,
-                metrics["balanced_accuracy"],
-                -float(metrics["log_loss"] or 1e9),
-            )
-            if best is None or key > best[0]:
-                best = (key, {**candidate, "temperature": temperature}, metrics)
+            if on_cv_fold_complete is not None:
+                on_cv_fold_complete(fold_result)
+            print(f"[Classification] completed CV fold {fold_index + 1}", flush=True)
+        fold_truth.append(np.asarray(fold_result.truth))
+        fold_raw_probabilities.append(
+            np.asarray(fold_result.raw_probabilities, dtype=float)
+        )
+
+    truth = np.concatenate(fold_truth)
+    raw_probabilities = np.concatenate(fold_raw_probabilities)
+    best: tuple[tuple[float, ...], dict, dict] | None = None
+    for temperature in CLASSIFICATION_TEMPERATURES:
+        scaled_probabilities = _temperature_scale(raw_probabilities, temperature)
+        cv_predictions = np.asarray(CLASS_IDS)[
+            np.argmax(scaled_probabilities, axis=1)
+        ]
+        metrics = classification_metrics(truth, cv_predictions, scaled_probabilities)
+        critical = min(
+            metrics["per_class"][str(class_id)]["recall"]
+            if metrics["per_class"][str(class_id)]["support"]
+            >= config.critical_class_minimum_support
+            else 0.0
+            for class_id in (4, 5)
+        )
+        key = (
+            metrics["macro_f1"],
+            critical,
+            metrics["balanced_accuracy"],
+            -float(metrics["log_loss"] or 1e9),
+        )
+        if best is None or key > best[0]:
+            best = (key, {**candidate, "temperature": temperature}, metrics)
     assert best is not None
     parameters = best[1]
 
@@ -628,6 +900,13 @@ def train_classification(split: PooledSplit, config: PipelineConfig) -> TrainedT
     validation_predictions = np.asarray(CLASS_IDS)[np.argmax(validation_probabilities, axis=1)]
     validation_metrics = classification_metrics(y_validation, validation_predictions, validation_probabilities)
     validation_metrics["rolling_cv"] = best[2]
+    validation_metrics["rolling_cv_policy"] = {
+        "model_parameters": candidate,
+        "folds": len(cv_folds),
+        "model_parameter_candidates": 1,
+        "temperature_candidates": list(CLASSIFICATION_TEMPERATURES),
+        "selection": "one reviewed Random Forest configuration; temperature only",
+    }
 
     fit_rows = pd.concat([split.train, split.validation], ignore_index=True)
     X_fit, y_fit = _xy(fit_rows, "target_air_quality_class")
@@ -932,6 +1211,273 @@ def save_artifacts(result: PooledResult, root: Path, config: PipelineConfig) -> 
     return output
 
 
+def _is_duplicate_storage_error(error: Exception) -> bool:
+    """Recognize Supabase Storage's legacy and current duplicate responses."""
+    details: dict[str, object] = {}
+    if error.args and isinstance(error.args[0], Mapping):
+        details.update(error.args[0])
+    for name in ("status", "status_code", "statusCode", "code", "error", "message"):
+        value = getattr(error, name, None)
+        if value is not None:
+            details[name] = value
+
+    text = " ".join(
+        [str(error), *(str(value) for value in details.values())]
+    ).lower()
+    status_values = {
+        str(details.get(name, "")).strip()
+        for name in ("status", "status_code", "statusCode")
+    }
+    is_conflict = "409" in status_values or any(
+        token in text
+        for token in (
+            "'statuscode': 409",
+            '"statuscode": 409',
+            "status code 409",
+            "409 conflict",
+        )
+    )
+    is_duplicate = any(
+        token in text
+        for token in (
+            "duplicate",
+            "already exists",
+            "already_exists",
+            "resourcealreadyexists",
+            "keyalreadyexists",
+        )
+    )
+    return is_conflict and is_duplicate
+
+
+def _storage_exception_chain(error: Exception) -> list[Exception]:
+    """Return one copy of each wrapped transport/SDK exception."""
+    chain: list[Exception] = []
+    current: BaseException | None = error
+    while isinstance(current, Exception) and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _storage_error_text(error: Exception) -> str:
+    values: list[str] = []
+    for current in _storage_exception_chain(error):
+        values.extend((current.__class__.__name__, str(current)))
+        if current.args and isinstance(current.args[0], Mapping):
+            values.extend(str(value) for value in current.args[0].values())
+        for name in (
+            "status",
+            "status_code",
+            "statusCode",
+            "code",
+            "error",
+            "message",
+        ):
+            value = getattr(current, name, None)
+            if value is not None:
+                values.append(str(value))
+    return " ".join(values).lower()
+
+
+def _is_transient_storage_error(error: Exception) -> bool:
+    """Identify retryable transport failures and temporary Storage responses."""
+    text = _storage_error_text(error)
+    transport_failure = any(
+        token in text
+        for token in (
+            "readtimeout",
+            "writetimeout",
+            "connecttimeout",
+            "pooltimeout",
+            "remoteprotocolerror",
+            "readerror",
+            "writeerror",
+            "connecterror",
+            "networkerror",
+            "the read operation timed out",
+            "the write operation timed out",
+            "slowdown",
+            "temporarily unavailable",
+        )
+    )
+    temporary_status = any(
+        pattern in text
+        for status in (408, 425, 429, 500, 502, 503, 504)
+        for pattern in (
+            f"'statuscode': {status}",
+            f'"statuscode": {status}',
+            f"status code {status}",
+            f"http {status}",
+            f"{status} server error",
+        )
+    )
+    return transport_failure or temporary_status
+
+
+def _is_storage_not_found(error: Exception) -> bool:
+    text = _storage_error_text(error)
+    return any(
+        token in text
+        for token in (
+            "nosuchkey",
+            "not_found",
+            "not found",
+            "resource does not exist",
+            "'statuscode': 404",
+            '"statuscode": 404',
+            "status code 404",
+            "http 404",
+            "404 client error",
+        )
+    )
+
+
+def _storage_retry_delay(attempt_index: int) -> float:
+    return STORAGE_RETRY_BACKOFF_SECONDS[
+        min(attempt_index, len(STORAGE_RETRY_BACKOFF_SECONDS) - 1)
+    ]
+
+
+def _verify_storage_payload(
+    stored_payload: object,
+    remote_path: str,
+    local_path: Path,
+    expected_sha256: str,
+    *,
+    reused: bool,
+) -> None:
+    if not isinstance(stored_payload, (bytes, bytearray)):
+        raise RuntimeError(
+            f"Storage readback returned an unsupported payload for {remote_path}"
+        )
+    stored_payload = bytes(stored_payload)
+    stored_sha256 = hashlib.sha256(stored_payload).hexdigest()
+    expected_size = local_path.stat().st_size
+    if stored_sha256 != expected_sha256 or len(stored_payload) != expected_size:
+        action = "existing" if reused else "uploaded"
+        raise RuntimeError(
+            f"Refusing to use {action} Storage artifact with mismatched bytes: "
+            f"{remote_path}; expected sha256={expected_sha256}, "
+            f"size={expected_size}; observed sha256={stored_sha256}, "
+            f"size={len(stored_payload)}. No Registry or activation RPC was called."
+        )
+
+
+def _download_and_verify_storage_artifact(
+    bucket,
+    remote_path: str,
+    local_path: Path,
+    expected_sha256: str,
+    *,
+    reused: bool,
+    allow_missing: bool,
+) -> bool:
+    """Read an object back with bounded retries; return False only for 404."""
+    for attempt_index in range(STORAGE_MAX_ATTEMPTS):
+        try:
+            stored_payload = bucket.download(remote_path)
+            _verify_storage_payload(
+                stored_payload,
+                remote_path,
+                local_path,
+                expected_sha256,
+                reused=reused,
+            )
+            return True
+        except Exception as error:
+            if allow_missing and _is_storage_not_found(error):
+                return False
+            if (
+                not _is_transient_storage_error(error)
+                or attempt_index == STORAGE_MAX_ATTEMPTS - 1
+            ):
+                raise
+            delay = _storage_retry_delay(attempt_index)
+            print({
+                "storage_readback_retry": attempt_index + 2,
+                "path": remote_path,
+                "delay_seconds": delay,
+                "error": error.__class__.__name__,
+            })
+            time.sleep(delay)
+    raise AssertionError("unreachable Storage readback retry state")
+
+
+def _upload_or_verify_immutable_artifact(
+    bucket,
+    remote_path: str,
+    local_path: Path,
+    expected_sha256: str,
+) -> bool:
+    """Upload once, or reuse an identical object left by an interrupted run.
+
+    Run-scoped model objects are immutable. A duplicate is safe only when the
+    stored bytes still match the reviewed local artifact. A mismatch aborts
+    before any Registry or activation RPC instead of overwriting evidence.
+
+    Returns True when an existing identical object was reused.
+    """
+    reused = False
+    for attempt_index in range(STORAGE_MAX_ATTEMPTS):
+        try:
+            with local_path.open("rb") as handle:
+                bucket.upload(
+                    remote_path,
+                    handle,
+                    {
+                        "content-type": "application/octet-stream",
+                        "upsert": "false",
+                    },
+                )
+            break
+        except Exception as error:
+            if _is_duplicate_storage_error(error):
+                reused = True
+                break
+            if not _is_transient_storage_error(error):
+                raise
+
+            # A timeout is ambiguous: Storage may have committed the object
+            # even though Colab did not receive the response. Verify first so
+            # a retry never overwrites or needlessly retransmits valid bytes.
+            if _download_and_verify_storage_artifact(
+                bucket,
+                remote_path,
+                local_path,
+                expected_sha256,
+                reused=True,
+                allow_missing=True,
+            ):
+                return True
+            if attempt_index == STORAGE_MAX_ATTEMPTS - 1:
+                raise RuntimeError(
+                    f"Storage upload remained unavailable after "
+                    f"{STORAGE_MAX_ATTEMPTS} attempts: {remote_path}. "
+                    "No Registry or activation RPC was called."
+                ) from error
+            delay = _storage_retry_delay(attempt_index)
+            print({
+                "storage_upload_retry": attempt_index + 2,
+                "path": remote_path,
+                "delay_seconds": delay,
+                "error": error.__class__.__name__,
+            })
+            time.sleep(delay)
+    else:
+        raise AssertionError("unreachable Storage upload retry state")
+
+    _download_and_verify_storage_artifact(
+        bucket,
+        remote_path,
+        local_path,
+        expected_sha256,
+        reused=reused,
+        allow_missing=False,
+    )
+    return reused
+
+
 def upload_and_register(
     sb: Client,
     result: PooledResult,
@@ -941,6 +1487,7 @@ def upload_and_register(
 ) -> None:
     bucket = sb.storage.from_("model-artifacts")
     dependency_lock = _versions()
+    reused_objects: list[str] = []
     for task_type, task_artifacts in artifacts.items():
         for artifact_key, paths in task_artifacts.items():
             base = (
@@ -950,10 +1497,20 @@ def upload_and_register(
             )
             native_remote = f"{base}/model.joblib"
             runtime_remote = f"{base}/runtime.json.gz"
-            with paths["native_path"].open("rb") as handle:
-                bucket.upload(native_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
-            with paths["runtime_path"].open("rb") as handle:
-                bucket.upload(runtime_remote, handle, {"content-type": "application/octet-stream", "upsert": "false"})
+            if _upload_or_verify_immutable_artifact(
+                bucket,
+                native_remote,
+                paths["native_path"],
+                paths["native_sha256"],
+            ):
+                reused_objects.append(native_remote)
+            if _upload_or_verify_immutable_artifact(
+                bucket,
+                runtime_remote,
+                paths["runtime_path"],
+                paths["runtime_sha256"],
+            ):
+                reused_objects.append(runtime_remote)
             for row in result.registry_rows:
                 if row["task_type"] != task_type:
                     continue
@@ -979,6 +1536,11 @@ def upload_and_register(
                 "p_required_provinces": len(result.province_ids),
             },
         ).execute()
+    if reused_objects:
+        print({
+            "storage_objects_reused_after_checksum_verification": len(reused_objects),
+            "run_id": result.run_id,
+        })
 
 
 def main() -> int:

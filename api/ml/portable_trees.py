@@ -2,20 +2,28 @@
 
 The exporters preserve the fitted LightGBM and Random Forest tree structures;
 the evaluators execute those exact structures without replacing them with a
-linear surrogate.  Artifacts are JSON and can be gzip-compressed for private
-Supabase Storage.
+linear surrogate. Artifacts are JSON and can be gzip-compressed for private
+Supabase Storage. Large Free-plan serving artifacts may be represented by a
+small gzip-compressed chunk manifest whose verified parts reconstruct the exact
+original portable artifact before decoding.
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import math
+import os
 from typing import Iterable
+from urllib.parse import quote
 
 import numpy as np
 
 ARTIFACT_SCHEMA = "portable-tree-ensemble-v1"
+CHUNK_MANIFEST_SCHEMA = "portable-tree-chunk-manifest-v1"
+CHUNK_MANIFEST_MAX_PARTS = 32
+CHUNK_MANIFEST_MAX_PAYLOAD_BYTES = 256 * 1024 * 1024
 
 
 def encode_artifact(artifact: dict) -> bytes:
@@ -28,13 +36,125 @@ def encode_artifact(artifact: dict) -> bytes:
     return gzip.compress(payload, compresslevel=9, mtime=0)
 
 
-def decode_artifact(payload: bytes) -> dict:
+def _decode_json_bytes(payload: bytes) -> dict:
     try:
         decoded = gzip.decompress(payload)
     except (gzip.BadGzipFile, OSError):
         decoded = payload
-    artifact = json.loads(decoded.decode("utf-8"))
-    if not isinstance(artifact, dict) or artifact.get("artifact_schema") != ARTIFACT_SCHEMA:
+    value = json.loads(decoded.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("portable artifact payload must be a JSON object")
+    return value
+
+
+def _storage_location(uri: str) -> tuple[str, str]:
+    prefix = "storage://"
+    if not isinstance(uri, str) or not uri.startswith(prefix):
+        raise ValueError("chunk manifest requires private storage URIs")
+    location = uri[len(prefix):]
+    bucket, separator, path = location.partition("/")
+    if (
+        not separator
+        or not bucket
+        or not path
+        or ".." in path.split("/")
+        or bucket != "model-artifacts"
+    ):
+        raise ValueError("invalid chunk manifest storage URI")
+    return bucket, path
+
+
+def _download_storage_object(uri: str) -> bytes:
+    """Download one private chunk using service credentials already used by inference."""
+    bucket, path = _storage_location(uri)
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_key:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required "
+            "to resolve chunked runtime artifacts"
+        )
+    try:
+        import requests
+    except ImportError as exc:  # pragma: no cover - production requirements include requests
+        raise RuntimeError("requests is required for chunked runtime artifacts") from exc
+
+    encoded_bucket = quote(bucket, safe="")
+    encoded_path = quote(path, safe="/")
+    response = requests.get(
+        f"{supabase_url}/storage/v1/object/authenticated/"
+        f"{encoded_bucket}/{encoded_path}",
+        headers={
+            "Authorization": f"Bearer {service_key}",
+            "apikey": service_key,
+        },
+        timeout=(15.0, 180.0),
+    )
+    try:
+        response.raise_for_status()
+        return bytes(response.content)
+    finally:
+        response.close()
+
+
+def _resolve_chunk_manifest(manifest: dict) -> bytes:
+    if manifest.get("artifact_schema") != CHUNK_MANIFEST_SCHEMA:
+        raise ValueError("unsupported portable tree chunk manifest schema")
+    payload_format = manifest.get("payload_format")
+    if payload_format != "json+gzip":
+        raise ValueError("unsupported chunk manifest payload format")
+
+    expected_sha = str(manifest.get("payload_sha256") or "")
+    expected_size = int(manifest.get("payload_byte_size") or 0)
+    if len(expected_sha) != 64 or any(c not in "0123456789abcdef" for c in expected_sha):
+        raise ValueError("invalid chunk manifest payload checksum")
+    if not 0 < expected_size <= CHUNK_MANIFEST_MAX_PAYLOAD_BYTES:
+        raise ValueError("invalid chunk manifest payload size")
+
+    chunks = manifest.get("chunks")
+    if (
+        not isinstance(chunks, list)
+        or not chunks
+        or len(chunks) > CHUNK_MANIFEST_MAX_PARTS
+    ):
+        raise ValueError("invalid chunk manifest part count")
+
+    assembled = bytearray()
+    expected_index = 0
+    for item in chunks:
+        if not isinstance(item, dict) or int(item.get("index", -1)) != expected_index:
+            raise ValueError("chunk manifest indices must be contiguous from zero")
+        uri = str(item.get("storage_uri") or "")
+        chunk_sha = str(item.get("sha256") or "")
+        chunk_size = int(item.get("byte_size") or 0)
+        if len(chunk_sha) != 64 or any(c not in "0123456789abcdef" for c in chunk_sha):
+            raise ValueError("invalid chunk checksum")
+        if chunk_size <= 0 or chunk_size > 50 * 1024 * 1024:
+            raise ValueError("invalid chunk byte size")
+
+        chunk = _download_storage_object(uri)
+        if len(chunk) != chunk_size:
+            raise ValueError("runtime artifact chunk byte size mismatch")
+        if hashlib.sha256(chunk).hexdigest() != chunk_sha:
+            raise ValueError("runtime artifact chunk checksum mismatch")
+        assembled.extend(chunk)
+        if len(assembled) > expected_size:
+            raise ValueError("runtime artifact chunks exceed declared payload size")
+        expected_index += 1
+
+    payload = bytes(assembled)
+    if len(payload) != expected_size:
+        raise ValueError("runtime artifact reconstructed byte size mismatch")
+    if hashlib.sha256(payload).hexdigest() != expected_sha:
+        raise ValueError("runtime artifact reconstructed checksum mismatch")
+    return payload
+
+
+def decode_artifact(payload: bytes) -> dict:
+    artifact = _decode_json_bytes(payload)
+    if artifact.get("artifact_schema") == CHUNK_MANIFEST_SCHEMA:
+        artifact = _decode_json_bytes(_resolve_chunk_manifest(artifact))
+    if artifact.get("artifact_schema") != ARTIFACT_SCHEMA:
         raise ValueError("unsupported portable tree artifact schema")
     return artifact
 
