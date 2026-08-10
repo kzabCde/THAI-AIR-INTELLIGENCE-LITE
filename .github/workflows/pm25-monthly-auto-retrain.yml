@@ -1,0 +1,150 @@
+name: PM2.5 Monthly Auto-Retrain
+
+on:
+  schedule:
+    # 03:30 Asia/Bangkok on the 2nd day of every month (20:30 UTC on day 1).
+    # This runs after the normal 01:30 Bangkok daily database pipeline.
+    - cron: "30 20 1 * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Train and compare without any Production activation
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pm25-monthly-auto-retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain-evaluate-promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    outputs:
+      promoted: ${{ steps.monthly.outputs.promoted }}
+      run_id: ${{ steps.monthly.outputs.run_id }}
+      champion_run_id: ${{ steps.monthly.outputs.champion_run_id }}
+      activation_status: ${{ steps.monthly.outputs.activation_status }}
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TRAINING_ALLOWED_SOURCES: open-meteo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+
+      - run: python -m pip install --requirement training/requirements.txt
+
+      - name: Validate server-side secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_URL" || { echo "::error::Missing SUPABASE_URL"; exit 1; }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || {
+            echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1;
+          }
+
+      - name: Restore read-only Open-Meteo archive cache
+        uses: actions/cache@v4
+        with:
+          path: training/.cache/open-meteo-monthly
+          key: pm25-open-meteo-archive-v1-2022-08-01-to-db-boundary
+
+      - name: Fresh train, same-holdout evaluate, safe promote
+        id: monthly
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --artifact-dir training/artifacts
+            --archive-cache-dir training/.cache/open-meteo-monthly
+          )
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python -u -m training.monthly_auto_retrain "${args[@]}" | tee monthly-retrain.log
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("training/artifacts/monthly_promotion.json").read_text())
+          print(f"promoted={'true' if payload.get('promoted') else 'false'}")
+          print(f"run_id={payload['run_id']}")
+          print(f"champion_run_id={payload['champion_run_id']}")
+          print(f"activation_status={payload['activation_status']}")
+          PY
+
+      - name: Upload monthly audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pm25-monthly-retrain-${{ github.run_id }}
+          path: |
+            training/artifacts/
+            monthly-retrain.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write monthly decision summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## PM2.5 monthly champion/challenger"
+            echo
+            echo "- Candidate run: \`${{ steps.monthly.outputs.run_id }}\`"
+            echo "- Previous champion: \`${{ steps.monthly.outputs.champion_run_id }}\`"
+            echo "- Promoted: \`${{ steps.monthly.outputs.promoted }}\`"
+            echo "- Activation status: \`${{ steps.monthly.outputs.activation_status }}\`"
+            echo "- Regression auto-promotion requires strict 20/20 eligibility."
+            echo "- Classification must pass the reviewed absolute deployment thresholds."
+            echo "- Champion and challenger are compared on the same latest 365-day D+1 holdout."
+            echo "- Activation is atomic; a rejected challenger makes no Registry/Storage write."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  forecast-after-promotion:
+    needs: retrain-evaluate-promote
+    if: needs.retrain-evaluate-promote.outputs.promoted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      ML_FORECAST_URL: ${{ secrets.ML_FORECAST_URL }}
+      ML_SECRET: ${{ secrets.ML_SECRET }}
+    steps:
+      - name: Validate forecast configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ML_FORECAST_URL" || { echo "::error::Missing ML_FORECAST_URL"; exit 1; }
+          test -n "$ML_SECRET" || { echo "::error::Missing ML_SECRET"; exit 1; }
+
+      - name: Generate seven-day forecast from promoted run
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          status="$(
+            curl --silent --show-error --retry 3 --retry-all-errors \
+              --connect-timeout 10 --max-time 180 \
+              --output "$response_file" --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $ML_SECRET" \
+              --header "Content-Type: application/json" \
+              --data '{"horizon":7}' \
+              "$ML_FORECAST_URL/api/ml/forecast"
+          )"
+          if [[ "$status" != "200" ]]; then
+            cat "$response_file" || true
+            echo "::error::Forecast endpoint returned HTTP $status"
+            exit 1
+          fi
+          python -m json.tool "$response_file"
