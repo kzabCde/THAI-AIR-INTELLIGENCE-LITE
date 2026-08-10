@@ -1,8 +1,9 @@
 # Production Runbook
 
 For the staged dual-model rollout and non-destructive rollback, follow
-[DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md). The new workflow is manual
-and defaults to dry-run.
+[DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md). The staged/manual workflow
+defaults to dry-run. Production also has a separate fail-closed monthly
+champion/challenger retraining workflow described below.
 
 ## Deploy
 
@@ -63,14 +64,50 @@ continues to use environment variables; never commit their values.
   exponential backoff. Unresolved failures are deduplicated in
   `pipeline_alerts`; a successful subsequent run resolves the alert.
 - The daily database pipeline runs at 01:30 Asia/Bangkok and triggers the ML
-  endpoint after summary/cleanup work. Model retraining is manual. Do not
-  re-enable `fn_generate_forecast` as a second writer: unaudited fallback rows
-  must not supersede a completed ML batch.
+  endpoint after summary/cleanup work. It does not retrain models.
+- The monthly champion/challenger workflow runs at 03:30 Asia/Bangkok on the
+  second day of each month. A training or comparison failure leaves the current
+  active run unchanged.
+- Do not re-enable `fn_generate_forecast` as a second writer: unaudited fallback
+  rows must not supersede a completed ML batch.
 - A forecast is serving-eligible only when it references a `forecast_runs` row
   whose status is `success` or `partial`. Treat rows with no run ID as legacy
   evidence, not as the current forecast.
 - Treat D+2–D+7 rows as experimental. A healthy pipeline does not change that
   model-evidence boundary.
+
+## Monthly champion/challenger retraining
+
+`.github/workflows/pm25-monthly-auto-retrain.yml` performs a fresh training run
+once per month. It combines a read-only cached Open-Meteo archive beginning
+`2022-08-01` with the trusted Supabase continuation, rebuilds leakage-safe daily
+features, and preserves the 365-day Validation, 365-day Test and seven-day
+embargo boundaries. Historical archive rows are never written to Supabase.
+
+The monthly path is fail closed. Regression must pass the unchanged strict 4.5%
+D+1 Skill gate for all 20 provinces; the historical TH-34 conditional exception
+is not used for automatic promotion. Classification must pass the reviewed
+absolute pooled deployment thresholds, including Accuracy, Macro F1, Balanced
+Accuracy, Weighted F1 and Class 4/5 recall/support checks.
+
+After training, the active champion artifacts are evaluated on the exact same
+latest 365-day D+1 holdout as the challenger. Both tasks must be non-inferior,
+no province-local Regression MAE may regress by more than the policy tolerance,
+and at least one task must improve materially. Only then are artifacts uploaded
+using the Supabase Free-plan chunk-manifest path and the existing
+`fn_activate_pooled_dual_model_run` RPC promotes all 40 rows atomically.
+Rejected challengers make no Registry or Storage write and the active Production
+run remains unchanged. A seven-day forecast is generated only after a confirmed
+promotion.
+
+Manual testing is available from GitHub Actions. `workflow_dispatch` defaults to
+`dry_run=true`, which performs archive loading, training and same-holdout
+comparison without any Production write. The scheduled monthly invocation is
+live but retains the same fail-closed promotion gate.
+
+Monthly challenger windows are operational promotion evidence. They do not
+replace the frozen final-test evidence used for the capstone's reported model
+result.
 
 ## Data freshness
 
@@ -119,16 +156,13 @@ python -m training.train_pooled_models --register --activate
 
 The canonical Colab entry point is
 `training/train_dual_models_pm25.ipynb`. It imports the same
-`training.train_pooled_models` functions used above, defaults to shadow-only
-execution (`REGISTER = False`, `ACTIVATE = False`), and requires only
-`SUPABASE_URL` plus `SUPABASE_SERVICE_ROLE_KEY` in Colab Secrets. The retained
+`training.train_pooled_models` functions used above and remains useful for
+manual/research training and recovery. The retained
 `train_all_6_models_pm25.ipynb` notebook is a legacy comparison/rollback aid;
-it is not the production pooled training path.
+it is not the scheduled monthly production path.
 
-Registration uploads 20 immutable province-local residual LightGBM artifact
-pairs and one pooled Random Forest artifact pair, and always inserts candidates
-inactive. Activation is one atomic dual-task RPC gate. Regression requires at
-least 4.5% D+1 skill versus persistence globally and in every province. Classifiers cannot activate
-without fixed-five-class pooled metrics and at least five final-test samples in
-both critical classes. The GitHub workflow defaults to dry-run; `shadow` writes
-artifacts and summaries without changing the registry.
+Registration uploads 20 immutable province-local residual LightGBM artifacts
+and one pooled Random Forest runtime. Supabase Free-plan serving keeps oversized
+portable runtimes as checksum-verified chunks plus a manifest. Activation is one
+atomic dual-task RPC gate. The manual workflow still defaults to dry-run;
+`shadow` writes artifacts and summaries without changing the registry.
