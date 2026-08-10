@@ -1,9 +1,9 @@
 name: PM2.5 Monthly Dry-Run Smoke
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/monthly-dry-run-smoke
+      - main
 
 permissions:
   contents: read
