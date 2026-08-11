@@ -61,11 +61,21 @@ body {
   width: 100%;
   height: 100%;
   z-index: 0;
-  background: rgb(var(--surface-2));
+  background: #111827;
   font: inherit;
 }
-.dark .leaflet-tile {
-  filter: brightness(0.7) invert(1) contrast(0.9) hue-rotate(180deg) saturate(0.7);
+/* Keep natural satellite colors in both light & dark mode */
+.leaflet-tile {
+  filter: none !important;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 .leaflet-tooltip.province-tip {
   background: rgb(var(--surface));

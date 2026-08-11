@@ -1,50 +1,41 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, Info, Thermometer, Droplets, Wind, CloudRain } from "lucide-react";
+import { Thermometer, Droplets, Wind, CloudRain } from "lucide-react";
 import { bandForAqi, bandForPm25 } from "@/lib/aqi";
 import { fmtPm25, fmtTimeTh } from "@/lib/format";
+import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import type { ProvinceSnapshot } from "@/services/types";
 
-function getAqiGradientConfig(aqi: number) {
+function getAqiInnerPanelTheme(aqi: number) {
   if (aqi <= 25) {
-    // Level 1: Emerald Green Fading Gradient + Dark Mode Neon Glow
     return {
-      gradient: "bg-gradient-to-b from-emerald-500 via-emerald-200/80 to-emerald-50 border-emerald-400 dark:from-emerald-900/90 dark:via-emerald-950 dark:to-zinc-900/90 dark:border-emerald-500/60 dark:shadow-[0_0_30px_rgba(16,185,129,0.2)]",
-      badgeBg: "#059669",
-      darkSubtextColor: "dark:text-emerald-200",
+      panelBg: "bg-emerald-100 dark:bg-emerald-950/90 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-50",
+      badgeBg: "bg-emerald-600 text-white",
     };
   }
   if (aqi <= 50) {
-    // Level 2: Lime Green Fading Gradient + Dark Mode Glow
     return {
-      gradient: "bg-gradient-to-b from-lime-500 via-lime-200/80 to-lime-50 border-lime-400 dark:from-lime-900/90 dark:via-lime-950 dark:to-zinc-900/90 dark:border-lime-500/60 dark:shadow-[0_0_30px_rgba(132,204,22,0.2)]",
-      badgeBg: "#65a30d",
-      darkSubtextColor: "dark:text-lime-200",
+      panelBg: "bg-lime-100 dark:bg-lime-950/90 border-lime-300 dark:border-lime-800 text-lime-950 dark:text-lime-50",
+      badgeBg: "bg-lime-600 text-white",
     };
   }
   if (aqi <= 100) {
-    // Level 3: Amber/Yellow Fading Gradient + Dark Mode Glow
     return {
-      gradient: "bg-gradient-to-b from-amber-400 via-amber-200/80 to-yellow-50 border-amber-300 dark:from-amber-900/90 dark:via-amber-950 dark:to-zinc-900/90 dark:border-amber-500/60 dark:shadow-[0_0_30px_rgba(245,158,11,0.2)]",
-      badgeBg: "#d97706",
-      darkSubtextColor: "dark:text-amber-200",
+      panelBg: "bg-amber-100 dark:bg-amber-950/90 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-50",
+      badgeBg: "bg-amber-400 text-amber-950",
     };
   }
   if (aqi <= 150) {
-    // Level 4: Orange Fading Gradient + Dark Mode Glow
     return {
-      gradient: "bg-gradient-to-b from-orange-500 via-orange-200/80 to-orange-50 border-orange-400 dark:from-orange-900/90 dark:via-orange-950 dark:to-zinc-900/90 dark:border-orange-500/60 dark:shadow-[0_0_30px_rgba(249,115,22,0.2)]",
-      badgeBg: "#ea580c",
-      darkSubtextColor: "dark:text-orange-200",
+      panelBg: "bg-orange-100 dark:bg-orange-950/90 border-orange-300 dark:border-orange-800 text-orange-950 dark:text-orange-50",
+      badgeBg: "bg-orange-500 text-white",
     };
   }
-  // Level 5: Red Fading Gradient + Dark Mode Glow
   return {
-    gradient: "bg-gradient-to-b from-red-500 via-rose-200/80 to-red-50 border-red-400 dark:from-red-900/90 dark:via-red-950 dark:to-zinc-900/90 dark:border-red-500/60 dark:shadow-[0_0_30px_rgba(239,68,68,0.2)]",
-    badgeBg: "#dc2626",
-    darkSubtextColor: "dark:text-rose-200",
+    panelBg: "bg-rose-100 dark:bg-rose-950/90 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-50",
+    badgeBg: "bg-rose-600 text-white",
   };
 }
 
@@ -67,17 +58,13 @@ export function ProvinceHeroCard({
   const pm25 = snapshot.pm25 ?? 0;
   const aqi = snapshot.aqi ?? 0;
   const band = snapshot.aqi != null ? bandForAqi(snapshot.aqi) : bandForPm25(pm25);
-
-  // SVG Gauge calculations
-  const gaugePercent = Math.min(100, Math.max(0, (aqi / 200) * 100));
-  const strokeDashoffset = 251.2 - (251.2 * (gaugePercent * 0.75)) / 100;
-  const theme = getAqiGradientConfig(aqi);
+  const theme = getAqiInnerPanelTheme(aqi);
 
   return (
-    <div className="space-y-2.5 w-full">
-      {/* Top Header Bar: Dropdown + LIVE Badge + Timestamp (High Contrast in Dark Mode) */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="w-full sm:w-auto sm:max-w-xs flex-1">
+    <div className="w-full rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 p-3.5 sm:p-4 shadow-sm space-y-3 transition-all">
+      {/* 1. Top Header Row: Province Selector Dropdown + LIVE Badge */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="w-auto">
           <ProvinceSelectModal
             snapshots={snapshots}
             selectedId={selectedId}
@@ -88,137 +75,103 @@ export function ProvinceHeroCard({
           />
         </div>
 
-        <div className="flex items-center justify-end gap-1.5 font-bold text-zinc-700 dark:text-zinc-200 shrink-0 ml-auto">
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 dark:bg-emerald-500/30 px-2.5 py-0.5 text-[11px] font-extrabold text-emerald-700 dark:text-emerald-300">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-            LIVE
-          </span>
-          <span className="text-[11px]">อัปเดตล่าสุด {fmtTimeTh(snapshot.observedAt)} น.</span>
-          <button
-            type="button"
-            onClick={() => setSelectedId(selectedId)}
-            title="รีเฟรชข้อมูล"
-            className="p-1 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white transition"
-          >
-            <RefreshCw size={13} />
-          </button>
+        {/* LIVE Status Badge */}
+        <div className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          <span>LIVE</span>
         </div>
       </div>
 
-      {/* Main AQI Section ONLY with Top-to-Bottom Color Gradient (High Contrast & Glow in Dark Mode) */}
-      <div className={`relative overflow-hidden rounded-3xl border ${theme.gradient} p-4 sm:p-5 shadow-sm w-full transition-all duration-300`}>
-        <div className="relative z-10 space-y-3">
-          {/* Card Title */}
-          <div className="flex items-center justify-start gap-1.5 text-xs font-black text-zinc-950 dark:text-white">
-            <span>คุณภาพอากาศปัจจุบัน</span>
-            <Info size={13} className="text-zinc-700 dark:text-zinc-300" />
-          </div>
+      {/* 2. Middle Panel: FAINT CITY SKYLINE WITH RICH VARIED BUILDING SIZES (FAT, THIN, TALL, SHORT) */}
+      <div className={`relative overflow-hidden rounded-2xl border ${theme.panelBg} p-4 sm:p-5 shadow-xs transition-all duration-300`}>
+        {/* Soft, Faint, Richly Varied City Skyline Silhouette Vector in matching AQI theme color */}
+        <svg
+          className="absolute bottom-0 right-0 h-24 sm:h-28 w-4/5 text-current opacity-20 dark:opacity-15 pointer-events-none z-0"
+          viewBox="0 0 800 120"
+          fill="currentColor"
+          preserveAspectRatio="none"
+          style={{
+            maskImage: "linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 30%, rgba(0,0,0,1) 100%)",
+            WebkitMaskImage: "linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 30%, rgba(0,0,0,1) 100%)",
+          }}
+        >
+          <path d="M0,120 L0,110 L12,110 L12,120 L20,120 L20,95 L45,95 L45,120 L55,120 L55,75 L62,75 L62,50 L65,50 L65,75 L75,75 L75,120 L85,120 L85,100 L115,100 L115,120 L125,120 L125,60 L130,60 L130,40 L133,40 L133,60 L140,60 L140,120 L150,120 L150,90 L160,90 L160,120 L170,120 L170,80 Q185,60 200,80 L200,120 L210,120 L210,55 L245,55 L245,120 L255,120 L255,105 L270,105 L270,120 L280,120 L280,70 L285,70 L285,35 L288,35 L288,70 L295,70 L295,120 L305,120 L305,85 L335,85 L335,120 L345,120 L345,65 L365,65 L365,120 L375,120 L375,95 L415,95 L415,120 L425,120 L425,45 L430,45 L430,25 L433,25 L433,45 L440,45 L440,120 L450,120 L450,80 L460,80 L460,120 L470,120 L470,105 L510,105 L510,120 L520,120 L520,60 L525,60 L525,40 L528,40 L528,60 L535,60 L535,120 L545,120 L545,75 L565,75 L565,120 L575,120 L575,90 L615,90 L615,120 L625,120 L625,50 L630,50 L630,30 L633,30 L633,50 L640,50 L640,120 L650,120 L650,70 L675,70 L675,120 L685,120 L685,85 L725,85 L725,120 L735,120 L735,60 L740,60 L740,38 L743,38 L743,60 L750,60 L750,120 L760,120 L760,100 L795,100 L795,120 L800,120 Z" />
+        </svg>
 
-          {/* Perfectly Centered Symmetrical Content Container */}
-          <div className="flex items-center justify-center gap-3 sm:gap-6 max-w-md mx-auto py-1 px-1">
-            {/* Speedometer SVG Gauge */}
-            <div className="relative flex h-28 w-28 sm:h-32 sm:w-32 shrink-0 items-center justify-center">
-              <svg className="h-full w-full -rotate-90 transform" viewBox="0 0 100 100">
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  stroke="rgba(0,0,0,0.12)"
-                  strokeWidth="8"
-                  fill="none"
-                  strokeDasharray="251.2"
-                  strokeDashoffset="62.8"
-                  strokeLinecap="round"
-                  className="dark:stroke-zinc-700/60"
-                />
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  stroke={band.color}
-                  strokeWidth="8"
-                  fill="none"
-                  strokeDasharray="251.2"
-                  strokeDashoffset={strokeDashoffset}
-                  strokeLinecap="round"
-                  className="transition-all duration-700 ease-out drop-shadow-md"
-                />
-              </svg>
-
-              {/* AQI Center Text */}
-              <div className="absolute flex flex-col items-center text-center">
-                <span className="text-3xl sm:text-4xl font-black tracking-tight text-zinc-950 dark:text-white tabular-nums leading-none drop-shadow-xs">
+        <div className="relative z-10 flex items-center justify-between gap-4 py-0.5">
+          {/* Left Column: AQI Readout, Level Badge, PM2.5 Value, Timestamp */}
+          <div className="space-y-2">
+            {/* AQI Big Number & Level Badge */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-baseline gap-1">
+                <span className="text-4xl sm:text-5xl font-black tabular-nums tracking-tight leading-none">
                   {aqi}
                 </span>
-                <span className="text-[9px] font-extrabold uppercase tracking-widest text-zinc-800 dark:text-zinc-300 mt-0.5">
+                <span className="text-xs sm:text-sm font-extrabold tracking-wider uppercase opacity-85">
                   AQI
                 </span>
-                <span
-                  className="mt-1 rounded-full px-2.5 py-0.5 text-[9px] font-black text-white shadow-xs"
-                  style={{ backgroundColor: theme.badgeBg }}
-                >
-                  {band.labelTh}
-                </span>
               </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-black shadow-xs ${theme.badgeBg}`}>
+                {band.labelTh}
+              </span>
             </div>
 
-            {/* PM2.5 Readout & Subtext (Ultra Crystal Clear in Dark Mode) */}
-            <div className="flex flex-col text-left justify-center flex-1 min-w-0">
-              <span className="text-[11px] font-black text-zinc-800 dark:text-zinc-300 uppercase tracking-wide">
-                PM2.5
-              </span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-3xl sm:text-4xl font-black text-zinc-950 dark:text-white tabular-nums leading-none drop-shadow-xs">
-                  {fmtPm25(pm25)}
-                </span>
-                <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">µg/m³</span>
-              </div>
-              <p className={`mt-1.5 text-[10px] sm:text-[11px] font-bold text-zinc-950 ${theme.darkSubtextColor} leading-snug drop-shadow-xs`}>
-                คุณภาพอากาศ{band.labelTh} เหมาะกับกิจกรรมกลางแจ้งได้ตามปกติ
-              </p>
+            {/* PM2.5 Readout Row */}
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs font-extrabold opacity-75 uppercase tracking-wide">PM2.5</span>
+              <span className="text-2xl sm:text-3xl font-black tabular-nums leading-none">{fmtPm25(pm25)}</span>
+              <span className="text-xs font-bold opacity-75">µg/m³</span>
             </div>
+
+            {/* Timestamp */}
+            <p className="text-[11px] font-bold opacity-70">
+              อัปเดตล่าสุด {fmtTimeTh(snapshot.observedAt)} น.
+            </p>
+          </div>
+
+          {/* Right Column: AI Generated Cute Emoji Face Avatar */}
+          <div className="shrink-0 pr-1 sm:pr-3">
+            <AqiFaceIcon level={aqi} size={92} className="drop-shadow-md transition-transform hover:scale-105" />
           </div>
         </div>
       </div>
 
-      {/* Standalone Weather Capsule Box (Centered Items, Ultra Crisp in Dark Mode) */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900/95 shadow-sm overflow-hidden">
-        <div className="grid grid-cols-4 divide-x divide-zinc-200/80 dark:divide-zinc-800 text-center py-2.5 px-1">
-          {/* Item 1: Temp */}
-          <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
-            <Thermometer className="text-orange-500 dark:text-orange-400 shrink-0" size={16} />
-            <span className="block text-xs font-black text-zinc-950 dark:text-white tabular-nums leading-none mt-1">
-              {snapshot.temperature != null ? `${snapshot.temperature.toFixed(0)}°C` : "26°C"}
-            </span>
-            <span className="block text-[9px] font-bold text-zinc-500 dark:text-zinc-400">อุณหภูมิ</span>
-          </div>
+      {/* 3. Bottom Weather Capsule Row */}
+      <div className="grid grid-cols-4 divide-x divide-zinc-200 dark:divide-zinc-800 pt-0.5 text-center">
+        {/* Item 1: Temp */}
+        <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
+          <Thermometer className="text-orange-500 dark:text-orange-400" size={15} />
+          <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums leading-none mt-0.5">
+            {snapshot.temperature != null ? `${snapshot.temperature.toFixed(1)} °C` : "28.4 °C"}
+          </span>
+          <span className="text-[9px] font-bold text-zinc-400">อุณหภูมิ</span>
+        </div>
 
-          {/* Item 2: Humidity */}
-          <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
-            <Droplets className="text-blue-500 dark:text-blue-400 shrink-0" size={16} />
-            <span className="block text-xs font-black text-zinc-950 dark:text-white tabular-nums leading-none mt-1">
-              {snapshot.humidity != null ? `${snapshot.humidity.toFixed(0)}%` : "84%"}
-            </span>
-            <span className="block text-[9px] font-bold text-zinc-500 dark:text-zinc-400">ความชื้น</span>
-          </div>
+        {/* Item 2: Humidity */}
+        <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
+          <Droplets className="text-blue-500 dark:text-blue-400" size={15} />
+          <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums leading-none mt-0.5">
+            {snapshot.humidity != null ? `${snapshot.humidity.toFixed(0)}%` : "68%"}
+          </span>
+          <span className="text-[9px] font-bold text-zinc-400">ความชื้น</span>
+        </div>
 
-          {/* Item 3: Wind */}
-          <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center min-w-0">
-            <Wind className="text-teal-500 dark:text-teal-400 shrink-0" size={16} />
-            <span className="block text-xs font-black text-zinc-950 dark:text-white tabular-nums truncate leading-none mt-1">
-              {snapshot.windSpeed != null ? `${snapshot.windSpeed.toFixed(0)} km/h` : "13 km/h"}
-            </span>
-            <span className="block text-[9px] font-bold text-zinc-500 dark:text-zinc-400 truncate">ลมตะวันตกเฉียงใต้</span>
-          </div>
+        {/* Item 3: Wind */}
+        <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center min-w-0">
+          <Wind className="text-teal-500 dark:text-teal-400 shrink-0" size={15} />
+          <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums truncate leading-none mt-0.5">
+            {snapshot.windSpeed != null ? `${snapshot.windSpeed.toFixed(0)} km/h` : "5 km/h"}
+          </span>
+          <span className="text-[9px] font-bold text-zinc-400 truncate">ลม</span>
+        </div>
 
-          {/* Item 4: Rain */}
-          <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
-            <CloudRain className="text-indigo-500 dark:text-indigo-400 shrink-0" size={16} />
-            <span className="block text-xs font-black text-zinc-950 dark:text-white tabular-nums leading-none mt-1">
-              0 mm
-            </span>
-            <span className="block text-[9px] font-bold text-zinc-500 dark:text-zinc-400">ฝน 24 ชม.</span>
-          </div>
+        {/* Item 4: Rain */}
+        <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
+          <CloudRain className="text-indigo-500 dark:text-indigo-400" size={15} />
+          <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums leading-none mt-0.5">
+            0 mm
+          </span>
+          <span className="text-[9px] font-bold text-zinc-400">ฝน (1h)</span>
         </div>
       </div>
     </div>

@@ -51,7 +51,7 @@ export default async function ForecastPage({
 }) {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
   const { province: pParam } = await searchParams;
-  const province = getProvince(pParam ?? "TH-30") ?? getProvince("TH-30")!;
+  const province = getProvince(pParam ?? "TH-40") ?? getProvince("TH-40")!;
 
   let forecast, weather;
   try {

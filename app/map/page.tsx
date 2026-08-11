@@ -2,26 +2,29 @@ import type { Metadata } from "next";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getRegionOverview } from "@/services/overview.service";
-import { IsanMapCard } from "@/components/map/isan-map-card";
-import { NotConfiguredState, ErrorState , NetworkRestrictedState } from "@/components/ui/states";
+import { MapPageDashboard } from "@/components/map/map-page-dashboard";
+import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
 import type { MapProvince } from "@/components/map/types";
-import { fmtPm25 } from "@/lib/format";
-import { RelativeTime } from "@/components/ui/relative-time";
 
-export const metadata: Metadata = { title: "แผนที่คุณภาพอากาศ" };
+export const metadata: Metadata = {
+  title: "แผนที่คุณภาพอากาศภาคอีสาน | Isan Air Intelligence",
+  description: "แผนที่แสดงค่า PM2.5 AQI จุดความร้อน FIRMS และทิศทางลม 20 จังหวัดภาคอีสานแบบเรียลไทม์",
+};
+
 export const revalidate = 300;
 
 export default async function MapPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
+
   let overview;
   try {
     overview = await getRegionOverview();
   } catch (err) {
     if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
-    return <ErrorState />;
+    return <ErrorState description="ไม่สามารถเชื่อมต่อฐานข้อมูล Supabase ได้" />;
   }
 
-  const provinces: MapProvince[] = overview.snapshots.map((s) => ({
+  const mapProvinces: MapProvince[] = overview.snapshots.map((s) => ({
     id: s.province.id,
     slug: s.province.slug,
     nameTh: s.province.nameTh,
@@ -39,16 +42,9 @@ export default async function MapPage() {
   }));
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">แผนที่ภาคอีสาน</h1>
-          <p className="muted text-sm">
-            PM2.5 เฉลี่ย {fmtPm25(overview.avgPm25)} µg/m³ · อัปเดต <RelativeTime iso={overview.observedAt} />
-          </p>
-        </div>
-      </div>
-      <IsanMapCard provinces={provinces} height="h-[68vh]" />
-    </div>
+    <MapPageDashboard
+      overview={overview}
+      mapProvinces={mapProvinces}
+    />
   );
 }

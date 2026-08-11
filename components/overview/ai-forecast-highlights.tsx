@@ -7,6 +7,20 @@ import { bandForAqi, pm25ToAqi } from "@/lib/aqi";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 
+const THAI_SHORT_DAYS = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
+const THAI_SHORT_MONTHS = [
+  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."
+];
+
+function formatThaiDay(d: Date): string {
+  return THAI_SHORT_DAYS[d.getDay()];
+}
+
+function formatThaiDate(d: Date): string {
+  return `${d.getDate()} ${THAI_SHORT_MONTHS[d.getMonth()]}`;
+}
+
 function getDotColor(aqi: number) {
   if (aqi <= 25) return "#10b981"; // Emerald
   if (aqi <= 50) return "#84cc16"; // Lime
@@ -25,14 +39,16 @@ export function AiForecastHighlights({
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Fetch real ML forecast predictions from Supabase via /api/forecast?id={provinceId}
+  // Fetch real ML forecast predictions from Supabase via /api/forecast?province={provinceId}
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
-    fetch(`/api/forecast?id=${provinceId}`)
+    fetch(`/api/forecast?province=${provinceId}`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: ProvinceForecast | null) => {
-        if (isMounted && data) {
+      .then((json) => {
+        // Unwrap API response helper structure { success: true, data: ProvinceForecast }
+        const data: ProvinceForecast | null = json?.data ?? json;
+        if (isMounted && data && Array.isArray(data.daily)) {
           setForecast(data);
         }
       })
@@ -46,7 +62,7 @@ export function AiForecastHighlights({
     };
   }, [provinceId]);
 
-  // Extract 24-hour diurnal points (8 points spaced 3h apart: 00, 03, 06, 09, 12, 15, 18, 21)
+  // Extract 24-hour diurnal points (8 points spaced 3h apart)
   const hourlyPoints: ForecastPoint[] = forecast?.hourly?.slice(0, 24) ?? [];
   const data24h = hourlyPoints.length >= 8
     ? hourlyPoints.filter((_, idx) => idx % 3 === 0).slice(0, 8).map((p: ForecastPoint) => ({
@@ -65,32 +81,41 @@ export function AiForecastHighlights({
         { time: "21:00", aqi: 48, pm25: 21 },
       ];
 
-  // Extract 7-day forecast points from real ML data
+  // Extract 7-day forecast points directly from real ML forecast daily rows
   const dailyPoints: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
 
-  const forecast7d = dailyPoints.length >= 7
+  // Dynamic fallback dates from new Date() if no ML points are returned
+  const todayDate = new Date();
+  const dynamicFallbackDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(todayDate);
+    d.setDate(todayDate.getDate() + i);
+    const aqiVal = Math.round(avgAqi);
+    const band = bandForAqi(aqiVal);
+    return {
+      day: i === 0 ? "วันนี้" : formatThaiDay(d),
+      date: formatThaiDate(d),
+      aqi: aqiVal,
+      label: band.labelTh,
+      color: band.color,
+      isToday: i === 0,
+    };
+  });
+
+  const forecast7d = dailyPoints.length > 0
     ? dailyPoints.map((p: ForecastPoint, idx: number) => {
         const d = new Date(p.t);
         const aqiVal = pm25ToAqi(p.pm25);
         const band = bandForAqi(aqiVal);
         return {
-          day: idx === 0 ? "วันนี้" : d.toLocaleDateString("th-TH", { weekday: "short" }),
-          date: d.toLocaleDateString("th-TH", { day: "numeric", month: "short" }),
+          day: idx === 0 ? "วันนี้" : formatThaiDay(d),
+          date: formatThaiDate(d),
           aqi: aqiVal,
           label: band.labelTh,
           color: band.color,
           isToday: idx === 0,
         };
       })
-    : [
-        { day: "วันนี้", date: "14 พ.ค.", aqi: Math.round(avgAqi), label: bandForAqi(avgAqi).labelTh, color: bandForAqi(avgAqi).color, isToday: true },
-        { day: "พฤ.", date: "15 พ.ค.", aqi: 75, label: "เริ่มมีผลกระทบ", color: "#f97316", isToday: false },
-        { day: "ศ.", date: "16 พ.ค.", aqi: 82, label: "เริ่มมีผลกระทบ", color: "#f97316", isToday: false },
-        { day: "ส.", date: "17 พ.ค.", aqi: 105, label: "มีผลกระทบ", color: "#ef4444", isToday: false },
-        { day: "อา.", date: "18 พ.ค.", aqi: 88, label: "เริ่มมีผลกระทบ", color: "#f97316", isToday: false },
-        { day: "จ.", date: "19 พ.ค.", aqi: 62, label: "ปานกลาง", color: "#facc15", isToday: false },
-        { day: "อ.", date: "20 พ.ค.", aqi: 45, label: "ดี", color: "#84cc16", isToday: false },
-      ];
+    : dynamicFallbackDays;
 
   // SVG Chart Height & Points calculation for 24h Trend
   const chartHeight = 110;
@@ -107,7 +132,7 @@ export function AiForecastHighlights({
 
   return (
     <div className="space-y-4">
-      {/* 1. Card 1: พยากรณ์ PM2.5 24 ชั่วโมงข้างหน้า (Matching Image 1 Top Card) */}
+      {/* 1. Card 1: พยากรณ์ PM2.5 24 ชั่วโมงข้างหน้า */}
       <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -118,7 +143,7 @@ export function AiForecastHighlights({
             {loading && <Loader2 size={13} className="animate-spin text-emerald-600" />}
           </div>
           <Link
-            href="/forecast"
+            href={`/forecast?province=${provinceId}`}
             className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
           >
             ดูรายละเอียด
@@ -185,13 +210,13 @@ export function AiForecastHighlights({
           </div>
         </div>
 
-        {/* Legend Row matching Image 1 */}
+        {/* Legend Row */}
         <div className="flex flex-wrap items-center justify-center gap-3 pt-2 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 border-t border-zinc-100 dark:border-zinc-800/80">
           <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-blue-500" /> ดีมาก (0-25)
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> ดีมาก (0-25)
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> ดี (26-50)
+            <span className="h-2.5 w-2.5 rounded-full bg-lime-500" /> ดี (26-50)
           </span>
           <span className="flex items-center gap-1">
             <span className="h-2.5 w-2.5 rounded-full bg-yellow-400" /> ปานกลาง (51-100)
@@ -205,13 +230,13 @@ export function AiForecastHighlights({
         </div>
       </div>
 
-      {/* 2. Card 2: พยากรณ์ 7 วันข้างหน้า (Matching Image 1 Bottom Card with AqiFaceIcon) */}
+      {/* 2. Card 2: พยากรณ์ 7 วันข้างหน้า */}
       <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-3">
         <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
           พยากรณ์ 7 วันข้างหน้า
         </h3>
 
-        {/* 7 Columns Row matching Image 1 */}
+        {/* 7 Columns Row */}
         <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center">
           {forecast7d.map((item, idx) => (
             <div
@@ -232,7 +257,7 @@ export function AiForecastHighlights({
                 </span>
               </div>
 
-              {/* Vector SVG Face Icon (NO TEXT EMOJIS! Exact match of image 2!) */}
+              {/* Vector SVG Face Icon */}
               <div className="my-2">
                 <AqiFaceIcon level={item.aqi} size={36} />
               </div>

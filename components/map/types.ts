@@ -9,8 +9,11 @@ export type MapProvince = {
   aqi: number | null;
   color: string;
   labelTh: string;
-  temperature: number | null;
-  humidity: number | null;
-  windSpeed: number | null;
-  observedAt: string | null;
+  temperature?: number | null;
+  humidity?: number | null;
+  windSpeed?: number | null;
+  windDirection?: string | null;
+  observedAt?: string | null;
 };
+
+export type MapFilterMode = "pm25" | "aqi" | "hotspot" | "weather" | "wind";

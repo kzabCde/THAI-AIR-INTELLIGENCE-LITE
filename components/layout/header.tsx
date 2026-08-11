@@ -16,7 +16,7 @@ function isActive(pathname: string, href: string) {
 export function Header() {
   const pathname = usePathname();
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-[rgb(var(--surface))]/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-[1000] border-b border-border bg-[rgb(var(--surface))]/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
         <Link href="/" className="flex min-w-0 items-center gap-2.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white shadow-soft">
