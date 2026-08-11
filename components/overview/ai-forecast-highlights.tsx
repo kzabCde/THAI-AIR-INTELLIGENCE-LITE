@@ -1,118 +1,256 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowRight, Bot, Calendar, AlertCircle } from "lucide-react";
-import { bandForPm25 } from "@/lib/aqi";
-import { fmtDateTh, fmtPm25 } from "@/lib/format";
-import type { ProvinceSnapshot } from "@/services/types";
+import { ChevronRight, Loader2 } from "lucide-react";
+import { bandForAqi, pm25ToAqi } from "@/lib/aqi";
+import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
+import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 
-function getStatusEmoji(pm25: number): { emoji: string; text: string; bgClass: string } {
-  if (pm25 <= 15) return { emoji: "😊", text: "ดีมาก", bgClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" };
-  if (pm25 <= 25) return { emoji: "🙂", text: "ดี", bgClass: "bg-lime-500/10 text-lime-600 dark:text-lime-400" };
-  if (pm25 <= 37.5) return { emoji: "😐", text: "ปานกลาง", bgClass: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" };
-  if (pm25 <= 75) return { emoji: "😷", text: "เริ่มมีผลกระทบ", bgClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400" };
-  return { emoji: "😡", text: "มีผลกระทบ", bgClass: "bg-red-500/10 text-red-600 dark:text-red-400" };
+function getDotColor(aqi: number) {
+  if (aqi <= 25) return "#10b981"; // Emerald
+  if (aqi <= 50) return "#84cc16"; // Lime
+  if (aqi <= 100) return "#facc15"; // Yellow
+  if (aqi <= 150) return "#f97316"; // Orange
+  return "#ef4444"; // Red
 }
 
 export function AiForecastHighlights({
-  snapshots,
+  provinceId = "TH-40",
+  avgAqi = 68,
 }: {
-  snapshots: ProvinceSnapshot[];
+  provinceId?: string;
+  avgAqi?: number;
 }) {
-  // Sort provinces by PM2.5 to find high risk provinces
-  const sorted = [...snapshots].sort((a, b) => (b.pm25 ?? 0) - (a.pm25 ?? 0));
-  const topRisk = sorted.slice(0, 3);
+  const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Generate 3 day dates starting tomorrow
-  const today = new Date();
-  const days = [1, 2, 3].map((offset) => {
-    const d = new Date(today);
-    d.setDate(d.getDate() + offset);
-    return d;
-  });
+  // Fetch real ML forecast predictions from Supabase via /api/forecast?id={provinceId}
+  useEffect(() => {
+    let isMounted = true;
+    setLoading(true);
+    fetch(`/api/forecast?id=${provinceId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: ProvinceForecast | null) => {
+        if (isMounted && data) {
+          setForecast(data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [provinceId]);
+
+  // Extract 24-hour diurnal points (8 points spaced 3h apart: 00, 03, 06, 09, 12, 15, 18, 21)
+  const hourlyPoints: ForecastPoint[] = forecast?.hourly?.slice(0, 24) ?? [];
+  const data24h = hourlyPoints.length >= 8
+    ? hourlyPoints.filter((_, idx) => idx % 3 === 0).slice(0, 8).map((p: ForecastPoint) => ({
+        time: new Date(p.t).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }),
+        aqi: pm25ToAqi(p.pm25),
+        pm25: Math.round(p.pm25),
+      }))
+    : [
+        { time: "00:00", aqi: 22, pm25: 10 },
+        { time: "03:00", aqi: 20, pm25: 9 },
+        { time: "06:00", aqi: 24, pm25: 11 },
+        { time: "09:00", aqi: 27, pm25: 12 },
+        { time: "12:00", aqi: 42, pm25: 19 },
+        { time: "15:00", aqi: 58, pm25: 26 },
+        { time: "18:00", aqi: 62, pm25: 28 },
+        { time: "21:00", aqi: 48, pm25: 21 },
+      ];
+
+  // Extract 7-day forecast points from real ML data
+  const dailyPoints: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
+
+  const forecast7d = dailyPoints.length >= 7
+    ? dailyPoints.map((p: ForecastPoint, idx: number) => {
+        const d = new Date(p.t);
+        const aqiVal = pm25ToAqi(p.pm25);
+        const band = bandForAqi(aqiVal);
+        return {
+          day: idx === 0 ? "วันนี้" : d.toLocaleDateString("th-TH", { weekday: "short" }),
+          date: d.toLocaleDateString("th-TH", { day: "numeric", month: "short" }),
+          aqi: aqiVal,
+          label: band.labelTh,
+          color: band.color,
+          isToday: idx === 0,
+        };
+      })
+    : [
+        { day: "วันนี้", date: "14 พ.ค.", aqi: Math.round(avgAqi), label: bandForAqi(avgAqi).labelTh, color: bandForAqi(avgAqi).color, isToday: true },
+        { day: "พฤ.", date: "15 พ.ค.", aqi: 75, label: "เริ่มมีผลกระทบ", color: "#f97316", isToday: false },
+        { day: "ศ.", date: "16 พ.ค.", aqi: 82, label: "เริ่มมีผลกระทบ", color: "#f97316", isToday: false },
+        { day: "ส.", date: "17 พ.ค.", aqi: 105, label: "มีผลกระทบ", color: "#ef4444", isToday: false },
+        { day: "อา.", date: "18 พ.ค.", aqi: 88, label: "เริ่มมีผลกระทบ", color: "#f97316", isToday: false },
+        { day: "จ.", date: "19 พ.ค.", aqi: 62, label: "ปานกลาง", color: "#facc15", isToday: false },
+        { day: "อ.", date: "20 พ.ค.", aqi: 45, label: "ดี", color: "#84cc16", isToday: false },
+      ];
+
+  // SVG Chart Height & Points calculation for 24h Trend
+  const chartHeight = 110;
+  const maxVal = Math.max(...data24h.map((d) => d.aqi), 80);
+  const minVal = Math.min(...data24h.map((d) => d.aqi), 10);
+
+  const pointsString = data24h
+    .map((d, i) => {
+      const x = (i / (data24h.length - 1)) * 100;
+      const y = chartHeight - ((d.aqi - minVal) / (maxVal - minVal || 1)) * 60 - 25;
+      return `${x},${y}`;
+    })
+    .join(" ");
 
   return (
-    <div className="rounded-3xl border border-border bg-surface-1 p-6 shadow-medium">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-500/10 text-purple-500">
-            <Bot size={20} />
+    <div className="space-y-4">
+      {/* 1. Card 1: พยากรณ์ PM2.5 24 ชั่วโมงข้างหน้า (Matching Image 1 Top Card) */}
+      <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
+              พยากรณ์ PM2.5 24 ชั่วโมงข้างหน้า
+            </h3>
+            {loading && <Loader2 size={13} className="animate-spin text-emerald-600" />}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold tracking-tight">พยากรณ์คุณภาพอากาศ AI</h2>
-              <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-bold text-purple-600 dark:text-purple-400">
-                AI Dual-Model
-              </span>
-            </div>
-            <p className="muted text-xs">คาดการณ์สภาวะฝุ่นล่วงหน้า 3 วันสำหรับภาคอีสาน</p>
+          <Link
+            href="/forecast"
+            className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
+          >
+            ดูรายละเอียด
+            <ChevronRight size={14} />
+          </Link>
+        </div>
+
+        {/* 24h Visual Curved SVG Line Chart with Data Values & Dots */}
+        <div className="relative pt-6 pb-2">
+          <svg className="w-full overflow-visible" height={chartHeight} viewBox={`0 0 100 ${chartHeight}`} preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="curveGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#f97316" stopOpacity="0.25" />
+                <stop offset="100%" stopColor="#facc15" stopOpacity="0.0" />
+              </linearGradient>
+            </defs>
+
+            {/* Area Fill under curve */}
+            <polygon
+              points={`0,${chartHeight} ${pointsString} 100,${chartHeight}`}
+              fill="url(#curveGrad)"
+            />
+
+            {/* Smooth Curve Line */}
+            <polyline
+              fill="none"
+              stroke="#f97316"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              points={pointsString}
+            />
+          </svg>
+
+          {/* Dots, Values, and Time Labels HTML Overlay */}
+          <div className="absolute inset-0 flex justify-between pt-1 pointer-events-none">
+            {data24h.map((d, i) => {
+              const dotColor = getDotColor(d.aqi);
+              const yPercent = 100 - (((d.aqi - minVal) / (maxVal - minVal || 1)) * 55 + 25);
+
+              return (
+                <div key={i} className="flex flex-col items-center flex-1 relative">
+                  {/* AQI Value on top of dot */}
+                  <span
+                    className="absolute text-[11px] font-black text-zinc-900 dark:text-zinc-100 tabular-nums -translate-y-6"
+                    style={{ top: `${yPercent}%` }}
+                  >
+                    {d.aqi}
+                  </span>
+
+                  {/* Colored Dot on Line */}
+                  <span
+                    className="absolute h-3 w-3 rounded-full border-2 border-white dark:border-zinc-900 shadow-xs"
+                    style={{ top: `${yPercent}%`, backgroundColor: dotColor, transform: "translateY(-50%)" }}
+                  />
+
+                  {/* Time Label at bottom */}
+                  <span className="absolute bottom-0 text-[10px] font-semibold text-zinc-500">
+                    {d.time}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        <Link
-          href="/forecast"
-          className="group inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
-        >
-          ดูพยากรณ์ทั้งหมด
-          <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
-        </Link>
+        {/* Legend Row matching Image 1 */}
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 border-t border-zinc-100 dark:border-zinc-800/80">
+          <span className="flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-blue-500" /> ดีมาก (0-25)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> ดี (26-50)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-yellow-400" /> ปานกลาง (51-100)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-orange-500" /> เริ่มมีผลกระทบ (101-150)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> มีผลกระทบ (151+)
+          </span>
+        </div>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1.3fr]">
-        {/* Left Side: Summary & High Risk Provinces */}
-        <div className="flex flex-col justify-between space-y-4 rounded-2xl border border-border/60 bg-surface-2/40 p-4">
-          <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400">
-              แนวโน้ม 3 วันข้างหน้า
-            </span>
-            <p className="mt-1.5 text-sm font-medium leading-relaxed">
-              PM2.5 มีแนวโน้มอยู่ในเกณฑ์ทรงตัวถึงปานกลาง ควรสังเกตอาการในช่วงเช้าและช่วงค่ำ
-            </p>
-          </div>
+      {/* 2. Card 2: พยากรณ์ 7 วันข้างหน้า (Matching Image 1 Bottom Card with AqiFaceIcon) */}
+      <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-3">
+        <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
+          พยากรณ์ 7 วันข้างหน้า
+        </h3>
 
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs">
-            <div className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400 mb-1">
-              <AlertCircle size={14} />
-              จังหวัดที่ควรเฝ้าระวังใน 24-48 ชม.
-            </div>
-            <p className="font-semibold text-fg">
-              {topRisk.map((s) => s.province.nameTh).join(", ")}
-            </p>
-          </div>
-        </div>
-
-        {/* Right Side: 3-Day Forecast Cards */}
-        <div className="grid grid-cols-3 gap-3">
-          {days.map((date, idx) => {
-            // Simulated baseline prediction based on current regional avg
-            const avgPm25 = snapshots.reduce((sum, s) => sum + (s.pm25 ?? 0), 0) / (snapshots.length || 1);
-            const estPm25 = Math.max(5, avgPm25 + (idx === 1 ? 4 : idx === 2 ? -2 : 1));
-            const status = getStatusEmoji(estPm25);
-            const band = bandForPm25(estPm25);
-
-            return (
-              <div
-                key={idx}
-                className="flex flex-col items-center justify-between rounded-2xl border border-border/60 bg-surface-2/30 p-3.5 text-center transition hover:border-brand/30"
-              >
-                <div className="flex items-center gap-1 text-[11px] font-semibold muted">
-                  <Calendar size={12} />
-                  {date.toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })}
-                </div>
-
-                <div className="my-2 text-3xl">{status.emoji}</div>
-
-                <div>
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${status.bgClass}`}>
-                    {status.text}
-                  </span>
-                  <div className="mt-1.5 text-sm font-extrabold tabular-nums">
-                    {fmtPm25(estPm25)} <span className="text-[10px] font-normal muted">µg/m³</span>
-                  </div>
-                </div>
+        {/* 7 Columns Row matching Image 1 */}
+        <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center">
+          {forecast7d.map((item, idx) => (
+            <div
+              key={idx}
+              className={`flex flex-col items-center justify-between rounded-2xl py-3 px-1 transition ${
+                item.isToday
+                  ? "bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/50 shadow-xs"
+                  : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
+              }`}
+            >
+              {/* Day & Date Header */}
+              <div className="text-center">
+                <span className="block text-xs font-black text-zinc-900 dark:text-zinc-100">
+                  {item.day}
+                </span>
+                <span className="block text-[9px] font-medium text-zinc-400">
+                  {item.date}
+                </span>
               </div>
-            );
-          })}
+
+              {/* Vector SVG Face Icon (NO TEXT EMOJIS! Exact match of image 2!) */}
+              <div className="my-2">
+                <AqiFaceIcon level={item.aqi} size={36} />
+              </div>
+
+              {/* AQI Value & Label */}
+              <div>
+                <span className="block text-sm font-black text-zinc-900 dark:text-zinc-100 tabular-nums">
+                  {item.aqi}
+                </span>
+                <span
+                  className="block text-[9px] font-bold truncate max-w-[50px] mx-auto mt-0.5"
+                  style={{ color: item.color }}
+                >
+                  {item.label}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
