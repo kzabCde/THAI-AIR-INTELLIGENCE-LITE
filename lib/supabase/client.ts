@@ -7,7 +7,13 @@ const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export const isRealtimeConfigured = Boolean(URL && ANON);
+export const isRealtimeConfigured = Boolean(
+  URL &&
+    ANON &&
+    !URL.includes("replace-with-") &&
+    !ANON.includes("replace-with-") &&
+    !ANON.startsWith("sb_secret_"),
+);
 
 let browserClient: SupabaseClient<Database> | null = null;
 

@@ -23,8 +23,18 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
  * this to fail gracefully (empty/typed results) instead of throwing when the
  * environment is not wired up yet.
  */
-export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
-export const isServiceSupabaseConfigured = Boolean(SUPABASE_URL && SERVICE_ROLE_KEY);
+export const isSupabaseConfigured = Boolean(
+  SUPABASE_URL &&
+    SUPABASE_ANON_KEY &&
+    !SUPABASE_URL.includes("replace-with-") &&
+    !SUPABASE_ANON_KEY.includes("replace-with-"),
+);
+export const isServiceSupabaseConfigured = Boolean(
+  SUPABASE_URL &&
+    SERVICE_ROLE_KEY &&
+    !SUPABASE_URL.includes("replace-with-") &&
+    !SERVICE_ROLE_KEY.includes("replace-with-"),
+);
 
 let readClient: IsanClient | null = null;
 let writeClient: IsanClient | null = null;
