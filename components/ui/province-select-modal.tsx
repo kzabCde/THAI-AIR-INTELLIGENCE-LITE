@@ -40,26 +40,26 @@ export function ProvinceSelectModal({
   );
 
   return (
-    <div className="relative w-full text-left" ref={dropdownRef}>
-      {/* Trigger Button */}
+    <div className="relative w-full text-left min-w-0" ref={dropdownRef}>
+      {/* Trigger Button - Responsive slim flex wrapper */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex w-full items-center justify-between gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 shadow-sm focus:outline-none transition hover:border-emerald-500"
+        className="flex w-full items-center justify-between gap-1.5 sm:gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 sm:px-3.5 sm:py-2.5 shadow-sm focus:outline-none transition hover:border-emerald-500 min-w-0"
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <MapPin size={18} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="truncate text-sm font-black text-zinc-900 dark:text-zinc-100">
-            {selectedProvince.nameTh} <span className="text-xs font-normal text-zinc-500">({selectedProvince.nameEn})</span>
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+          <MapPin size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="truncate text-xs sm:text-sm font-black text-zinc-900 dark:text-zinc-100">
+            {selectedProvince.nameTh} <span className="hidden sm:inline text-xs font-normal text-zinc-500">({selectedProvince.nameEn})</span>
           </span>
         </div>
         <ChevronDown
-          size={16}
+          size={14}
           className={`text-zinc-500 shrink-0 transition-transform duration-200 ${isOpen ? "rotate-180 text-emerald-600" : ""}`}
         />
       </button>
 
-      {/* Solid Opaque Pure White Popover (Z-INDEX 999, 100% Opaque White Background) */}
+      {/* Solid Opaque Pure White Popover */}
       {isOpen && (
         <div className="absolute left-0 z-[999] mt-2 w-full origin-top-left rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 shadow-2xl transition-all animate-in fade-in zoom-in-95 duration-150">
           {/* Search Box */}
@@ -75,7 +75,7 @@ export function ProvinceSelectModal({
             />
           </div>
 
-          {/* List of 20 Isan Provinces (Matching mockup 1 styling!) */}
+          {/* List of Isan Provinces */}
           <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
             {filteredProvinces.map((p) => {
               const snap = snapshots.find((s) => s.province.id === p.id);

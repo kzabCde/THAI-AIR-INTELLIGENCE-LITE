@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { Thermometer, Droplets, Wind, CloudRain } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Thermometer, Droplets, Wind, CloudRain, RotateCw } from "lucide-react";
 import { bandForAqi, bandForPm25 } from "@/lib/aqi";
 import { fmtPm25, fmtTimeTh } from "@/lib/format";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
@@ -43,15 +44,42 @@ export function ProvinceHeroCard({
   snapshots = [],
   initialProvinceId = "TH-40",
   onProvinceChange,
+  onRefreshAll,
 }: {
   snapshots: ProvinceSnapshot[];
   initialProvinceId?: string;
   onProvinceChange?: (id: string) => void;
+  onRefreshAll?: () => void;
 }) {
+  const router = useRouter();
   const [selectedId, setSelectedId] = useState(initialProvinceId);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedTime, setLastRefreshedTime] = useState<string | null>(null);
 
   const snapshot =
     snapshots.find((s) => s.province.id === selectedId) ?? snapshots[0];
+
+  useEffect(() => {
+    if (snapshot?.observedAt) {
+      setLastRefreshedTime(fmtTimeTh(snapshot.observedAt));
+    }
+  }, [snapshot]);
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    // Call parent handler to refresh all system components (24h/7d forecast, API caches, etc.)
+    onRefreshAll?.();
+    router.refresh();
+
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    setLastRefreshedTime(`${hours}:${minutes}`);
+
+    setTimeout(() => {
+      setIsRefreshing(false);
+    }, 750);
+  };
 
   if (!snapshot) return null;
 
@@ -60,11 +88,13 @@ export function ProvinceHeroCard({
   const band = snapshot.aqi != null ? bandForAqi(snapshot.aqi) : bandForPm25(pm25);
   const theme = getAqiInnerPanelTheme(aqi);
 
+  const displayTime = lastRefreshedTime || (snapshot.observedAt ? fmtTimeTh(snapshot.observedAt) : "14:00");
+
   return (
     <div className="w-full rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 p-3.5 sm:p-4 shadow-sm space-y-3 transition-all">
-      {/* 1. Top Header Row: Province Selector Dropdown + LIVE Badge */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="w-auto">
+      {/* 1. Top Header Row: Province Selector Dropdown + LIVE Badge (Shrink-proof, 100% Non-overflowing) */}
+      <div className="flex items-center justify-between gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
           <ProvinceSelectModal
             snapshots={snapshots}
             selectedId={selectedId}
@@ -75,14 +105,27 @@ export function ProvinceHeroCard({
           />
         </div>
 
-        {/* LIVE Status Badge */}
-        <div className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-          <span>LIVE</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* System-Wide Refresh Icon Button */}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 h-7 w-7 text-zinc-600 dark:text-zinc-300 transition-all border border-zinc-200 dark:border-zinc-700 active:scale-95 disabled:opacity-50 shrink-0"
+            title="รีเฟรชข้อมูลทั้งระบบ"
+          >
+            <RotateCw size={12} className={isRefreshing ? "animate-spin text-emerald-500" : "text-zinc-500 dark:text-zinc-400"} />
+          </button>
+
+          {/* LIVE Status Badge */}
+          <div className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400 shrink-0">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            <span>LIVE</span>
+          </div>
         </div>
       </div>
 
-      {/* 2. Middle Panel: FAINT CITY SKYLINE WITH RICH VARIED BUILDING SIZES (FAT, THIN, TALL, SHORT) */}
+      {/* 2. Middle Panel: FAINT CITY SKYLINE WITH RICH VARIED BUILDING SIZES */}
       <div className={`relative overflow-hidden rounded-2xl border ${theme.panelBg} p-4 sm:p-5 shadow-xs transition-all duration-300`}>
         {/* Soft, Faint, Richly Varied City Skyline Silhouette Vector in matching AQI theme color */}
         <svg
@@ -99,7 +142,7 @@ export function ProvinceHeroCard({
         </svg>
 
         <div className="relative z-10 flex items-center justify-between gap-4 py-0.5">
-          {/* Left Column: AQI Readout, Level Badge, PM2.5 Value, Timestamp */}
+          {/* Left Column: AQI Readout, Level Badge, PM2.5 Value, Timestamp with Refresh */}
           <div className="space-y-2">
             {/* AQI Big Number & Level Badge */}
             <div className="flex flex-wrap items-center gap-2.5">
@@ -123,10 +166,21 @@ export function ProvinceHeroCard({
               <span className="text-xs font-bold opacity-75">µg/m³</span>
             </div>
 
-            {/* Timestamp */}
-            <p className="text-[11px] font-bold opacity-70">
-              อัปเดตล่าสุด {fmtTimeTh(snapshot.observedAt)} น.
-            </p>
+            {/* Interactive Timestamp & Quick Refresh Trigger */}
+            <div className="flex items-center gap-1.5 pt-0.5">
+              <p className="text-[11px] font-bold opacity-75">
+                อัปเดตล่าสุด {displayTime} น.
+              </p>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="inline-flex items-center justify-center rounded-full p-0.5 hover:bg-black/10 dark:hover:bg-white/10 transition-all opacity-80 hover:opacity-100 active:scale-90 disabled:opacity-50"
+                title="คลิกเพื่อรีเฟรชข้อมูลทั้งระบบ"
+              >
+                <RotateCw size={11} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+            </div>
           </div>
 
           {/* Right Column: AI Generated Cute Emoji Face Avatar */}

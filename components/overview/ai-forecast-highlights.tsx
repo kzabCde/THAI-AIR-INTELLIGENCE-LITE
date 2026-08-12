@@ -32,18 +32,21 @@ function getDotColor(aqi: number) {
 export function AiForecastHighlights({
   provinceId = "TH-40",
   avgAqi = 68,
+  refreshKey = 0,
 }: {
   provinceId?: string;
   avgAqi?: number;
+  refreshKey?: number;
 }) {
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Fetch real ML forecast predictions from Supabase via /api/forecast?province={provinceId}
+  // Fetch real ML forecast predictions from Supabase with cache-busting timestamp & refreshKey
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
-    fetch(`/api/forecast?province=${provinceId}`)
+    const cacheBuster = Date.now();
+    fetch(`/api/forecast?province=${provinceId}&t=${cacheBuster}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         // Unwrap API response helper structure { success: true, data: ProvinceForecast }
@@ -60,7 +63,7 @@ export function AiForecastHighlights({
     return () => {
       isMounted = false;
     };
-  }, [provinceId]);
+  }, [provinceId, refreshKey]);
 
   // Extract 24-hour diurnal points (8 points spaced 3h apart)
   const hourlyPoints: ForecastPoint[] = forecast?.hourly?.slice(0, 24) ?? [];
