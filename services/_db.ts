@@ -3,7 +3,12 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getSupabase, isSupabaseConfigured, resetClients } from "@/lib/supabase/server";
 
-export { getSupabase, getServiceSupabase, isSupabaseConfigured } from "@/lib/supabase/server";
+export {
+  getSupabase,
+  getServiceSupabase,
+  isServiceSupabaseConfigured,
+  isSupabaseConfigured,
+} from "@/lib/supabase/server";
 
 /** Thrown when Supabase blocks the request due to Network Restrictions. */
 export class NetworkRestrictedError extends Error {

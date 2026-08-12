@@ -1,7 +1,12 @@
 import "server-only";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { dateDaysAgo, getServiceSupabase, isSupabaseConfigured } from "./_db";
+import {
+  dateDaysAgo,
+  getServiceSupabase,
+  isServiceSupabaseConfigured,
+  isSupabaseConfigured,
+} from "./_db";
 
 export type DailyRow = Tables<"trusted_daily_metrics_v1">;
 
@@ -21,7 +26,12 @@ export type DailyPoint = {
   hotspots: number | null;
   hoursAvailable: number | null;
   isBurningSeason: boolean | null;
+  trustedSources: string[];
+  trustedObservedAt: string | null;
 };
+
+const DAILY_POINT_COLUMNS =
+  "date, pm25_mean, pm25_max, pm25_min, aqi_mean, temp_mean, temp_max, temp_min, humidity_mean, wind_speed_mean, wind_speed_max, wind_dir_mean, hotspot_count, hours_available, is_burning_season, trusted_sources, trusted_observed_at" as const;
 
 function toPoint(r: Partial<DailyRow> & { date: string }): DailyPoint {
   return {
@@ -40,6 +50,8 @@ function toPoint(r: Partial<DailyRow> & { date: string }): DailyPoint {
     hotspots: r.hotspot_count ?? null,
     hoursAvailable: r.hours_available ?? null,
     isBurningSeason: r.is_burning_season ?? null,
+    trustedSources: r.trusted_sources ?? [],
+    trustedObservedAt: r.trusted_observed_at ?? null,
   };
 }
 
@@ -48,10 +60,61 @@ export async function getDailyHistory(provinceId: string, days: number): Promise
   if (!isSupabaseConfigured) return [];
   const { data, error } = await getServiceSupabase()
     .from("trusted_daily_metrics_v1")
-    .select("date, pm25_mean, pm25_max, pm25_min, aqi_mean, temp_mean, temp_max, temp_min, humidity_mean, wind_speed_mean, wind_speed_max, wind_dir_mean, hotspot_count, hours_available, is_burning_season")
+    .select(DAILY_POINT_COLUMNS)
     .eq("province_id", provinceId)
     .gte("date", dateDaysAgo(days))
     .order("date", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(toPoint);
+}
+
+function shiftDateKey(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day));
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
+
+/** The newest fully completed business date in Asia/Bangkok. */
+export function getLatestCompletedBangkokDate(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const today = `${value("year")}-${value("month")}-${value("day")}`;
+  return shiftDateKey(today, -1);
+}
+
+/**
+ * Calendar-accurate history anchored to the newest trusted business date.
+ *
+ * This differs from `getDailyHistory`, which is intentionally relative to the
+ * current clock for lightweight page/forecast reads. Trend comparisons must
+ * remain stable when an upstream feed is late, so the requested window ends at
+ * the newest row available for that province instead of `new Date()`.
+ */
+export async function getTrendHistory(
+  provinceId: string,
+  calendarDays = 730,
+  throughDate = getLatestCompletedBangkokDate(),
+): Promise<DailyPoint[]> {
+  if (!isServiceSupabaseConfigured) return [];
+
+  const days = Math.min(730, Math.max(1, Math.trunc(calendarDays)));
+  const client = getServiceSupabase();
+  const fromDate = shiftDateKey(throughDate, -(days - 1));
+  const { data, error } = await client
+    .from("trusted_daily_metrics_v1")
+    .select(DAILY_POINT_COLUMNS)
+    .eq("province_id", provinceId)
+    .gte("date", fromDate)
+    .lte("date", throughDate)
+    .order("date", { ascending: true });
+
   if (error) throw error;
   return (data ?? []).map(toPoint);
 }

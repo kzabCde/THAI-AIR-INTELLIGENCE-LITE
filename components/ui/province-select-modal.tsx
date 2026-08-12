@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Search, MapPin, ChevronDown, X } from "lucide-react";
 import { ISAN_PROVINCES } from "@/lib/isan";
-import { bandForAqi, bandForPm25 } from "@/lib/aqi";
+import { bandForAqi, bandForPm25, pm25ToAqi } from "@/lib/aqi";
 import type { ProvinceSnapshot } from "@/services/types";
 
 export function ProvinceSelectModal({
@@ -97,9 +97,12 @@ export function ProvinceSelectModal({
             <div className="max-h-72 overflow-y-auto space-y-0.5 pr-0.5">
               {filteredProvinces.map((p) => {
                 const snap = snapshots.find((s) => s.province.id === p.id);
-                const aqi = snap?.aqi ?? 0;
-                const pm25 = snap?.pm25 ?? 0;
-                const band = snap?.aqi != null ? bandForAqi(snap.aqi) : bandForPm25(pm25);
+                const displayAqi = snap?.aqi ?? (snap?.pm25 != null ? pm25ToAqi(snap.pm25) : null);
+                const band = displayAqi != null
+                  ? snap?.aqi != null
+                    ? bandForAqi(snap.aqi)
+                    : bandForPm25(snap!.pm25!)
+                  : null;
                 const isSelected = p.id === selectedId;
 
                 return (
@@ -118,20 +121,22 @@ export function ProvinceSelectModal({
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span
-                        className="h-2 w-2 rounded-full shrink-0"
-                        style={{ backgroundColor: band.color }}
-                      />
+                      {band && (
+                        <span
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: band.color }}
+                        />
+                      )}
                       <span className="truncate text-xs font-bold">{p.nameTh}</span>
                       <span className="truncate text-[10px] text-slate-400 font-normal">{p.nameEn}</span>
                     </div>
 
-                    {snap && (
+                    {band && displayAqi != null && (
                       <span
                         className="ml-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
                         style={{ backgroundColor: band.color }}
                       >
-                        {aqi}
+                        {displayAqi}
                       </span>
                     )}
                   </button>

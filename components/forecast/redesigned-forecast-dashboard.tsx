@@ -4,13 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowUp,
-  ArrowUpRight,
   CloudRain,
   Flame,
-  Leaf,
   RefreshCw,
   Sun,
   CloudSun,
@@ -22,14 +19,9 @@ import {
   ShieldAlert,
   TrendingUp,
   TrendingDown,
-  Minus as FlatLine,
-  HeartPulse,
-  ShieldCheck,
-  Baby,
-  DoorOpen,
-  PersonStanding,
   Moon,
 } from "lucide-react";
+
 import {
   Area,
   CartesianGrid,
@@ -391,8 +383,13 @@ export function RedesignedForecastDashboard({
                       stroke="#ef4444"
                       strokeWidth={2}
                       fill="url(#forecastGrad)"
-                      dot={(props: any) => {
-                        const { cx, cy, payload } = props;
+                      dot={(props: unknown) => {
+                        const { cx, cy, payload } = props as {
+                          cx?: number;
+                          cy?: number;
+                          payload?: { t?: string; band?: { color?: string } };
+                        };
+                        if (cx == null || cy == null || !payload) return <g />;
                         const color = payload.band?.color ?? "#ef4444";
                         return (
                           <circle
@@ -771,57 +768,6 @@ export function RedesignedForecastDashboard({
                     </div>
                   );
                 })}
-              </div>
-            </div>
-
-            {/* 10. HEALTH RECOMMENDATIONS — คำแนะนำสุขภาพ */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-bold text-slate-900 dark:text-white sm:text-sm">
-                คำแนะนำสุขภาพ
-              </h3>
-              <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-                <div className="space-y-3">
-                  {((): { icon: typeof PersonStanding; title: string; desc: string; color: string }[] => {
-                    if (currentAqi <= 50) {
-                      return [
-                        { icon: PersonStanding, title: "คนทั่วไป", desc: "สามารถทำกิจกรรมกลางแจ้งได้ตามปกติ", color: "#16a34a" },
-                        { icon: Baby, title: "เด็ก ผู้สูงอายุ และผู้ที่มีโรคประจำตัว", desc: "สามารถทำกิจกรรมกลางแจ้งได้ตามปกติ", color: "#16a34a" },
-                        { icon: ShieldCheck, title: "ควรสวมหน้ากาก", desc: "ไม่จำเป็นต้องสวมหน้ากาก N95", color: "#16a34a" },
-                        { icon: DoorOpen, title: "การเปิดหน้าต่าง", desc: "สามารถเปิดให้อากาศถ่ายเทได้ตามปกติ", color: "#16a34a" },
-                      ];
-                    } else if (currentAqi <= 100) {
-                      return [
-                        { icon: PersonStanding, title: "คนทั่วไป", desc: "ทำกิจกรรมกลางแจ้งได้ แต่ลดเวลาลงบ้าง", color: "#ca8a04" },
-                        { icon: Baby, title: "เด็ก ผู้สูงอายุ และผู้ที่มีโรคประจำตัว", desc: "ลดกิจกรรมกลางแจ้ง แนะนำสวมหน้ากาก", color: "#ca8a04" },
-                        { icon: ShieldCheck, title: "ควรสวมหน้ากาก", desc: "แนะนำให้สวมหน้ากาก N95 เมื่ออยู่กลางแจ้ง", color: "#ca8a04" },
-                        { icon: DoorOpen, title: "การเปิดหน้าต่าง", desc: "ลดการเปิดหน้าต่าง เลี่ยงช่วงฝุ่นสูง", color: "#ca8a04" },
-                      ];
-                    } else {
-                      return [
-                        { icon: PersonStanding, title: "คนทั่วไป", desc: "หลีกเลี่ยงกิจกรรมกลางแจ้ง สวมหน้ากาก", color: "#dc2626" },
-                        { icon: Baby, title: "เด็ก ผู้สูงอายุ และผู้ที่มีโรคประจำตัว", desc: "งดกิจกรรมกลางแจ้ง อยู่ในอาคารที่มีเครื่องฟอกอากาศ", color: "#dc2626" },
-                        { icon: ShieldCheck, title: "ควรสวมหน้ากาก", desc: "ต้องสวมหน้ากาก N95 ทุกครั้งที่ออกนอกอาคาร", color: "#dc2626" },
-                        { icon: DoorOpen, title: "การเปิดหน้าต่าง", desc: "ปิดหน้าต่างตลอด ใช้เครื่องฟอกอากาศ", color: "#dc2626" },
-                      ];
-                    }
-                  })().map((item) => (
-                    <div key={item.title} className="flex items-start gap-3">
-                      <div
-                        className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-                        style={{
-                          backgroundColor: `${item.color}12`,
-                          border: `1.5px solid ${item.color}25`,
-                        }}
-                      >
-                        <item.icon className="h-4 w-4" style={{ color: item.color }} />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-bold text-slate-800 dark:text-slate-200">{item.title}</p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{item.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             </div>
 
