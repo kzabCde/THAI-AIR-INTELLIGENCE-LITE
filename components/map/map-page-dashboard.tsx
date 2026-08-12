@@ -9,6 +9,15 @@ import { fmtTimeTh } from "@/lib/format";
 import type { MapProvince, MapFilterMode } from "@/components/map/types";
 import type { RegionOverview } from "@/services/types";
 
+/** Convert wind_direction degrees to Thai compass label */
+function degreesToThaiDirection(deg: number): string {
+  const dirs = [
+    "เหนือ", "ตะวันออกเฉียงเหนือ", "ตะวันออก", "ตะวันออกเฉียงใต้",
+    "ใต้", "ตะวันตกเฉียงใต้", "ตะวันตก", "ตะวันตกเฉียงเหนือ",
+  ];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
 export function MapPageDashboard({
   overview,
   mapProvinces,
@@ -24,9 +33,39 @@ export function MapPageDashboard({
     (s) => (s.pm25 ?? 0) > 37.5 || (s.aqi ?? 0) > 50,
   ).length;
 
-  const totalHotspots = overview.totalHotspots ?? 126;
-  const avgPm25 = overview.avgPm25 ?? 42;
+  const totalHotspots = overview.totalHotspots ?? 0;
+  const avgPm25 = overview.avgPm25 ?? 0;
   const observedAt = overview.observedAt;
+
+  // ── Compute real average wind speed from all province snapshots ───────────
+  const windSnapshots = overview.snapshots.filter((s) => s.windSpeed != null);
+  const avgWindSpeed = windSnapshots.length
+    ? +(windSnapshots.reduce((sum, s) => sum + (s.windSpeed ?? 0), 0) / windSnapshots.length).toFixed(1)
+    : 0;
+
+  // ── Compute dominant wind direction from province weather data ────────────
+  // MapProvince has windDirection from weather_latest (degrees or null)
+  const dirSnapshots = mapProvinces.filter((p) => p.windDirection != null);
+  let dominantWindDir = "ไม่มีข้อมูล";
+  if (dirSnapshots.length) {
+    // Circular mean of wind directions (in degrees)
+    let sinSum = 0, cosSum = 0;
+    for (const p of dirSnapshots) {
+      const rad = ((p.windDirection as number) * Math.PI) / 180;
+      sinSum += Math.sin(rad);
+      cosSum += Math.cos(rad);
+    }
+    const meanDeg = ((Math.atan2(sinSum, cosSum) * 180) / Math.PI + 360) % 360;
+    dominantWindDir = degreesToThaiDirection(meanDeg);
+  }
+
+  // ── Compute rain chance from 24h accumulated precipitation ─────────────────
+  // % of provinces that had measurable rain (>0.5mm) in the last 24 hours
+  const precSnapshots = overview.snapshots.filter((s) => s.precipitation24h != null);
+  const rainyCount = precSnapshots.filter((s) => (s.precipitation24h ?? 0) > 0.5).length;
+  const rainChance = precSnapshots.length
+    ? Math.round((rainyCount / precSnapshots.length) * 100)
+    : 0;
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto pb-6">
@@ -58,7 +97,7 @@ export function MapPageDashboard({
         onProvinceChange={(id) => setSelectedProvinceId(id)}
       />
 
-      {/* 3. Interactive Leaflet Satellite Map Canvas with Collapsible Overlays & Zoom Controls */}
+      {/* 3. Interactive Leaflet Satellite Map Canvas */}
       <IsanMapCard
         key={refreshKey}
         provinces={mapProvinces}
@@ -67,17 +106,18 @@ export function MapPageDashboard({
         selectedProvinceId={selectedProvinceId}
         avgPm25={avgPm25}
         exceededCount={exceededCount}
-        windSpeed={8}
-        windDirection="ตะวันออกเฉียงเหนือ"
+        windSpeed={avgWindSpeed}
+        windDirection={dominantWindDir}
       />
 
-      {/* 4. Bottom 3 Situation KPI Cards */}
+      {/* 4. Bottom 3 Situation KPI Cards — all real data */}
       <MapBottomCards
         totalHotspots={totalHotspots}
-        windSpeed={8}
-        windDirection="ตะวันออกเฉียงเหนือ"
-        rainChance={10}
+        windSpeed={avgWindSpeed}
+        windDirection={dominantWindDir}
+        rainChance={rainChance}
       />
     </div>
   );
 }
+

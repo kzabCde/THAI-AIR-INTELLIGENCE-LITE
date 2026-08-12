@@ -14,7 +14,10 @@ export type ProvinceSnapshot = {
   temperature: number | null;
   humidity: number | null;
   windSpeed: number | null;
+  windDirection: number | null;
   precipitation: number | null;
+  /** 24-hour accumulated precipitation (mm) — sum of last 24 hourly readings. */
+  precipitation24h: number | null;
   hotspotCount: number;
   /** `date` of the most recent hotspot record used for `hotspotCount` above —
    *  may lag well behind `observedAt` when fire detection has gone quiet. */

@@ -130,3 +130,59 @@ export function bandForCategory(category: string | null | undefined, pm25 = 0): 
   }
   return bandForPm25(pm25);
 }
+
+// ── Continuous AQI → Color gradient ─────────────────────────────────────────
+// Instead of 5 flat colors, interpolates smoothly across the AQI scale
+// so AQI 10 looks different from AQI 40, even though both are "Good".
+
+/** Color stops: [aqiValue, [R, G, B]] */
+const AQI_COLOR_STOPS: [number, [number, number, number]][] = [
+  [0,   [  0, 180,  80]],  // deep green (very good)
+  [15,  [ 50, 200,  60]],  // bright green
+  [25,  [100, 210,  40]],  // lime green (good boundary)
+  [35,  [160, 210,  20]],  // yellow-green
+  [50,  [200, 200,   0]],  // yellow (moderate start)
+  [75,  [240, 180,   0]],  // amber
+  [100, [240, 150,   0]],  // dark amber (moderate end)
+  [125, [250, 115,  20]],  // orange
+  [150, [240,  80,  30]],  // dark orange (unhealthy sensitive end)
+  [200, [230,  50,  50]],  // red
+  [300, [180,  40, 100]],  // maroon/purple
+  [500, [120,  20,  80]],  // deep purple (hazardous)
+];
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/**
+ * Return a hex color that smoothly interpolates across the AQI scale.
+ * Every unique AQI value gets a visually distinct color.
+ */
+export function aqiToGradientColor(aqi: number): string {
+  const clamped = Math.max(0, Math.min(500, aqi));
+
+  // Find the two stops this value falls between
+  for (let i = 0; i < AQI_COLOR_STOPS.length - 1; i++) {
+    const [aqiLo, rgbLo] = AQI_COLOR_STOPS[i];
+    const [aqiHi, rgbHi] = AQI_COLOR_STOPS[i + 1];
+    if (clamped <= aqiHi) {
+      const t = aqiHi === aqiLo ? 0 : (clamped - aqiLo) / (aqiHi - aqiLo);
+      const r = Math.round(lerp(rgbLo[0], rgbHi[0], t));
+      const g = Math.round(lerp(rgbLo[1], rgbHi[1], t));
+      const b = Math.round(lerp(rgbLo[2], rgbHi[2], t));
+      return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+    }
+  }
+
+  // Fallback for values above 500
+  return "#781450";
+}
+
+/**
+ * Same as aqiToGradientColor but accepts PM2.5 value directly.
+ * Converts to AQI first, then gets the gradient color.
+ */
+export function pm25ToGradientColor(pm25: number): string {
+  return aqiToGradientColor(pm25ToAqi(pm25));
+}

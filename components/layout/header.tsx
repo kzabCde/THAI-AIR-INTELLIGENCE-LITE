@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { Clock, Wind } from "lucide-react";
+import { Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { LiveClock } from "@/components/ui/live-clock";
@@ -19,9 +20,14 @@ export function Header() {
     <header className="sticky top-0 z-[1000] border-b border-border bg-[rgb(var(--surface))]/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
         <Link href="/" className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white shadow-soft">
-            <Wind size={18} />
-          </span>
+          <Image
+            src="/images/cloud-logo.png"
+            alt="Isan Air Intelligence"
+            width={36}
+            height={36}
+            className="h-9 w-9 shrink-0 rounded-lg object-contain"
+            priority
+          />
           <span className="min-w-0">
             <span className="block truncate text-sm font-bold leading-tight">
               Isan Air Intelligence

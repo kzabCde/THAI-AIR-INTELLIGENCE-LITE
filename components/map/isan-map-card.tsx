@@ -14,10 +14,10 @@ export function IsanMapCard({
   height = "h-[540px]",
   activeMode = "pm25",
   selectedProvinceId = "all",
-  avgPm25 = 42,
-  exceededCount = 3,
-  windSpeed = 8,
-  windDirection = "ตะวันออกเฉียงเหนือ",
+  avgPm25 = 0,
+  exceededCount = 0,
+  windSpeed = 0,
+  windDirection = "ไม่มีข้อมูล",
 }: {
   provinces: MapProvince[];
   height?: string;

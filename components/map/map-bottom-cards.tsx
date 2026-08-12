@@ -4,10 +4,10 @@ import Link from "next/link";
 import { Flame, Wind, CloudRain, ChevronRight } from "lucide-react";
 
 export function MapBottomCards({
-  totalHotspots = 126,
-  windSpeed = 8,
-  windDirection = "ตะวันออกเฉียงเหนือ",
-  rainChance = 10,
+  totalHotspots = 0,
+  windSpeed = 0,
+  windDirection = "ไม่มีข้อมูล",
+  rainChance = 0,
 }: {
   totalHotspots?: number;
   windSpeed?: number;
@@ -72,7 +72,7 @@ export function MapBottomCards({
         </div>
         <div className="min-w-0">
           <span className="block text-[10px] sm:text-xs font-bold text-zinc-500 dark:text-zinc-400 truncate">
-            โอกาสฝนวันนี้
+            ฝนใน 24 ชม.
           </span>
           <div className="flex items-baseline gap-0.5 leading-none mt-0.5">
             <span className="text-sm sm:text-base font-black text-indigo-600 dark:text-indigo-400 tabular-nums">

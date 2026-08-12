@@ -12,7 +12,7 @@ export type MapProvince = {
   temperature?: number | null;
   humidity?: number | null;
   windSpeed?: number | null;
-  windDirection?: string | null;
+  windDirection?: number | null;
   observedAt?: string | null;
 };
 

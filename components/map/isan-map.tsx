@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
-import { ChevronUp, ChevronDown, Plus, Minus, Target, Wind, Activity, Palette, Flame } from "lucide-react";
+import { ChevronUp, ChevronDown, Plus, Minus, Target, Wind, Activity, Palette } from "lucide-react";
 import { ISAN_BOUNDS, ISAN_CENTER } from "@/lib/isan";
 import { fmtPm25, fmtTimeTh } from "@/lib/format";
 import { bandForAqi, bandForPm25 } from "@/lib/aqi";
@@ -116,51 +116,16 @@ function createProvinceMarkerIcon(p: MapProvince, displayValue: number, isSelect
   });
 }
 
-/** Sample satellite hotspot positions in Isan region */
-const SAMPLE_HOTSPOTS = [
-  { id: "h1", lat: 16.43, lon: 102.83, name: "ขอนแก่น (ต.บ้านเป็ด)" },
-  { id: "h2", lat: 17.38, lon: 104.78, name: "นครพนม (ต.ท่าอุเทน)" },
-  { id: "h3", lat: 15.23, lon: 104.85, name: "อุบลราชธานี (ต.เมืองเดช)" },
-  { id: "h4", lat: 16.88, lon: 103.88, name: "สกลนคร (ต.พรรณานิคม)" },
-  { id: "h5", lat: 17.88, lon: 103.55, name: "บึงกาฬ (ต.โซ่พิสัย)" },
-  { id: "h6", lat: 14.88, lon: 103.10, name: "บุรีรัมย์ (ต.ประโคนชัย)" },
-];
 
-/** Create clean SVG Flame Vector Marker for satellite hotspots */
-function createHotspotIcon() {
-  const html = `
-    <div style="
-      transform: translate(-50%, -50%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 26px;
-      height: 26px;
-      background: radial-gradient(circle, rgba(239,68,68,0.95) 0%, rgba(249,115,22,0.7) 60%, rgba(239,68,68,0) 100%);
-      border-radius: 9999px;
-      box-shadow: 0 0 12px rgba(239,68,68,0.8);
-    ">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="#ffffff" stroke="#ef4444" stroke-width="1.5">
-        <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3.5z"/>
-      </svg>
-    </div>
-  `;
-  return L.divIcon({
-    html,
-    className: "custom-hotspot-marker",
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
-  });
-}
 
 export default function IsanMap({
   provinces,
   activeMode = "pm25",
   selectedProvinceId = "all",
-  avgPm25 = 42,
-  exceededCount = 3,
-  windSpeed = 8,
-  windDirection = "ตะวันออกเฉียงเหนือ",
+  avgPm25 = 0,
+  exceededCount = 0,
+  windSpeed = 0,
+  windDirection = "ไม่มีข้อมูล",
 }: {
   provinces: MapProvince[];
   activeMode?: MapFilterMode;
@@ -268,21 +233,6 @@ export default function IsanMap({
           );
         })}
 
-        {/* Hotspot Flame Vector Markers */}
-        {(activeMode === "hotspot" || activeMode === "pm25") &&
-          SAMPLE_HOTSPOTS.map((h) => (
-            <Marker key={h.id} position={[h.lat, h.lon]} icon={createHotspotIcon()}>
-              <Popup>
-                <div className="p-1.5 text-xs font-bold">
-                  <div className="flex items-center gap-1 text-red-600">
-                    <Flame size={14} className="fill-red-600" />
-                    <span>จุดความร้อน (Hotspot)</span>
-                  </div>
-                  <span className="block text-[10px] text-zinc-500 font-normal mt-0.5">{h.name}</span>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
       </MapContainer>
 
       {/* Floating Overlay Card 1: Top Left Regional Summary (z-10) */}

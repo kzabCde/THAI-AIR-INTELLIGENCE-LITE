@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
+import { pm25ToAqi, aqiToGradientColor } from "@/lib/aqi";
 import { getRegionOverview } from "@/services/overview.service";
 import { MapPageDashboard } from "@/components/map/map-page-dashboard";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
@@ -33,11 +34,12 @@ export default async function MapPage() {
     lon: s.province.lon,
     pm25: s.pm25,
     aqi: s.aqi,
-    color: s.band.color,
+    color: aqiToGradientColor(s.aqi ?? pm25ToAqi(s.pm25 ?? 0)),
     labelTh: s.band.labelTh,
     temperature: s.temperature,
     humidity: s.humidity,
     windSpeed: s.windSpeed,
+    windDirection: s.windDirection,
     observedAt: s.observedAt,
   }));
 

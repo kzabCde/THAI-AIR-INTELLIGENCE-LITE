@@ -4,8 +4,8 @@ import { Activity, ShieldAlert, DoorClosed, Users } from "lucide-react";
 import { bandForAqi, bandForPm25 } from "@/lib/aqi";
 
 export function HealthAdviceGrid({
-  pm25 = 27,
-  aqi = 68,
+  pm25 = 0,
+  aqi = 0,
 }: {
   pm25?: number;
   aqi?: number;
@@ -13,58 +13,40 @@ export function HealthAdviceGrid({
   const band = aqi ? bandForAqi(aqi) : bandForPm25(pm25);
 
   // Dynamic Real Health Recommendation Engine based on Live Supabase AQI
-  let exercise = { text: "ทำได้", color: "text-emerald-600 dark:text-emerald-400 font-extrabold", bg: "bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200/60 dark:border-emerald-700/50" };
-  let mask = { text: "ไม่จำเป็น", color: "text-emerald-600 dark:text-emerald-400 font-extrabold", bg: "bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200/60 dark:border-emerald-700/50" };
-  let windowStatus = { text: "ทำได้", color: "text-emerald-600 dark:text-emerald-400 font-extrabold", bg: "bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200/60 dark:border-emerald-700/50" };
-  let sensitive = { text: "ทำได้ปกติ", color: "text-emerald-600 dark:text-emerald-400 font-extrabold", bg: "bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200/60 dark:border-emerald-700/50" };
+  type AdviceItem = { title: string; status: string; color: string };
+  let items: AdviceItem[];
 
   if (aqi > 150) {
-    exercise = { text: "งดกิจกรรมกลางแจ้ง", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
-    mask = { text: "ต้องสวม N95", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
-    windowStatus = { text: "ไม่แนะนำ (ปิดมิดชิด)", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
-    sensitive = { text: "งดให้อยู่นอกอาคาร", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
+    items = [
+      { title: "ออกกำลังกาย", status: "งดกิจกรรมกลางแจ้ง", color: "#e11d48" },
+      { title: "สวมหน้ากาก N95", status: "ต้องสวม N95", color: "#e11d48" },
+      { title: "เปิดหน้าต่าง", status: "ไม่แนะนำ (ปิดมิดชิด)", color: "#e11d48" },
+      { title: "เด็กและผู้สูงอายุ", status: "งดให้อยู่นอกอาคาร", color: "#e11d48" },
+    ];
   } else if (aqi > 100) {
-    exercise = { text: "ไม่แนะนำ", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
-    mask = { text: "แนะนำ N95", color: "text-orange-600 dark:text-orange-400 font-extrabold", bg: "bg-orange-50/60 dark:bg-orange-950/40 border-orange-200/60 dark:border-orange-700/50" };
-    windowStatus = { text: "ไม่แนะนำ", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
-    sensitive = { text: "หลีกเลี่ยงกลางแจ้ง", color: "text-orange-600 dark:text-orange-400 font-extrabold", bg: "bg-orange-50/60 dark:bg-orange-950/40 border-orange-200/60 dark:border-orange-700/50" };
+    items = [
+      { title: "ออกกำลังกาย", status: "ไม่แนะนำ", color: "#ea580c" },
+      { title: "สวมหน้ากาก N95", status: "แนะนำ N95", color: "#ea580c" },
+      { title: "เปิดหน้าต่าง", status: "ไม่แนะนำ", color: "#ea580c" },
+      { title: "เด็กและผู้สูงอายุ", status: "หลีกเลี่ยงกลางแจ้ง", color: "#ea580c" },
+    ];
   } else if (aqi > 50) {
-    exercise = { text: "ทำได้ (ลดเวลา)", color: "text-amber-600 dark:text-amber-400 font-extrabold", bg: "bg-amber-50/60 dark:bg-amber-950/40 border-amber-200/60 dark:border-amber-700/50" };
-    mask = { text: "แนะนำ", color: "text-emerald-600 dark:text-emerald-400 font-extrabold", bg: "bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200/60 dark:border-emerald-700/50" };
-    windowStatus = { text: "ไม่แนะนำ", color: "text-rose-600 dark:text-rose-400 font-extrabold", bg: "bg-rose-50/60 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-700/50" };
-    sensitive = { text: "ควรระวัง", color: "text-amber-600 dark:text-amber-400 font-extrabold", bg: "bg-amber-50/60 dark:bg-amber-950/40 border-amber-200/60 dark:border-amber-700/50" };
+    items = [
+      { title: "ออกกำลังกาย", status: "ทำได้ (ลดเวลา)", color: "#ca8a04" },
+      { title: "สวมหน้ากาก N95", status: "แนะนำ", color: "#ca8a04" },
+      { title: "เปิดหน้าต่าง", status: "ไม่แนะนำ", color: "#ea580c" },
+      { title: "เด็กและผู้สูงอายุ", status: "ควรระวัง", color: "#ca8a04" },
+    ];
+  } else {
+    items = [
+      { title: "ออกกำลังกาย", status: "ทำได้", color: "#16a34a" },
+      { title: "สวมหน้ากาก N95", status: "ไม่จำเป็น", color: "#16a34a" },
+      { title: "เปิดหน้าต่าง", status: "ทำได้", color: "#16a34a" },
+      { title: "เด็กและผู้สูงอายุ", status: "ทำได้ปกติ", color: "#16a34a" },
+    ];
   }
 
-  const items = [
-    {
-      icon: <Activity size={18} className="text-emerald-500 dark:text-emerald-400 shrink-0" />,
-      title: "ออกกำลังกาย",
-      status: exercise.text,
-      colorClass: exercise.color,
-      bgClass: exercise.bg,
-    },
-    {
-      icon: <ShieldAlert size={18} className="text-emerald-500 dark:text-emerald-400 shrink-0" />,
-      title: "สวมหน้ากาก N95",
-      status: mask.text,
-      colorClass: mask.color,
-      bgClass: mask.bg,
-    },
-    {
-      icon: <DoorClosed size={18} className="text-rose-500 dark:text-rose-400 shrink-0" />,
-      title: "เปิดหน้าต่าง",
-      status: windowStatus.text,
-      colorClass: windowStatus.color,
-      bgClass: windowStatus.bg,
-    },
-    {
-      icon: <Users size={18} className="text-orange-500 dark:text-orange-400 shrink-0" />,
-      title: "เด็กและผู้สูงอายุ",
-      status: sensitive.text,
-      colorClass: sensitive.color,
-      bgClass: sensitive.bg,
-    },
-  ];
+  const icons = [Activity, ShieldAlert, DoorClosed, Users];
 
   return (
     <div className="space-y-2.5">
@@ -74,18 +56,35 @@ export function HealthAdviceGrid({
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        {items.map((item, idx) => (
-          <div
-            key={idx}
-            className={`flex items-center justify-start gap-2.5 rounded-2xl border p-3 shadow-xs ${item.bgClass}`}
-          >
-            {item.icon}
-            <div className="min-w-0">
-              <span className="block text-[11px] font-black text-zinc-900 dark:text-white truncate">{item.title}</span>
-              <span className={`block text-[10px] ${item.colorClass} truncate`}>{item.status}</span>
+        {items.map((item, idx) => {
+          const Icon = icons[idx];
+          return (
+            <div
+              key={idx}
+              className="flex items-center justify-start gap-2.5 rounded-2xl border border-zinc-100 bg-white p-3 shadow-xs dark:border-zinc-800 dark:bg-zinc-900"
+            >
+              {/* Translucent circle icon */}
+              <div
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                style={{
+                  backgroundColor: `${item.color}12`,
+                  border: `1.5px solid ${item.color}25`,
+                }}
+              >
+                <Icon className="h-4 w-4" style={{ color: item.color }} />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-[11px] font-black text-zinc-900 dark:text-white truncate">{item.title}</span>
+                <span
+                  className="block text-[10px] font-extrabold truncate"
+                  style={{ color: item.color }}
+                >
+                  {item.status}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

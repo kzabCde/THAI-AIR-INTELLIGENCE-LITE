@@ -205,7 +205,7 @@ export function ProvinceHeroCard({
         <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
           <Droplets className="text-blue-500 dark:text-blue-400" size={15} />
           <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums leading-none mt-0.5">
-            {snapshot.humidity != null ? `${snapshot.humidity.toFixed(0)}%` : "68%"}
+            {snapshot.humidity != null ? `${snapshot.humidity.toFixed(0)}%` : "-"}
           </span>
           <span className="text-[9px] font-bold text-zinc-400">ความชื้น</span>
         </div>
@@ -214,18 +214,18 @@ export function ProvinceHeroCard({
         <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center min-w-0">
           <Wind className="text-teal-500 dark:text-teal-400 shrink-0" size={15} />
           <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums truncate leading-none mt-0.5">
-            {snapshot.windSpeed != null ? `${snapshot.windSpeed.toFixed(0)} km/h` : "5 km/h"}
+            {snapshot.windSpeed != null ? `${snapshot.windSpeed.toFixed(0)} km/h` : "-"}
           </span>
           <span className="text-[9px] font-bold text-zinc-400 truncate">ลม</span>
         </div>
 
-        {/* Item 4: Rain */}
+        {/* Item 4: Rain (24h accumulated) */}
         <div className="flex flex-col items-center justify-center gap-0.5 px-1 text-center">
           <CloudRain className="text-indigo-500 dark:text-indigo-400" size={15} />
           <span className="text-xs font-black text-zinc-900 dark:text-zinc-100 tabular-nums leading-none mt-0.5">
-            0 mm
+            {snapshot.precipitation24h != null ? `${snapshot.precipitation24h.toFixed(1)} mm` : "-"}
           </span>
-          <span className="text-[9px] font-bold text-zinc-400">ฝน (1h)</span>
+          <span className="text-[9px] font-bold text-zinc-400">ฝน (24h)</span>
         </div>
       </div>
     </div>

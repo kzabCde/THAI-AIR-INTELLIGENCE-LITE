@@ -34,6 +34,42 @@ export const getLatestWeatherByProvince = cachedMapQuery(
   300,
 );
 
+/**
+ * Get 24-hour accumulated precipitation per province.
+ * Sums the last 24 hourly `precipitation` readings from weather_hourly.
+ * More useful than latest 1-hour for PM2.5 washout analysis.
+ */
+export const get24hPrecipitationByProvince = cachedMapQuery(
+  ["precip-24h-all"],
+  async (): Promise<Map<string, number>> => {
+    const result = new Map<string, number>();
+    if (!isSupabaseConfigured) return result;
+    const latest = await getLatestObservedAt();
+    if (!latest) return result;
+    const since = new Date(new Date(latest).getTime() - 24 * 3600_000).toISOString();
+    const { data, error } = await getSupabase()
+      .from("weather_hourly")
+      .select("province_id, precipitation")
+      .gte("observed_at", since)
+      .not("precipitation", "is", null);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      if (row.province_id && row.precipitation != null) {
+        result.set(
+          row.province_id,
+          (result.get(row.province_id) ?? 0) + row.precipitation,
+        );
+      }
+    }
+    // Round to 1 decimal
+    for (const [id, val] of result) {
+      result.set(id, +val.toFixed(1));
+    }
+    return result;
+  },
+  300,
+);
+
 export async function getWeatherHistory(provinceId: string, hours: number): Promise<TimePoint[]> {
   if (!isSupabaseConfigured) return [];
   const latest = await getLatestObservedAt();
@@ -59,3 +95,4 @@ export async function getWeatherHistory(provinceId: string, hours: number): Prom
     visibility: r.visibility,
   }));
 }
+
