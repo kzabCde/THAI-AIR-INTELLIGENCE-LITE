@@ -40,6 +40,7 @@ export default async function MapPage() {
     humidity: s.humidity,
     windSpeed: s.windSpeed,
     windDirection: s.windDirection,
+    hotspots: s.hotspotCount,
     observedAt: s.observedAt,
   }));
 

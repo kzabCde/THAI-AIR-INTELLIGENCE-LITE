@@ -7,6 +7,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/map", label: "แผนที่", icon: Map },
   { href: "/forecast", label: "พยากรณ์", icon: LineChart },
   { href: "/trends", label: "ย้อนหลัง", icon: BarChart3 },
-  { href: "/analytics", label: "วิเคราะห์", icon: BarChart3 },
   { href: "/system", label: "สถานะระบบ", icon: Server },
 ];

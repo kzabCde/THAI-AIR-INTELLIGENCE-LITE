@@ -9,15 +9,31 @@ export const RANGE_OPTIONS = [
 export const PM25_LEGEND = ["0–15", ">15–25", ">25–37.5", ">37.5–75", ">75"];
 
 export function parseDateKey(date: string): Date {
+  if (!date || typeof date !== "string") return new Date(NaN);
   return new Date(`${date}T00:00:00Z`);
 }
 
 export function formatTrendDate(date: string | null, includeYear = false): string {
   if (!date) return "-";
-  return parseDateKey(date).toLocaleDateString("th-TH", {
+  const parsed = parseDateKey(date);
+  if (isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString("th-TH", {
     day: "numeric",
     month: "short",
     year: includeYear ? "2-digit" : undefined,
+    timeZone: "UTC",
+  });
+}
+
+export function formatTrendDateFull(date: string | null): string {
+  if (!date) return "-";
+  const parsed = parseDateKey(date);
+  if (isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString("th-TH", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
     timeZone: "UTC",
   });
 }
@@ -29,7 +45,9 @@ export function formatTrendRange(from: string | null, to: string | null): string
 
 export function formatTrendObservedAt(value: string | null): string {
   if (!value) return "ไม่ทราบเวลาอัปเดต";
-  return new Date(value).toLocaleString("th-TH", {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleString("th-TH", {
     day: "numeric",
     month: "short",
     hour: "2-digit",
@@ -39,7 +57,10 @@ export function formatTrendObservedAt(value: string | null): string {
 }
 
 export function formatTrendMonth(month: string): string {
-  return parseDateKey(`${month}-01`).toLocaleDateString("th-TH", {
+  if (!month) return "-";
+  const parsed = parseDateKey(`${month}-01`);
+  if (isNaN(parsed.getTime())) return month;
+  return parsed.toLocaleDateString("th-TH", {
     month: "short",
     year: "2-digit",
     timeZone: "UTC",
@@ -47,6 +68,6 @@ export function formatTrendMonth(month: string): string {
 }
 
 export function signedTrendValue(value: number | null, suffix = ""): string {
-  if (value == null) return "-";
+  if (value == null || isNaN(value)) return "-";
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
 }

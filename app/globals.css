@@ -77,6 +77,27 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+.leaflet-popup-content-wrapper {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 1.25rem !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+.leaflet-popup-content {
+  margin: 0 !important;
+  line-height: 1.4 !important;
+}
+.leaflet-popup-tip-container {
+  margin-top: -1px;
+}
+.leaflet-popup-tip {
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+.dark .leaflet-popup-tip {
+  background: #18181b !important;
+}
 .leaflet-tooltip.province-tip {
   background: rgb(var(--surface));
   color: rgb(var(--fg));

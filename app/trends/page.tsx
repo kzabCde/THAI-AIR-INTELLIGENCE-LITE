@@ -4,6 +4,7 @@ import { isNetworkRestrictedError } from "@/services/_db";
 import { isServiceSupabaseConfigured, isSupabaseConfigured } from "@/lib/supabase/server";
 import {
   getLatestCompletedBangkokDate,
+  getRegionalTrendHistory,
   getTrendHistory,
 } from "@/services/daily-summary.service";
 import { TrendsDashboard } from "@/components/trends/trends-dashboard";
@@ -25,22 +26,27 @@ export default async function TrendsPage({
 }) {
   if (!isSupabaseConfigured || !isServiceSupabaseConfigured) return <NotConfiguredState />;
 
-  const params = await searchParams;
-  const province = getProvince(params.province ?? "TH-40") ?? getProvince("TH-40")!;
-  const requestedRange = Number(params.range);
-  const rangeDays = ALLOWED_RANGES.has(requestedRange) ? requestedRange : 90;
-
   try {
-    // Two calendar years support exact previous-period and year-over-year
-    // comparisons while remaining below PostgREST's default 1,000-row limit.
+    const params = searchParams ? await Promise.resolve(searchParams) : {};
+    const isRegional = params.province === "all";
+    const province = isRegional
+      ? null
+      : (getProvince(params.province ?? "TH-40") ?? getProvince("TH-40")!);
+    const requestedRange = Number(params.range);
+    const rangeDays = ALLOWED_RANGES.has(requestedRange) ? requestedRange : 90;
+
     const throughDate = getLatestCompletedBangkokDate();
-    const history = await getTrendHistory(province.id, 730, throughDate);
+    const history = isRegional
+      ? await getRegionalTrendHistory(730, throughDate)
+      : await getTrendHistory(province!.id, 730, throughDate);
+
     return (
       <TrendsDashboard
         province={province}
         history={history}
         rangeDays={rangeDays}
         throughDate={throughDate}
+        viewMode={isRegional ? "regional" : "province"}
       />
     );
   } catch (error) {

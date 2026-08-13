@@ -1,6 +1,6 @@
 import "server-only";
 
-import { bandForCategory, pm25ToAqi } from "@/lib/aqi";
+import { bandForAqi, bandForCategory, bandForPm25, pm25ToAqi } from "@/lib/aqi";
 import { ISAN_PROVINCES, getProvince } from "@/lib/isan";
 import { getLatestAir, getLatestAirByProvince } from "./air-quality.service";
 import { getLatestWeather, getLatestWeatherByProvince, get24hPrecipitationByProvince } from "./weather.service";
@@ -37,7 +37,7 @@ export async function getRegionOverview(): Promise<RegionOverview> {
     const w = weather.get(province.id);
     const h = hotspot.get(province.id);
     const pm25 = a?.pm25 ?? null;
-    const aqi = a?.aqi ?? (pm25 != null ? pm25ToAqi(pm25) : null);
+    const aqi = pm25 != null ? pm25ToAqi(pm25) : (a?.aqi ?? null);
     const prev = yesterday.get(province.id);
     if (a?.observed_at && (!observedAt || a.observed_at > observedAt)) observedAt = a.observed_at;
     if (h?.date && (!hotspotDate || h.date > hotspotDate)) hotspotDate = h.date;
@@ -49,7 +49,7 @@ export async function getRegionOverview(): Promise<RegionOverview> {
       pm10: a?.pm10 ?? null,
       aqi,
       category: a?.aqi_category ?? null,
-      band: bandForCategory(a?.aqi_category, pm25 ?? 0),
+      band: pm25 != null ? bandForPm25(pm25) : (aqi != null ? bandForAqi(aqi) : bandForCategory(a?.aqi_category, pm25 ?? 0)),
       temperature: w?.temperature ?? null,
       humidity: w?.humidity ?? null,
       windSpeed: w?.wind_speed ?? null,
@@ -112,7 +112,7 @@ export async function getProvinceSnapshot(provinceId: string): Promise<ProvinceS
     get24hPrecipitationByProvince(),
   ]);
   const pm25 = a?.pm25 ?? null;
-  const aqi = a?.aqi ?? (pm25 != null ? pm25ToAqi(pm25) : null);
+  const aqi = pm25 != null ? pm25ToAqi(pm25) : (a?.aqi ?? null);
   const prev = yesterday.get(province.id);
   return {
     province,
@@ -121,7 +121,7 @@ export async function getProvinceSnapshot(provinceId: string): Promise<ProvinceS
     pm10: a?.pm10 ?? null,
     aqi,
     category: a?.aqi_category ?? null,
-    band: bandForCategory(a?.aqi_category, pm25 ?? 0),
+    band: pm25 != null ? bandForPm25(pm25) : (aqi != null ? bandForAqi(aqi) : bandForCategory(a?.aqi_category, pm25 ?? 0)),
     temperature: w?.temperature ?? null,
     humidity: w?.humidity ?? null,
     windSpeed: w?.wind_speed ?? null,

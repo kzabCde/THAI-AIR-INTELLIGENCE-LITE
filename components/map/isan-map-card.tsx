@@ -16,6 +16,7 @@ export function IsanMapCard({
   selectedProvinceId = "all",
   avgPm25 = 0,
   exceededCount = 0,
+  totalHotspots = 0,
   windSpeed = 0,
   windDirection = "ไม่มีข้อมูล",
 }: {
@@ -25,6 +26,7 @@ export function IsanMapCard({
   selectedProvinceId?: string;
   avgPm25?: number;
   exceededCount?: number;
+  totalHotspots?: number;
   windSpeed?: number;
   windDirection?: string;
 }) {
@@ -36,6 +38,7 @@ export function IsanMapCard({
         selectedProvinceId={selectedProvinceId}
         avgPm25={avgPm25}
         exceededCount={exceededCount}
+        totalHotspots={totalHotspots}
         windSpeed={windSpeed}
         windDirection={windDirection}
       />

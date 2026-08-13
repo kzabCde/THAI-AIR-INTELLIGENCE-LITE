@@ -106,6 +106,7 @@ export function MapPageDashboard({
         selectedProvinceId={selectedProvinceId}
         avgPm25={avgPm25}
         exceededCount={exceededCount}
+        totalHotspots={totalHotspots}
         windSpeed={avgWindSpeed}
         windDirection={dominantWindDir}
       />

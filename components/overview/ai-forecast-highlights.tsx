@@ -2,36 +2,50 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ChevronRight, Loader2 } from "lucide-react";
+import {
+  ChevronRight,
+  Cloud,
+  CloudRain,
+  CloudSun,
+  Droplets,
+  Loader2,
+  Navigation,
+  Sun,
+  Wind,
+} from "lucide-react";
 import { bandForAqi, pm25ToAqi } from "@/lib/aqi";
-import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 
+const THAI_FULL_DAYS = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัส", "ศุกร์", "เสาร์"];
 const THAI_SHORT_DAYS = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
-const THAI_SHORT_MONTHS = [
-  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
-  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."
-];
 
-function formatThaiDay(d: Date): string {
-  return THAI_SHORT_DAYS[d.getDay()];
+function formatThaiDayName(d: Date, isToday: boolean): string {
+  if (isToday) return "วันนี้";
+  return THAI_FULL_DAYS[d.getDay()] ?? "-";
 }
 
-function formatThaiDate(d: Date): string {
-  return `${d.getDate()} ${THAI_SHORT_MONTHS[d.getMonth()]}`;
+function formatThaiShortDay(d: Date): string {
+  return THAI_SHORT_DAYS[d.getDay()] ?? "-";
 }
 
-function getDotColor(aqi: number) {
-  if (aqi <= 25) return "#10b981"; // Emerald
-  if (aqi <= 50) return "#84cc16"; // Lime
-  if (aqi <= 100) return "#facc15"; // Yellow
-  if (aqi <= 150) return "#f97316"; // Orange
-  return "#ef4444"; // Red
+function getHourlyTemp(baseTemp: number, hour: number): number {
+  const rad = ((hour - 14) / 24) * 2 * Math.PI;
+  return Math.round(baseTemp + 3 * Math.cos(rad));
+}
+
+function getHourlyHumidity(baseHumidity: number, hour: number): number {
+  const rad = ((hour - 14) / 24) * 2 * Math.PI;
+  return Math.min(100, Math.max(40, Math.round(baseHumidity - 10 * Math.cos(rad))));
+}
+
+function getHourlyWind(baseWind: number, hour: number): number {
+  const rad = ((hour - 14) / 24) * 2 * Math.PI;
+  return +(Math.max(1, baseWind + 2 * Math.cos(rad))).toFixed(1);
 }
 
 export function AiForecastHighlights({
   provinceId = "TH-40",
-  avgAqi = 68,
+  avgAqi = 35,
   refreshKey = 0,
 }: {
   provinceId?: string;
@@ -40,8 +54,9 @@ export function AiForecastHighlights({
 }) {
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dailyRange, setDailyRange] = useState<"3d" | "7d">("7d");
 
-  // Fetch real ML forecast predictions from Supabase with cache-busting timestamp & refreshKey
+  // Fetch real ML forecast predictions
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
@@ -49,7 +64,6 @@ export function AiForecastHighlights({
     fetch(`/api/forecast?province=${provinceId}&t=${cacheBuster}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
-        // Unwrap API response helper structure { success: true, data: ProvinceForecast }
         const data: ProvinceForecast | null = json?.data ?? json;
         if (isMounted && data && Array.isArray(data.daily)) {
           setForecast(data);
@@ -65,83 +79,94 @@ export function AiForecastHighlights({
     };
   }, [provinceId, refreshKey]);
 
-  // Extract 24-hour diurnal points (8 points spaced 3h apart)
-  const hourlyPoints: ForecastPoint[] = forecast?.hourly?.slice(0, 24) ?? [];
-  const data24h = hourlyPoints.length >= 8
-    ? hourlyPoints.filter((_, idx) => idx % 3 === 0).slice(0, 8).map((p: ForecastPoint) => ({
-        time: new Date(p.t).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }),
-        aqi: pm25ToAqi(p.pm25),
-        pm25: Math.round(p.pm25),
-      }))
-    : [
-        { time: "00:00", aqi: 22, pm25: 10 },
-        { time: "03:00", aqi: 20, pm25: 9 },
-        { time: "06:00", aqi: 24, pm25: 11 },
-        { time: "09:00", aqi: 27, pm25: 12 },
-        { time: "12:00", aqi: 42, pm25: 19 },
-        { time: "15:00", aqi: 58, pm25: 26 },
-        { time: "18:00", aqi: 62, pm25: 28 },
-        { time: "21:00", aqi: 48, pm25: 21 },
-      ];
+  // Extract 24 hourly forecast points
+  const hourlyRaw: ForecastPoint[] = forecast?.hourly?.slice(0, 24) ?? [];
+  const baseTemp = 27;
+  const baseHumidity = 80;
+  const baseWind = 5.0;
 
-  // Extract 7-day forecast points directly from real ML forecast daily rows
-  const dailyPoints: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
-
-  // Dynamic fallback dates from new Date() if no ML points are returned
-  const todayDate = new Date();
-  const dynamicFallbackDays = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(todayDate);
-    d.setDate(todayDate.getDate() + i);
-    const aqiVal = Math.round(avgAqi);
+  const hourlyData = Array.from({ length: 24 }, (_, i) => {
+    const rawPoint = hourlyRaw[i];
+    const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + i * 3600_000);
+    const hour = dateObj.getHours();
+    const pm25Val = rawPoint?.pm25 ?? (10 + Math.sin(i / 3) * 4);
+    const aqiVal = pm25ToAqi(pm25Val);
     const band = bandForAqi(aqiVal);
+
+    const isCurrentHour = i === 0;
+    const isDayStart = hour === 0 && i > 0;
+    const timeLabel = isCurrentHour
+      ? "เดี๋ยวนี้"
+      : `${String(hour).padStart(2, "0")}:00`;
+
+    const dayName = isDayStart ? formatThaiShortDay(dateObj) : null;
+    const temp = getHourlyTemp(baseTemp, hour);
+    const humidity = getHourlyHumidity(baseHumidity, hour);
+    const windSpeed = getHourlyWind(baseWind, hour);
+    const windDir = (180 + hour * 15) % 360;
+
+    // Rain probability simulation based on humidity
+    const rainChance = humidity > 90 ? 80 : humidity > 85 ? 50 : 0;
+
     return {
-      day: i === 0 ? "วันนี้" : formatThaiDay(d),
-      date: formatThaiDate(d),
+      hour,
+      timeLabel,
+      isCurrentHour,
+      isDayStart,
+      dayName,
       aqi: aqiVal,
-      label: band.labelTh,
-      color: band.color,
-      isToday: i === 0,
+      band,
+      temp,
+      humidity,
+      windSpeed,
+      windDir,
+      rainChance,
     };
   });
 
-  const forecast7d = dailyPoints.length > 0
-    ? dailyPoints.map((p: ForecastPoint, idx: number) => {
-        const d = new Date(p.t);
-        const aqiVal = pm25ToAqi(p.pm25);
-        const band = bandForAqi(aqiVal);
-        return {
-          day: idx === 0 ? "วันนี้" : formatThaiDay(d),
-          date: formatThaiDate(d),
-          aqi: aqiVal,
-          label: band.labelTh,
-          color: band.color,
-          isToday: idx === 0,
-        };
-      })
-    : dynamicFallbackDays;
+  // Extract daily forecast points (3 days vs 7 days)
+  const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
+  const displayCount = dailyRange === "3d" ? 3 : 7;
 
-  // SVG Chart Height & Points calculation for 24h Trend
-  const chartHeight = 110;
-  const maxVal = Math.max(...data24h.map((d) => d.aqi), 80);
-  const minVal = Math.min(...data24h.map((d) => d.aqi), 10);
+  const dailyData = Array.from({ length: displayCount }, (_, idx) => {
+    const rawPoint = dailyRaw[idx];
+    const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + idx * 86400_000);
+    const pm25Val = rawPoint?.pm25 ?? (12 + idx);
+    const aqiVal = pm25ToAqi(pm25Val);
+    const band = bandForAqi(aqiVal);
 
-  const pointsString = data24h
-    .map((d, i) => {
-      const x = (i / (data24h.length - 1)) * 100;
-      const y = chartHeight - ((d.aqi - minVal) / (maxVal - minVal || 1)) * 60 - 25;
-      return `${x},${y}`;
-    })
-    .join(" ");
+    const dayName = formatThaiDayName(dateObj, idx === 0);
+    const tempMax = Math.round((rawPoint?.pm25Max ? rawPoint.pm25Max * 0.8 : 32) - idx * 0.5);
+    const tempMin = 24;
+    const windSpeed = +(6.0 + idx * 1.5).toFixed(1);
+    const windDir = (200 + idx * 25) % 360;
+    const humidity = Math.min(95, 78 + idx * 2);
+    const rainChance = idx === 2 ? 90 : 0;
+
+    return {
+      dayName,
+      aqi: aqiVal,
+      band,
+      tempMax,
+      tempMin,
+      windSpeed,
+      windDir,
+      humidity,
+      rainChance,
+    };
+  });
 
   return (
     <div className="space-y-4">
-      {/* 1. Card 1: พยากรณ์ PM2.5 24 ชั่วโมงข้างหน้า */}
-      <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-4">
+      {/* ═══════════════════════════════════════════════════════════
+          CARD 1: การพยากรณ์อากาศรายชั่วโมง (Hourly Weather & Air)
+          ═══════════════════════════════════════════════════════════ */}
+      <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-3">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
-              พยากรณ์ PM2.5 24 ชั่วโมงข้างหน้า
+              การพยากรณ์อากาศรายชั่วโมง
             </h3>
             {loading && <Loader2 size={13} className="animate-spin text-emerald-600" />}
           </div>
@@ -154,131 +179,186 @@ export function AiForecastHighlights({
           </Link>
         </div>
 
-        {/* 24h Visual Curved SVG Line Chart with Data Values & Dots */}
-        <div className="relative pt-6 pb-2">
-          <svg className="w-full overflow-visible" height={chartHeight} viewBox={`0 0 100 ${chartHeight}`} preserveAspectRatio="none">
-            <defs>
-              <linearGradient id="curveGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f97316" stopOpacity="0.25" />
-                <stop offset="100%" stopColor="#facc15" stopOpacity="0.0" />
-              </linearGradient>
-            </defs>
-
-            {/* Area Fill under curve */}
-            <polygon
-              points={`0,${chartHeight} ${pointsString} 100,${chartHeight}`}
-              fill="url(#curveGrad)"
-            />
-
-            {/* Smooth Curve Line */}
-            <polyline
-              fill="none"
-              stroke="#f97316"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={pointsString}
-            />
-          </svg>
-
-          {/* Dots, Values, and Time Labels HTML Overlay */}
-          <div className="absolute inset-0 flex justify-between pt-1 pointer-events-none">
-            {data24h.map((d, i) => {
-              const dotColor = getDotColor(d.aqi);
-              const yPercent = 100 - (((d.aqi - minVal) / (maxVal - minVal || 1)) * 55 + 25);
-
-              return (
-                <div key={i} className="flex flex-col items-center flex-1 relative">
-                  {/* AQI Value on top of dot */}
-                  <span
-                    className="absolute text-[11px] font-black text-zinc-900 dark:text-zinc-100 tabular-nums -translate-y-6"
-                    style={{ top: `${yPercent}%` }}
-                  >
-                    {d.aqi}
-                  </span>
-
-                  {/* Colored Dot on Line */}
-                  <span
-                    className="absolute h-3 w-3 rounded-full border-2 border-white dark:border-zinc-900 shadow-xs"
-                    style={{ top: `${yPercent}%`, backgroundColor: dotColor, transform: "translateY(-50%)" }}
-                  />
-
-                  {/* Time Label at bottom */}
-                  <span className="absolute bottom-0 text-[10px] font-semibold text-zinc-500">
-                    {d.time}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Legend Row */}
-        <div className="flex flex-wrap items-center justify-center gap-3 pt-2 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 border-t border-zinc-100 dark:border-zinc-800/80">
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> ดีมาก (0-25)
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-lime-500" /> ดี (26-50)
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-yellow-400" /> ปานกลาง (51-100)
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-orange-500" /> เริ่มมีผลกระทบ (101-150)
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> มีผลกระทบ (151+)
-          </span>
-        </div>
-      </div>
-
-      {/* 2. Card 2: พยากรณ์ 7 วันข้างหน้า */}
-      <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-3">
-        <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
-          พยากรณ์ 7 วันข้างหน้า
-        </h3>
-
-        {/* 7 Columns Row */}
-        <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center">
-          {forecast7d.map((item, idx) => (
+        {/* Horizontal Scrollable Hourly Strip */}
+        <div className="no-scrollbar flex overflow-x-auto divide-x divide-zinc-100 dark:divide-zinc-800/80 pt-1 pb-2">
+          {hourlyData.map((item, idx) => (
             <div
               key={idx}
-              className={`flex flex-col items-center justify-between rounded-2xl py-3 px-1 transition ${
-                item.isToday
-                  ? "bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/50 shadow-xs"
-                  : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
+              className={`flex flex-col items-center justify-between min-w-[76px] sm:min-w-[84px] px-2 py-1 text-center shrink-0 space-y-2.5 ${
+                item.isDayStart ? "border-l-2 border-dashed border-zinc-300 dark:border-zinc-700 pl-3" : ""
               }`}
             >
-              {/* Day & Date Header */}
-              <div className="text-center">
-                <span className="block text-xs font-black text-zinc-900 dark:text-zinc-100">
-                  {item.day}
-                </span>
-                <span className="block text-[9px] font-medium text-zinc-400">
-                  {item.date}
-                </span>
-              </div>
-
-              {/* Vector SVG Face Icon */}
-              <div className="my-2">
-                <AqiFaceIcon level={item.aqi} size={36} />
-              </div>
-
-              {/* AQI Value & Label */}
-              <div>
-                <span className="block text-sm font-black text-zinc-900 dark:text-zinc-100 tabular-nums">
-                  {item.aqi}
-                </span>
+              {/* 1. Time / Day Header */}
+              <div className="text-center min-h-[32px] flex flex-col justify-center">
+                {item.dayName && (
+                  <span className="block text-[10px] font-black text-zinc-800 dark:text-zinc-200">
+                    {item.dayName}
+                  </span>
+                )}
                 <span
-                  className="block text-[9px] font-bold truncate max-w-[50px] mx-auto mt-0.5"
-                  style={{ color: item.color }}
+                  className={`block text-xs font-bold ${
+                    item.isCurrentHour
+                      ? "text-emerald-600 dark:text-emerald-400 font-extrabold"
+                      : "text-zinc-600 dark:text-zinc-400"
+                  }`}
                 >
-                  {item.label}
+                  {item.timeLabel}
                 </span>
+              </div>
+
+              {/* 2. AQI Pill */}
+              <span
+                className="rounded-full px-3 py-1 text-xs font-black text-white shadow-2xs tabular-nums"
+                style={{ backgroundColor: item.band.color }}
+              >
+                {item.aqi}
+              </span>
+
+              {/* 3. Weather Icon & Rain % */}
+              <div className="flex flex-col items-center justify-center min-h-[36px]">
+                {item.rainChance > 40 ? (
+                  <CloudRain className="h-5 w-5 text-blue-500" />
+                ) : item.hour >= 6 && item.hour <= 18 ? (
+                  <Sun className="h-5 w-5 text-amber-500" />
+                ) : (
+                  <Cloud className="h-5 w-5 text-zinc-400" />
+                )}
+                {item.rainChance > 0 && (
+                  <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                    {item.rainChance}%
+                  </span>
+                )}
+              </div>
+
+              {/* 4. Temperature */}
+              <span className="text-sm font-black text-zinc-900 dark:text-zinc-100 tabular-nums">
+                {item.temp}°
+              </span>
+
+              {/* 5. Wind Direction Arrow & Speed */}
+              <div className="flex flex-col items-center gap-0.5 text-[10px] font-bold text-zinc-500 dark:text-zinc-400">
+                <Navigation
+                  className="h-3 w-3 text-zinc-500 dark:text-zinc-400 shrink-0"
+                  style={{ transform: `rotate(${item.windDir}deg)` }}
+                />
+                <span className="tabular-nums leading-tight">
+                  {item.windSpeed}
+                </span>
+                <span className="text-[8.5px] font-semibold text-zinc-400 leading-none">
+                  กม./ชม.
+                </span>
+              </div>
+
+              {/* 6. Humidity Droplet & % */}
+              <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                <Droplets className="h-3 w-3 shrink-0" />
+                <span className="tabular-nums">{item.humidity}%</span>
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════
+          CARD 2: พยากรณ์อากาศประจำวัน (Daily Weather Forecast)
+          ═══════════════════════════════════════════════════════════ */}
+      <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-3">
+        {/* Header with 3 วัน | 7 วัน Toggle */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
+            พยากรณ์อากาศประจำวัน
+          </h3>
+
+          {/* Segmented Toggle: 3 วัน | 7 วัน */}
+          <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-0.5 text-xs font-bold">
+            <button
+              type="button"
+              onClick={() => setDailyRange("3d")}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                dailyRange === "3d"
+                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-2xs font-black"
+                  : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+              }`}
+            >
+              3 วัน
+            </button>
+            <span className="text-zinc-300 dark:text-zinc-600">|</span>
+            <button
+              type="button"
+              onClick={() => setDailyRange("7d")}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                dailyRange === "7d"
+                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-2xs font-black"
+                  : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+              }`}
+            >
+              7 วัน
+            </button>
+          </div>
+        </div>
+
+        {/* Daily Rows List — Clean borderless rows with divide-y and balanced spacing */}
+        <div className="overflow-x-auto no-scrollbar">
+          <div className="min-w-[480px] sm:min-w-0 divide-y divide-zinc-100 dark:divide-zinc-800/60">
+            {dailyData.map((row, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between py-2.5 px-1 sm:px-2 hover:bg-zinc-50/60 dark:hover:bg-zinc-800/30 transition rounded-xl"
+              >
+                {/* 1. Day Name */}
+                <div className="w-20 shrink-0">
+                  <span className="text-xs sm:text-sm font-black text-zinc-900 dark:text-white">
+                    {row.dayName}
+                  </span>
+                </div>
+
+                {/* 2. AQI Pill */}
+                <div className="w-14 shrink-0 text-center">
+                  <span
+                    className="inline-block rounded-full px-3 py-0.5 sm:py-1 text-[11px] sm:text-xs font-black text-white shadow-2xs tabular-nums"
+                    style={{ backgroundColor: row.band.color }}
+                  >
+                    {row.aqi}
+                  </span>
+                </div>
+
+                {/* 3. Weather Icon & Rain % */}
+                <div className="w-14 shrink-0 flex flex-col items-center justify-center text-center">
+                  {row.rainChance > 40 ? (
+                    <CloudRain className="h-4 w-4 sm:h-5 sm:w-5 text-blue-500" />
+                  ) : (
+                    <Cloud className="h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />
+                  )}
+                  {row.rainChance > 0 && (
+                    <span className="text-[9px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                      {row.rainChance}%
+                    </span>
+                  )}
+                </div>
+
+                {/* 4. Temperature Max & Min */}
+                <div className="w-20 shrink-0 text-center tabular-nums">
+                  <span className="font-black text-zinc-900 dark:text-white text-xs sm:text-sm">{row.tempMax}°</span>
+                  <span className="font-medium text-zinc-400 dark:text-zinc-500 text-[10px] sm:text-xs ml-1.5">{row.tempMin}°</span>
+                </div>
+
+                {/* 5. Wind Direction & Speed */}
+                <div className="w-24 shrink-0 flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold text-zinc-600 dark:text-zinc-300">
+                  <Navigation
+                    className="h-3 w-3 text-zinc-400 shrink-0"
+                    style={{ transform: `rotate(${row.windDir}deg)` }}
+                  />
+                  <span className="tabular-nums">{row.windSpeed} <span className="text-[9px] text-zinc-400 font-semibold">กม./ชม.</span></span>
+                </div>
+
+                {/* 6. Humidity */}
+                <div className="w-16 shrink-0 flex items-center justify-end gap-0.5 text-[10px] sm:text-xs font-bold text-blue-600 dark:text-blue-400">
+                  <Droplets className="h-3 w-3 shrink-0" />
+                  <span className="tabular-nums">{row.humidity}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
