@@ -93,13 +93,14 @@ function createProvinceMarkerIcon(p: MapProvince, isSelected: boolean, activeMod
     displayValue = `${Math.round(p.pm25 ?? 0)}`;
   }
 
+  const circleSize = isSelected ? 42 : 36;
   const html = `
-    <div className="flex flex-col items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; cursor: pointer;">
       <!-- Circular Value Marker with Outer Aura -->
       <div style="
         background-color: ${color};
-        width: ${isSelected ? "44px" : "38px"};
-        height: ${isSelected ? "44px" : "38px"};
+        width: ${circleSize}px;
+        height: ${circleSize}px;
         border-radius: 9999px;
         border: 2.5px solid #ffffff;
         box-shadow: 0 0 15px ${color}aa, 0 4px 10px rgba(0,0,0,0.4);
@@ -117,7 +118,7 @@ function createProvinceMarkerIcon(p: MapProvince, isSelected: boolean, activeMod
 
       <!-- Province Name Label directly beneath marker -->
       <span style="
-        margin-top: 3px;
+        margin-top: 2px;
         color: #ffffff;
         font-weight: 800;
         font-size: 11px;
@@ -133,8 +134,8 @@ function createProvinceMarkerIcon(p: MapProvince, isSelected: boolean, activeMod
   return L.divIcon({
     html,
     className: "custom-province-marker",
-    iconSize: [44, 54],
-    iconAnchor: [22, 22],
+    iconSize: [64, 56],
+    iconAnchor: [32, circleSize / 2],
   });
 }
 

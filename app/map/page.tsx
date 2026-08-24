@@ -12,7 +12,8 @@ export const metadata: Metadata = {
   description: "แผนที่แสดงค่า PM2.5 AQI จุดความร้อน FIRMS และทิศทางลม 20 จังหวัดภาคอีสานแบบเรียลไทม์",
 };
 
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function MapPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
