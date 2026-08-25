@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ISAN_PROVINCES, getProvince } from "@/lib/isan";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
