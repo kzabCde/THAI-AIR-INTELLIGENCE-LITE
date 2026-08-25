@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { Flame, Wind, CloudRain, ChevronRight } from "lucide-react";
+import { Flame, Wind, CloudRain } from "lucide-react";
 
 export function MapBottomCards({
   totalHotspots = 0,

@@ -6,12 +6,10 @@ import {
   ChevronRight,
   Cloud,
   CloudRain,
-  CloudSun,
   Droplets,
   Loader2,
   Navigation,
   Sun,
-  Wind,
 } from "lucide-react";
 import { bandForAqi, pm25ToAqi } from "@/lib/aqi";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";

@@ -18,6 +18,28 @@ const SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+function isPlaceholderUrl(url?: string | null): boolean {
+  if (!url) return true;
+  const trimmed = url.trim().toLowerCase();
+  return (
+    trimmed.includes("replace-with-") ||
+    trimmed.includes("example.supabase.co") ||
+    trimmed.includes("example.com") ||
+    trimmed.includes("your-project")
+  );
+}
+
+function isPlaceholderKey(key?: string | null): boolean {
+  if (!key) return true;
+  const trimmed = key.trim().toLowerCase();
+  return (
+    trimmed.includes("replace-with-") ||
+    trimmed.startsWith("test-") ||
+    trimmed.startsWith("example-") ||
+    trimmed.includes("your-key")
+  );
+}
+
 /**
  * Whether the app has been configured with Supabase credentials. Services use
  * this to fail gracefully (empty/typed results) instead of throwing when the
@@ -26,14 +48,14 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 export const isSupabaseConfigured = Boolean(
   SUPABASE_URL &&
     SUPABASE_ANON_KEY &&
-    !SUPABASE_URL.includes("replace-with-") &&
-    !SUPABASE_ANON_KEY.includes("replace-with-"),
+    !isPlaceholderUrl(SUPABASE_URL) &&
+    !isPlaceholderKey(SUPABASE_ANON_KEY),
 );
 export const isServiceSupabaseConfigured = Boolean(
   SUPABASE_URL &&
     SERVICE_ROLE_KEY &&
-    !SUPABASE_URL.includes("replace-with-") &&
-    !SERVICE_ROLE_KEY.includes("replace-with-"),
+    !isPlaceholderUrl(SUPABASE_URL) &&
+    !isPlaceholderKey(SERVICE_ROLE_KEY),
 );
 
 let readClient: IsanClient | null = null;

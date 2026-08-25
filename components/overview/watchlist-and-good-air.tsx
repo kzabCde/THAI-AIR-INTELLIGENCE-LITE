@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import type { ProvinceSnapshot } from "@/services/types";
 
 export function WatchlistAndGoodAir({

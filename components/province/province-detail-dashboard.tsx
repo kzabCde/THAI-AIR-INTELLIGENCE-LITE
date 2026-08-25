@@ -13,7 +13,7 @@ import {
   Thermometer,
   Wind,
 } from "lucide-react";
-import { bandForAqi, bandForPm25, pm25ToAqi } from "@/lib/aqi";
+import { bandForAqi, bandForPm25 } from "@/lib/aqi";
 import { fmtDateTh, fmtPm25, fmtTimeTh, fmtNumber, isHotspotDataStale } from "@/lib/format";
 import { ZONE_LABELS } from "@/lib/isan";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";

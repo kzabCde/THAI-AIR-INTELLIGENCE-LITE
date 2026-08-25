@@ -1,7 +1,6 @@
 "use client";
 
 import type { RegionOverview } from "@/services/types";
-import { bandForPm25 } from "@/lib/aqi";
 
 export function OverviewKpis({ overview }: { overview: RegionOverview }) {
   const avgPm25 = Math.round(overview.avgPm25);

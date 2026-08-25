@@ -11,7 +11,11 @@ export const isRealtimeConfigured = Boolean(
   URL &&
     ANON &&
     !URL.includes("replace-with-") &&
+    !URL.includes("example.supabase.co") &&
+    !URL.includes("example.com") &&
     !ANON.includes("replace-with-") &&
+    !ANON.startsWith("test-") &&
+    !ANON.startsWith("example-") &&
     !ANON.startsWith("sb_secret_"),
 );
 

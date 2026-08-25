@@ -304,7 +304,7 @@ export function BurningComparison({ analysis }: { analysis: TrendAnalysis }) {
   );
 }
 
-export function DataQualityCard({ analysis, isRegional = false }: { analysis: TrendAnalysis; isRegional?: boolean }) {
+export function DataQualityCard({ analysis }: { analysis: TrendAnalysis }) {
   const openMeteo = analysis.sources.some((source) => source.toLowerCase().includes("open-meteo"));
   return (
     <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900 dark:bg-emerald-950/20 sm:p-5">

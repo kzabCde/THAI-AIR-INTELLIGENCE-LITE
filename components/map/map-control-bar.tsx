@@ -2,7 +2,7 @@
 
 import { Flame, CloudSun, Wind, Activity } from "lucide-react";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
-import type { MapProvince, MapFilterMode } from "./types";
+import type { MapFilterMode } from "./types";
 import type { ProvinceSnapshot } from "@/services/types";
 
 export function MapControlBar({

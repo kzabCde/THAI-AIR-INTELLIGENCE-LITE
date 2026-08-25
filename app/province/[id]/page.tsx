@@ -1,25 +1,11 @@
-import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  ArrowLeft,
-  Flame,
-  Gauge,
-} from "lucide-react";
-import { ISAN_PROVINCES, ZONE_LABELS, getProvince } from "@/lib/isan";
-import { fmtDateTh, fmtNumber, fmtPm25, isHotspotDataStale } from "@/lib/format";
+import { ISAN_PROVINCES, getProvince } from "@/lib/isan";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getProvinceSnapshot } from "@/services/overview.service";
 import { getAirHistory } from "@/services/air-quality.service";
 import { getWeatherHistory } from "@/services/weather.service";
 import { getDailyHistory } from "@/services/daily-summary.service";
 import { getProvinceForecast } from "@/services/forecast.service";
-import {
-  ForecastCard,
-  HistoryCard,
-  HourlyAirCard,
-  HourlyWeatherCard,
-} from "@/components/province/province-charts";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { ProvinceDetailDashboard } from "@/components/province/province-detail-dashboard";
