@@ -1,30 +1,47 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { AqiLegend } from "@/components/ui/aqi-legend";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { MapProvince } from "./types";
+import type { MapProvince, MapFilterMode } from "./types";
 
 const IsanMap = dynamic(() => import("./isan-map"), {
   ssr: false,
-  loading: () => <Skeleton className="h-full w-full rounded-2xl" />,
+  loading: () => <Skeleton className="h-full w-full rounded-3xl min-h-[520px]" />,
 });
 
 export function IsanMapCard({
   provinces,
-  height = "h-[460px]",
+  height = "h-[540px]",
+  activeMode = "pm25",
+  selectedProvinceId = "all",
+  avgPm25 = 0,
+  exceededCount = 0,
+  totalHotspots = 0,
+  windSpeed = 0,
+  windDirection = "ไม่มีข้อมูล",
 }: {
   provinces: MapProvince[];
   height?: string;
+  activeMode?: MapFilterMode;
+  selectedProvinceId?: string;
+  avgPm25?: number;
+  exceededCount?: number;
+  totalHotspots?: number;
+  windSpeed?: number;
+  windDirection?: string;
 }) {
   return (
-    <div className="card overflow-hidden">
-      <div className={height}>
-        <IsanMap provinces={provinces} />
-      </div>
-      <div className="border-t border-border px-4 py-3">
-        <AqiLegend />
-      </div>
+    <div className={`w-full ${height}`}>
+      <IsanMap
+        provinces={provinces}
+        activeMode={activeMode}
+        selectedProvinceId={selectedProvinceId}
+        avgPm25={avgPm25}
+        exceededCount={exceededCount}
+        totalHotspots={totalHotspots}
+        windSpeed={windSpeed}
+        windDirection={windDirection}
+      />
     </div>
   );
 }

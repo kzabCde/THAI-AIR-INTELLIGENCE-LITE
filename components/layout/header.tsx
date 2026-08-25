@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { Clock, Wind } from "lucide-react";
+import { Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { LiveClock } from "@/components/ui/live-clock";
@@ -16,18 +17,24 @@ function isActive(pathname: string, href: string) {
 export function Header() {
   const pathname = usePathname();
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-[rgb(var(--surface))]/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
-        <Link href="/" className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white shadow-soft">
-            <Wind size={18} />
-          </span>
+    <header className="sticky top-0 z-[1000] border-b border-border bg-[rgb(var(--surface))]/80 backdrop-blur-xl">
+      <div className="mx-auto flex h-16 sm:h-18 max-w-7xl items-center justify-between gap-3 px-4">
+        <Link href="/" className="flex min-w-0 items-center gap-2.5 group">
+          <Image
+            src="/images/cloud-logo.png"
+            alt="Isan Air Intelligence"
+            width={48}
+            height={48}
+            unoptimized
+            className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 object-contain transition-transform duration-200 group-hover:scale-105"
+            priority
+          />
           <span className="min-w-0">
-            <span className="block truncate text-sm font-bold leading-tight">
+            <span className="block truncate text-base sm:text-lg font-black tracking-tight leading-tight transition-colors group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
               Isan Air Intelligence
             </span>
-            <span className="muted block text-[11px] leading-tight">
-              คุณภาพอากาศภาคอีสาน · 20 จังหวัด
+            <span className="muted block text-[11px] sm:text-xs leading-tight">
+              คุณภาพอากาศ 20 จังหวัดภาคอีสาน
             </span>
           </span>
         </Link>

@@ -5,10 +5,14 @@ import { getProvinceForecast } from "@/services/forecast.service";
 
 export const revalidate = 0;
 
-// GET /api/forecast?province=TH-30 → 168h hourly + 7d daily PM2.5 forecast.
+// GET /api/forecast?province=TH-40 or /api/forecast?id=TH-40 → 168h hourly + 7d daily PM2.5 forecast.
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const province = req.nextUrl.searchParams.get("province") ?? "TH-30";
+    const province =
+      req.nextUrl.searchParams.get("province") ??
+      req.nextUrl.searchParams.get("id") ??
+      "TH-40";
+
     if (!isValidProvinceId(province)) return fail("Unknown Isan province", 404);
     const id = getProvince(province)!.id;
     return ok(await getProvinceForecast(id), 300, 600);

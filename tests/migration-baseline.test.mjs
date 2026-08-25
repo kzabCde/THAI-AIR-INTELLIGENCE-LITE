@@ -41,7 +41,8 @@ test("production migration inventory is ordered and reconciled", () => {
     const expectedMd5 = baseline.repository_statement_md5[version];
     assert.ok(expectedMd5, `missing Production checksum for ${file}`);
 
-    const sql = fs.readFileSync(path.join(root, "supabase/migrations", file));
+    const rawSql = fs.readFileSync(path.join(root, "supabase/migrations", file), "utf8").replace(/\r\n/g, "\n");
+    const sql = Buffer.from(rawSql);
     const hashes = [
       crypto.createHash("md5").update(sql).digest("hex"),
     ];
