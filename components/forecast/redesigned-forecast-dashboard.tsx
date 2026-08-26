@@ -401,73 +401,168 @@ export function RedesignedForecastDashboard({
             <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
 
               {/* ── 24h MODE: Hourly scrollable strip ── */}
-              {horizon === "24h" && (
-                <>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white sm:text-sm">
-                      การพยากรณ์อากาศรายชั่วโมง
-                    </h3>
-                    <span className="text-[10px] font-semibold text-slate-400">
-                      24 ชั่วโมง · เลื่อนดูได้ →
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
-                    <div className="flex gap-0">
-                      {forecast.hourly.slice(0, 24).map((h, i) => {
-                        const d = new Date(h.t);
-                        const hour = d.getHours();
-                        const currentLocalHour = new Date().getHours();
-                        const isCurrent = hour === currentLocalHour;
-                        const aqi = pm25ToAqi(h.pm25);
-                        const band = bandForAqi(aqi);
-                        const temp = getHourlyTemp(baseTemp, hour);
-                        const humid = getHourlyHumidity(baseHumidity, hour);
-                        const wind = getHourlyWind(baseWind, hour);
-                        const windDir = (baseWindDir + ((hour * 7) % 30) - 15 + 360) % 360;
-                        const rainChance = humid > 80 ? Math.min(95, 40 + Math.round((humid - 80) * 2)) : humid > 70 ? 20 : 0;
-                        return (
+              {horizon === "24h" && (() => {
+                const now = new Date();
+                const currentHourTimestamp = new Date(
+                  now.getFullYear(),
+                  now.getMonth(),
+                  now.getDate(),
+                  now.getHours(),
+                ).getTime();
+
+                const hourly24Data = Array.from({ length: 24 }, (_, i) => {
+                  const stepDate = new Date(currentHourTimestamp + i * 3600_000);
+                  const hour = stepDate.getHours();
+                  const dayIndex = Math.min(6, Math.floor(i / 24));
+
+                  // Day-specific modifier for synoptic weather progression
+                  const wave = dayIndex === 0 ? 0 : Math.sin(dayIndex * 1.1 + 0.5);
+                  const tempOffset = +(wave * 2.2).toFixed(1);
+                  const humidityOffset = +(-wave * 12).toFixed(0);
+                  const windMultiplier = dayIndex === 0 ? 1.0 : Math.max(0.6, 1.0 + Math.cos(dayIndex * 1.3) * 0.35);
+                  const windDirShift = dayIndex === 0 ? 0 : Math.sin(dayIndex * 0.8) * 35;
+
+                  const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
+                  const targetDaily = dailyRaw[dayIndex];
+                  const baseDayPm25 = targetDaily?.pm25 ?? (12 + dayIndex);
+
+                  // Diurnal curve for PM2.5 (higher in morning/evening, lower at midday)
+                  const diurnalFactor = 0.88 + 0.24 * Math.cos(((hour - 7) / 24) * 2 * Math.PI);
+                  const livePm25 = forecast?.current;
+                  const pm25Val = i === 0 && livePm25 != null
+                    ? livePm25
+                    : Math.max(1, +(baseDayPm25 * diurnalFactor).toFixed(1));
+
+                  const aqiVal = pm25ToAqi(pm25Val);
+                  const band = bandForAqi(aqiVal);
+
+                  const isCurrentHour = i === 0;
+                  const isDayStart = hour === 0 && i > 0;
+                  const timeLabel = isCurrentHour ? "ตอนนี้" : `${String(hour).padStart(2, "0")}:00`;
+                  const dayName = isDayStart ? (THAI_SHORT_DAYS[stepDate.getDay()] ?? "-") : null;
+
+                  const dayBaseTemp = baseTemp + tempOffset;
+                  const dayBaseHumidity = Math.min(98, Math.max(35, baseHumidity + humidityOffset));
+                  const dayBaseWind = Math.max(1.0, baseWind * windMultiplier);
+
+                  const temp = isCurrentHour && weather?.temperature != null
+                    ? Math.round(weather.temperature)
+                    : getHourlyTemp(dayBaseTemp, hour);
+                  const humid = isCurrentHour && weather?.humidity != null
+                    ? Math.round(weather.humidity)
+                    : getHourlyHumidity(dayBaseHumidity, hour);
+                  const wind = isCurrentHour && weather?.wind_speed != null
+                    ? +(weather.wind_speed).toFixed(1)
+                    : getHourlyWind(dayBaseWind, hour);
+                  const windDir = isCurrentHour && weather?.wind_direction != null
+                    ? Math.round(weather.wind_direction)
+                    : Math.round((baseWindDir + windDirShift + hour * 8) % 360);
+
+                  const estimatedHum = Math.min(98, Math.max(40, baseHumidity + humidityOffset));
+                  const rainBaseChance = estimatedHum >= 85 ? 80 : estimatedHum >= 75 ? 60 : estimatedHum >= 65 ? 30 : 10;
+                  const rainChance = isCurrentHour && (precipitation ?? 0) > 0
+                    ? 80
+                    : humid > 85
+                    ? rainBaseChance
+                    : humid > 75
+                    ? Math.max(10, rainBaseChance - 20)
+                    : 0;
+
+                  return {
+                    hour,
+                    timeLabel,
+                    isCurrentHour,
+                    isDayStart,
+                    dayName,
+                    aqi: aqiVal,
+                    band,
+                    temp,
+                    humid,
+                    wind,
+                    windDir,
+                    rainChance,
+                  };
+                });
+
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-white sm:text-sm">
+                        การพยากรณ์อากาศรายชั่วโมง
+                      </h3>
+                      <span className="text-[10px] font-semibold text-slate-400">
+                        24 ชั่วโมง · เลื่อนดูได้ →
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+                      <div className="flex gap-0">
+                        {hourly24Data.map((item, i) => (
                           <div
                             key={i}
                             className={`flex flex-col items-center gap-1 px-2 sm:px-2.5 py-2 min-w-[58px] sm:min-w-[66px] transition rounded-2xl ${
-                              isCurrent
+                              item.isCurrentHour
                                 ? "bg-emerald-500/15 dark:bg-emerald-950/50 border border-emerald-500/50 dark:border-emerald-500/50 shadow-xs ring-2 ring-emerald-500/20 z-10"
                                 : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
                             }`}
                           >
-                            {isCurrent ? (
+                            {item.isCurrentHour ? (
+                              <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+                                ตอนนี้
+                              </span>
+                            ) : (
                               <div className="flex flex-col items-center">
-                                <span className="rounded-full bg-emerald-600 dark:bg-emerald-500 px-1.5 py-0.2 text-[8px] font-black text-white uppercase tracking-wider mb-0.5 shadow-2xs">
-                                  ตอนนี้
-                                </span>
-                                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400">
-                                  {String(hour).padStart(2, "0")}:00
+                                {item.dayName && (
+                                  <span className="text-[9px] font-black text-slate-800 dark:text-slate-200">
+                                    {item.dayName}
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                  {item.timeLabel}
                                 </span>
                               </div>
-                            ) : (
-                              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                                {String(hour).padStart(2, "0")}:00
-                              </span>
                             )}
-                            <span className="rounded-full px-2 py-0.5 text-[10px] font-black text-white shadow-2xs tabular-nums" style={{ backgroundColor: band.color }}>
-                              {aqi}
+                            <span
+                              className="rounded-full px-2 py-0.5 text-[10px] font-black text-white shadow-2xs tabular-nums"
+                              style={{ backgroundColor: item.band.color }}
+                            >
+                              {item.aqi}
                             </span>
                             <div className="flex flex-col items-center">
-                              {rainChance > 40 ? <CloudRain className="h-4 w-4 text-blue-500" /> : hour >= 6 && hour <= 18 ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-400" />}
-                              {rainChance > 0 && <span className="text-[8px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">{rainChance}%</span>}
+                              {item.rainChance > 40 ? (
+                                <CloudRain className="h-4 w-4 text-blue-500" />
+                              ) : item.hour >= 6 && item.hour <= 18 ? (
+                                <Sun className="h-4 w-4 text-amber-400" />
+                              ) : (
+                                <Moon className="h-4 w-4 text-indigo-400" />
+                              )}
+                              {item.rainChance > 0 && (
+                                <span className="text-[8px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                                  {item.rainChance}%
+                                </span>
+                              )}
                             </div>
-                            <span className="text-[11px] font-black text-slate-900 dark:text-white tabular-nums">{temp}°</span>
+                            <span className="text-[11px] font-black text-slate-900 dark:text-white tabular-nums">
+                              {item.temp}°
+                            </span>
                             <div className="flex flex-col items-center gap-0.5">
-                              <Navigation className="h-3 w-3 text-slate-400" style={{ transform: `rotate(${windDir}deg)` }} />
-                              <span className="text-[8px] font-semibold text-slate-500 tabular-nums">{wind}</span>
+                              <Navigation
+                                className="h-3 w-3 text-slate-400"
+                                style={{ transform: `rotate(${item.windDir}deg)` }}
+                              />
+                              <span className="text-[8px] font-semibold text-slate-500 tabular-nums">
+                                {item.wind}
+                              </span>
                             </div>
-                            <span className="text-[8px] font-bold text-blue-500 dark:text-blue-400 tabular-nums">{humid}%</span>
+                            <span className="text-[8px] font-bold text-blue-500 dark:text-blue-400 tabular-nums">
+                              {item.humid}%
+                            </span>
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                );
+              })()}
 
               {/* ── 3d / 7d MODE: Accordion daily cards ── */}
               {horizon !== "24h" && (() => {
