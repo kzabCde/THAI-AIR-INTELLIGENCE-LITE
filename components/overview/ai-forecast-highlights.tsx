@@ -137,8 +137,9 @@ export function AiForecastHighlights({
 
     // Diurnal curve for PM2.5 (higher in morning/evening, lower at midday)
     const diurnalFactor = 0.88 + 0.24 * Math.cos(((hour - 7) / 24) * 2 * Math.PI);
-    const pm25Val = i === 0 && currentWeather
-      ? (avgAqi != null ? avgAqi : baseDayPm25)
+    const livePm25 = forecast?.current;
+    const pm25Val = i === 0 && livePm25 != null
+      ? livePm25
       : Math.max(1, +(baseDayPm25 * diurnalFactor).toFixed(1));
 
     const aqiVal = pm25ToAqi(pm25Val);
@@ -147,7 +148,7 @@ export function AiForecastHighlights({
     const isCurrentHour = i === 0;
     const isDayStart = hour === 0 && i > 0;
     const timeLabel = isCurrentHour
-      ? "เดี๋ยวนี้"
+      ? "ตอนนี้"
       : `${String(hour).padStart(2, "0")}:00`;
 
     const dayName = isDayStart ? formatThaiShortDay(stepDate) : null;
@@ -308,23 +309,21 @@ export function AiForecastHighlights({
               {/* 1. Time / Day Header */}
               <div className="text-center min-h-[32px] flex flex-col justify-center items-center">
                 {item.isCurrentHour ? (
-                  <span className="rounded-full bg-emerald-600 dark:bg-emerald-500 px-1.5 py-0.2 text-[8px] font-black text-white uppercase tracking-wider mb-0.5 shadow-2xs">
+                  <span className="rounded-full bg-emerald-600 dark:bg-emerald-500 px-2.5 py-0.5 text-[11px] font-black text-white shadow-2xs">
                     ตอนนี้
                   </span>
-                ) : item.dayName ? (
-                  <span className="block text-[10px] font-black text-zinc-800 dark:text-zinc-200">
-                    {item.dayName}
-                  </span>
-                ) : null}
-                <span
-                  className={`block text-xs font-bold ${
-                    item.isCurrentHour
-                      ? "text-emerald-600 dark:text-emerald-400 font-black"
-                      : "text-zinc-600 dark:text-zinc-400"
-                  }`}
-                >
-                  {item.timeLabel}
-                </span>
+                ) : (
+                  <>
+                    {item.dayName && (
+                      <span className="block text-[10px] font-black text-zinc-800 dark:text-zinc-200">
+                        {item.dayName}
+                      </span>
+                    )}
+                    <span className="block text-xs font-bold text-zinc-600 dark:text-zinc-400">
+                      {item.timeLabel}
+                    </span>
+                  </>
+                )}
               </div>
 
               {/* 2. AQI Pill */}
