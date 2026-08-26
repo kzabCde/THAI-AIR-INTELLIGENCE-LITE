@@ -115,17 +115,32 @@ export function AiForecastHighlights({
     return { tempOffset, humidityOffset, windMultiplier, windDirShift, rainBaseChance };
   };
 
-  // ── Generate ALL hourly data for 7 days (168 hours) using consistent formulas ──
-  const hourlyRaw: ForecastPoint[] = forecast?.hourly?.slice(0, 168) ?? [];
+  // ── Generate ALL hourly data for 7 days (168 hours) starting from CURRENT HOUR ──
+  const now = new Date();
+  const currentHourTimestamp = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    now.getHours(),
+  ).getTime();
 
   const allHourlyData = Array.from({ length: 168 }, (_, i) => {
-    const rawPoint = hourlyRaw[i];
-    const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + i * 3600_000);
-    const hour = dateObj.getHours();
-    const dayIndex = Math.floor(i / 24);
+    const stepDate = new Date(currentHourTimestamp + i * 3600_000);
+    const hour = stepDate.getHours();
+    const dayIndex = Math.min(6, Math.floor(i / 24));
     const mod = getDayWeatherModifier(dayIndex);
 
-    const pm25Val = rawPoint?.pm25 ?? (10 + Math.sin(i / 3) * 4);
+    // Look up matching forecast PM2.5 from daily forecast points
+    const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
+    const targetDaily = dailyRaw[dayIndex];
+    const baseDayPm25 = targetDaily?.pm25 ?? (12 + dayIndex);
+
+    // Diurnal curve for PM2.5 (higher in morning/evening, lower at midday)
+    const diurnalFactor = 0.88 + 0.24 * Math.cos(((hour - 7) / 24) * 2 * Math.PI);
+    const pm25Val = i === 0 && currentWeather
+      ? (avgAqi != null ? avgAqi : baseDayPm25)
+      : Math.max(1, +(baseDayPm25 * diurnalFactor).toFixed(1));
+
     const aqiVal = pm25ToAqi(pm25Val);
     const band = bandForAqi(aqiVal);
 
@@ -135,7 +150,7 @@ export function AiForecastHighlights({
       ? "เดี๋ยวนี้"
       : `${String(hour).padStart(2, "0")}:00`;
 
-    const dayName = isDayStart ? formatThaiShortDay(dateObj) : null;
+    const dayName = isDayStart ? formatThaiShortDay(stepDate) : null;
 
     // Day-specific diurnal temperature & humidity curves
     const dayBaseTemp = baseTemp + mod.tempOffset;
@@ -179,18 +194,18 @@ export function AiForecastHighlights({
       windSpeed,
       windDir,
       rainChance,
-      dateObj,
+      dateObj: stepDate,
     };
   });
 
   // First 24 hours for the hourly card
   const hourlyData = allHourlyData.slice(0, 24);
 
-  // ── Derive daily data by aggregating hourly data per day ──
+  // ── Derive daily data for 7 days (Today + next 6 days) ──
   const dailyData = Array.from({ length: 7 }, (_, dayIdx) => {
+    const dayDate = new Date(currentHourTimestamp + dayIdx * 86400_000);
     const dayHours = allHourlyData.filter((h) => h.dayIndex === dayIdx);
-    const firstHour = dayHours[0];
-    const dateObj = firstHour?.dateObj ?? new Date(Date.now() + dayIdx * 86400_000);
+    const mod = getDayWeatherModifier(dayIdx);
 
     // AQI: use daily forecast point if available, else average from hourly
     const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
@@ -198,20 +213,22 @@ export function AiForecastHighlights({
     const pm25Val = rawPoint?.pm25 ?? (dayHours.length
       ? dayHours.reduce((s, h) => s + pm25ToAqi(h.aqi), 0) / dayHours.length
       : 12 + dayIdx);
-    const aqiVal = rawPoint ? pm25ToAqi(rawPoint.pm25) : Math.round(dayHours.reduce((s, h) => s + h.aqi, 0) / (dayHours.length || 1));
+    const aqiVal = dayIdx === 0 && avgAqi != null
+      ? avgAqi
+      : (rawPoint ? pm25ToAqi(rawPoint.pm25) : Math.round(dayHours.reduce((s, h) => s + h.aqi, 0) / (dayHours.length || 1)));
     const band = bandForAqi(aqiVal);
 
-    const dayName = formatThaiDayName(dateObj, dayIdx === 0);
+    const dayName = formatThaiDayName(dayDate, dayIdx === 0);
 
     // Temperature: derive max/min from hourly temps of this day
     const temps = dayHours.map((h) => h.temp);
-    const tempMax = temps.length ? Math.max(...temps) : 32;
-    const tempMin = temps.length ? Math.min(...temps) : 24;
+    const tempMax = temps.length ? Math.max(...temps) : Math.round(baseTemp + mod.tempOffset + 3);
+    const tempMin = temps.length ? Math.min(...temps) : Math.round(baseTemp + mod.tempOffset - 3);
 
     // Wind: average speed from hourly
     const avgWindSpeed = dayHours.length
       ? +(dayHours.reduce((s, h) => s + h.windSpeed, 0) / dayHours.length).toFixed(1)
-      : 5;
+      : +(baseWind * mod.windMultiplier).toFixed(1);
 
     // Wind direction: circular mean from hourly
     let sinSum = 0, cosSum = 0;
@@ -222,17 +239,17 @@ export function AiForecastHighlights({
     }
     const windDir = dayHours.length
       ? Math.round(((Math.atan2(sinSum, cosSum) * 180) / Math.PI + 360) % 360)
-      : 200;
+      : Math.round((baseWindDir + mod.windDirShift) % 360);
 
     // Humidity: average from hourly
     const humidity = dayHours.length
       ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length)
-      : 80;
+      : Math.min(98, Math.max(40, baseHumidity + mod.humidityOffset));
 
     // Rain: max chance from hourly hours of this day
     const rainChance = dayHours.length
       ? Math.max(...dayHours.map((h) => h.rainChance))
-      : 0;
+      : mod.rainBaseChance;
 
     return {
       dayName,
