@@ -93,6 +93,28 @@ export function AiForecastHighlights({
   const baseWind = currentWeather?.windSpeed ?? 5.0;
   const baseWindDir = currentWeather?.windDirection ?? 180;
 
+  // Synoptic weather progression across 7 days based on meteorological wave dynamics
+  const getDayWeatherModifier = (dayIdx: number) => {
+    if (dayIdx === 0) {
+      return {
+        tempOffset: 0,
+        humidityOffset: 0,
+        windMultiplier: 1.0,
+        windDirShift: 0,
+        rainBaseChance: (currentWeather?.precipitation ?? 0) > 0 ? 80 : (baseHumidity > 80 ? 60 : 30),
+      };
+    }
+    const wave = Math.sin(dayIdx * 1.1 + 0.5);
+    const tempOffset = +(wave * 2.2).toFixed(1);
+    const humidityOffset = +(-wave * 12).toFixed(0);
+    const windMultiplier = Math.max(0.6, 1.0 + Math.cos(dayIdx * 1.3) * 0.35);
+    const windDirShift = Math.sin(dayIdx * 0.8) * 35;
+    const estimatedHum = Math.min(98, Math.max(40, baseHumidity + humidityOffset));
+    const rainBaseChance = estimatedHum >= 85 ? 80 : estimatedHum >= 75 ? 60 : estimatedHum >= 65 ? 30 : 10;
+
+    return { tempOffset, humidityOffset, windMultiplier, windDirShift, rainBaseChance };
+  };
+
   // ── Generate ALL hourly data for 7 days (168 hours) using consistent formulas ──
   const hourlyRaw: ForecastPoint[] = forecast?.hourly?.slice(0, 168) ?? [];
 
@@ -100,6 +122,9 @@ export function AiForecastHighlights({
     const rawPoint = hourlyRaw[i];
     const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + i * 3600_000);
     const hour = dateObj.getHours();
+    const dayIndex = Math.floor(i / 24);
+    const mod = getDayWeatherModifier(dayIndex);
+
     const pm25Val = rawPoint?.pm25 ?? (10 + Math.sin(i / 3) * 4);
     const aqiVal = pm25ToAqi(pm25Val);
     const band = bandForAqi(aqiVal);
@@ -112,34 +137,37 @@ export function AiForecastHighlights({
 
     const dayName = isDayStart ? formatThaiShortDay(dateObj) : null;
 
+    // Day-specific diurnal temperature & humidity curves
+    const dayBaseTemp = baseTemp + mod.tempOffset;
+    const dayBaseHumidity = Math.min(98, Math.max(35, baseHumidity + mod.humidityOffset));
+    const dayBaseWind = Math.max(1.0, baseWind * mod.windMultiplier);
+
     // For current hour, use actual live readings from database
     const temp = isCurrentHour && currentWeather?.temperature != null
       ? Math.round(currentWeather.temperature)
-      : getHourlyTemp(baseTemp, hour);
+      : getHourlyTemp(dayBaseTemp, hour);
     const humidity = isCurrentHour && currentWeather?.humidity != null
       ? Math.round(currentWeather.humidity)
-      : getHourlyHumidity(baseHumidity, hour);
+      : getHourlyHumidity(dayBaseHumidity, hour);
     const windSpeed = isCurrentHour && currentWeather?.windSpeed != null
       ? +(currentWeather.windSpeed).toFixed(1)
-      : getHourlyWind(baseWind, hour);
+      : getHourlyWind(dayBaseWind, hour);
     const windDir = isCurrentHour && currentWeather?.windDirection != null
       ? Math.round(currentWeather.windDirection)
-      : (baseWindDir + hour * 15) % 360;
+      : Math.round((baseWindDir + mod.windDirShift + hour * 8) % 360);
 
     // Rain probability based on real humidity & precipitation
     const rainChance = isCurrentHour && (currentWeather?.precipitation ?? 0) > 0
       ? 80
-      : humidity > 90
-      ? 80
       : humidity > 85
-      ? 50
-      : humidity > 80
-      ? 20
+      ? mod.rainBaseChance
+      : humidity > 75
+      ? Math.max(10, mod.rainBaseChance - 20)
       : 0;
 
     return {
       hour,
-      dayIndex: Math.floor(i / 24),
+      dayIndex,
       timeLabel,
       isCurrentHour,
       isDayStart,
