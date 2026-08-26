@@ -55,6 +55,14 @@ export function OverviewDashboard({
         provinceId={selectedProvinceId}
         avgAqi={currentAqi}
         refreshKey={refreshKey}
+        currentWeather={{
+          temperature: activeSnapshot?.temperature,
+          humidity: activeSnapshot?.humidity,
+          windSpeed: activeSnapshot?.windSpeed,
+          windDirection: activeSnapshot?.windDirection,
+          precipitation: activeSnapshot?.precipitation,
+          precipitation24h: activeSnapshot?.precipitation24h,
+        }}
       />
 
       {/* 4. Real Watchlist Card */}
