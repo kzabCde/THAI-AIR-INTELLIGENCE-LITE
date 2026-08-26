@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { ChevronUp, ChevronDown, Plus, Minus, Target, Flame, Activity, Palette } from "lucide-react";
-import { ISAN_BOUNDS, ISAN_CENTER } from "@/lib/isan";
+import { ISAN_CENTER } from "@/lib/isan";
 import { fmtPm25, fmtTimeTh } from "@/lib/format";
 import { bandForPm25 } from "@/lib/aqi";
 import type { MapProvince, MapFilterMode } from "./types";
@@ -174,9 +174,7 @@ export default function IsanMap({
       <MapContainer
         center={ISAN_CENTER}
         zoom={7}
-        minZoom={6}
-        maxBounds={ISAN_BOUNDS}
-        maxBoundsViscosity={0.8}
+        minZoom={5}
         scrollWheelZoom={true}
         zoomControl={false}
         className="h-full w-full z-0"
@@ -207,69 +205,66 @@ export default function IsanMap({
               position={[p.lat, p.lon]}
               icon={markerIcon}
             >
-              {/* Click Popup Card */}
+              {/* Click Popup Card — Compact */}
               <Popup className="custom-province-popup">
-                <div className="w-[230px] rounded-2xl border border-zinc-200 bg-white p-3 text-zinc-900 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 space-y-2.5">
+                <div className="w-[200px] rounded-2xl border border-zinc-200 bg-white p-2.5 text-zinc-900 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 space-y-1.5">
                   {/* Header: Province Name + Level Badge */}
-                  <div className="flex items-center justify-between min-w-0">
-                    <span className="text-base font-black text-zinc-900 dark:text-white truncate">
+                  <div className="flex items-center justify-between gap-1 min-w-0">
+                    <span className="text-sm font-black text-zinc-900 dark:text-white truncate">
                       {p.nameTh}
                     </span>
                     <span
-                      className="rounded-full px-2.5 py-0.5 text-[10px] font-black text-white shadow-2xs shrink-0"
+                      className="rounded-full px-2 py-0.5 text-[9px] font-black text-white shadow-2xs shrink-0"
                       style={{ backgroundColor: activeMode === "hotspot" && (p.hotspots ?? 0) > 0 ? "#ea580c" : p.color }}
                     >
-                      {activeMode === "hotspot" ? `🔥 ${p.hotspots ?? 0} จุด` : p.labelTh}
+                      {activeMode === "hotspot" ? `🔥 ${p.hotspots ?? 0}` : p.labelTh}
                     </span>
                   </div>
 
-                  {/* Main Reading Row: PM2.5 + AQI */}
-                  <div className="flex items-baseline justify-between rounded-xl bg-zinc-50 p-2.5 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800">
+                  {/* Main Reading Row: PM2.5 + AQI — Inline Compact */}
+                  <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-2 py-1.5 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800">
                     <div>
-                      <span className="text-[10px] font-black text-zinc-400 uppercase block tracking-wider">PM2.5</span>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-black text-zinc-900 dark:text-white tabular-nums leading-none">
-                          {fmtPm25(p.pm25)}
-                        </span>
-                        <span className="text-[10px] font-bold text-zinc-500">µg/m³</span>
-                      </div>
+                      <span className="text-[9px] font-bold text-zinc-400 uppercase block tracking-wider">PM2.5</span>
+                      <span className="text-lg font-black text-zinc-900 dark:text-white tabular-nums leading-none">
+                        {fmtPm25(p.pm25)}
+                      </span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] font-black text-zinc-400 uppercase block tracking-wider">AQI</span>
-                      <span className="text-xl font-black text-zinc-900 dark:text-white tabular-nums leading-none">
+                      <span className="text-[9px] font-bold text-zinc-400 uppercase block tracking-wider">AQI</span>
+                      <span className="text-lg font-black text-zinc-900 dark:text-white tabular-nums leading-none">
                         {p.aqi ?? Math.round((p.pm25 ?? 0) * 2.2)}
                       </span>
                     </div>
                   </div>
 
-                  {/* FIRMS Hotspots Pill */}
-                  <div className="flex items-center justify-between text-xs font-bold text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 px-3 py-1.5 rounded-xl border border-amber-200/80 dark:border-amber-900/60">
-                    <span className="flex items-center gap-1.5 text-[11px]">🔥 จุดความร้อน (FIRMS)</span>
-                    <span className="text-xs font-black tabular-nums">{p.hotspots ?? 0} จุด</span>
+                  {/* FIRMS Hotspots — Compact Pill */}
+                  <div className="flex items-center justify-between text-[10px] font-bold text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 rounded-lg border border-amber-200/80 dark:border-amber-900/60">
+                    <span className="flex items-center gap-1">🔥 จุดความร้อน (FIRMS)</span>
+                    <span className="font-black tabular-nums">{p.hotspots ?? 0} จุด</span>
                   </div>
 
-                  {/* Weather Capsule Grid */}
+                  {/* Weather Capsule Row — Inline */}
                   {p.temperature != null && (
-                    <div className="grid grid-cols-3 gap-1.5 text-center text-[10px] font-bold border-t border-zinc-100 dark:border-zinc-800/80 pt-2">
-                      <div className="rounded-lg bg-orange-50 dark:bg-orange-950/30 p-1 text-orange-700 dark:text-orange-300">
-                        <span className="block text-[9px] text-zinc-400 font-semibold">อุณหภูมิ</span>
-                        <span>{p.temperature.toFixed(0)}°C</span>
+                    <div className="grid grid-cols-3 gap-1 text-center text-[9px] font-bold">
+                      <div className="rounded-md bg-orange-50 dark:bg-orange-950/30 px-1 py-0.5 text-orange-700 dark:text-orange-300">
+                        <span className="block text-[8px] text-zinc-400">อุณหภูมิ</span>
+                        {p.temperature.toFixed(0)}°C
                       </div>
-                      <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 p-1 text-blue-700 dark:text-blue-300">
-                        <span className="block text-[9px] text-zinc-400 font-semibold">ความชื้น</span>
-                        <span>{p.humidity != null ? `${p.humidity.toFixed(0)}%` : "–"}</span>
+                      <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 px-1 py-0.5 text-blue-700 dark:text-blue-300">
+                        <span className="block text-[8px] text-zinc-400">ความชื้น</span>
+                        {p.humidity != null ? `${p.humidity.toFixed(0)}%` : "–"}
                       </div>
-                      <div className="rounded-lg bg-teal-50 dark:bg-teal-950/30 p-1 text-teal-700 dark:text-teal-300">
-                        <span className="block text-[9px] text-zinc-400 font-semibold">ลม</span>
-                        <span>{p.windSpeed != null ? `${p.windSpeed.toFixed(0)} km/h` : "–"}</span>
+                      <div className="rounded-md bg-teal-50 dark:bg-teal-950/30 px-1 py-0.5 text-teal-700 dark:text-teal-300">
+                        <span className="block text-[8px] text-zinc-400">ลม</span>
+                        {p.windSpeed != null ? `${p.windSpeed.toFixed(0)} km/h` : "–"}
                       </div>
                     </div>
                   )}
 
                   {/* Update Time */}
                   {p.observedAt && (
-                    <div className="flex items-center justify-between text-[9.5px] text-zinc-400 font-medium pt-0.5">
-                      <span>อัปเดต {fmtTimeTh(p.observedAt)} น.</span>
+                    <div className="text-[9px] text-zinc-400 font-medium">
+                      อัปเดต {fmtTimeTh(p.observedAt)} น.
                     </div>
                   )}
 
@@ -277,10 +272,9 @@ export default function IsanMap({
                   <button
                     type="button"
                     onClick={() => router.push(`/province/${p.id}`)}
-                    className="w-full flex items-center justify-center gap-1 rounded-xl bg-emerald-600 dark:bg-emerald-500 hover:bg-emerald-700 py-2 text-xs font-black text-white shadow-xs transition active:scale-98"
+                    className="w-full flex items-center justify-center gap-1 rounded-lg bg-emerald-600 dark:bg-emerald-500 hover:bg-emerald-700 py-1.5 text-[11px] font-black text-white shadow-xs transition active:scale-98"
                   >
-                    <span>ดูรายละเอียดจังหวัด</span>
-                    <span>&rarr;</span>
+                    ดูรายละเอียดจังหวัด &rarr;
                   </button>
                 </div>
               </Popup>

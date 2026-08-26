@@ -168,17 +168,22 @@ export function AiForecastHighlights({
             </h3>
             {loading && <Loader2 size={13} className="animate-spin text-emerald-600" />}
           </div>
-          <Link
-            href={`/forecast?province=${provinceId}`}
-            className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
-          >
-            ดูรายละเอียด
-            <ChevronRight size={14} />
-          </Link>
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:inline text-[11px] font-semibold text-zinc-400 dark:text-zinc-500">
+              24 ชั่วโมง · เลื่อนดูได้ →
+            </span>
+            <Link
+              href={`/forecast?province=${provinceId}`}
+              className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
+            >
+              ดูรายละเอียด
+              <ChevronRight size={14} />
+            </Link>
+          </div>
         </div>
 
-        {/* Horizontal Scrollable Hourly Strip */}
-        <div className="no-scrollbar flex overflow-x-auto divide-x divide-zinc-100 dark:divide-zinc-800/80 pt-1 pb-2">
+        {/* Horizontal Scrollable Hourly Strip — visible scrollbar on desktop */}
+        <div className="hourly-scroll-strip flex overflow-x-auto divide-x divide-zinc-100 dark:divide-zinc-800/80 pt-1 pb-2">
           {hourlyData.map((item, idx) => (
             <div
               key={idx}
