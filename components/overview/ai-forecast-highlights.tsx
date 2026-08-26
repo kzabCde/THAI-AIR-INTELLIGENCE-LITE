@@ -13,31 +13,15 @@ import {
   Sun,
 } from "lucide-react";
 import { bandForAqi, pm25ToAqi } from "@/lib/aqi";
+import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 
 const THAI_FULL_DAYS = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัส", "ศุกร์", "เสาร์"];
-const THAI_SHORT_DAYS = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
 
 function formatThaiDayName(d: Date, isToday: boolean): string {
   if (isToday) return "วันนี้";
   return THAI_FULL_DAYS[d.getDay()] ?? "-";
 }
-
-function formatThaiShortDay(d: Date): string {
-  return THAI_SHORT_DAYS[d.getDay()] ?? "-";
-}
-
-function getHourlyTemp(baseTemp: number, hour: number): number {
-  const rad = ((hour - 14) / 24) * 2 * Math.PI;
-  return Math.round(baseTemp + 3 * Math.cos(rad));
-}
-
-function getHourlyHumidity(baseHumidity: number, hour: number): number {
-  const rad = ((hour - 14) / 24) * 2 * Math.PI;
-  return Math.min(100, Math.max(40, Math.round(baseHumidity - 10 * Math.cos(rad))));
-}
-
-function getHourlyWind(baseWind: number, hour: number): number {
   const rad = ((hour - 14) / 24) * 2 * Math.PI;
   return +(Math.max(1, baseWind + 2 * Math.cos(rad))).toFixed(1);
 }
@@ -88,34 +72,6 @@ export function AiForecastHighlights({
     };
   }, [provinceId, refreshKey]);
 
-  // ── Base weather values from REAL DB data ──────────────────────────────
-  const baseTemp = currentWeather?.temperature ?? 28;
-  const baseHumidity = currentWeather?.humidity ?? 70;
-  const baseWind = currentWeather?.windSpeed ?? 5.0;
-  const baseWindDir = currentWeather?.windDirection ?? 180;
-
-  // Synoptic weather progression across 7 days based on meteorological wave dynamics
-  const getDayWeatherModifier = (dayIdx: number) => {
-    if (dayIdx === 0) {
-      return {
-        tempOffset: 0,
-        humidityOffset: 0,
-        windMultiplier: 1.0,
-        windDirShift: 0,
-        rainBaseChance: (currentWeather?.precipitation ?? 0) > 0 ? 80 : (baseHumidity > 80 ? 60 : 30),
-      };
-    }
-    const wave = Math.sin(dayIdx * 1.1 + 0.5);
-    const tempOffset = +(wave * 2.2).toFixed(1);
-    const humidityOffset = +(-wave * 12).toFixed(0);
-    const windMultiplier = Math.max(0.6, 1.0 + Math.cos(dayIdx * 1.3) * 0.35);
-    const windDirShift = Math.sin(dayIdx * 0.8) * 35;
-    const estimatedHum = Math.min(98, Math.max(40, baseHumidity + humidityOffset));
-    const rainBaseChance = estimatedHum >= 85 ? 80 : estimatedHum >= 75 ? 60 : estimatedHum >= 65 ? 30 : 10;
-
-    return { tempOffset, humidityOffset, windMultiplier, windDirShift, rainBaseChance };
-  };
-
   // ── Generate ALL hourly data for 7 days (168 hours) starting from CURRENT HOUR ──
   const now = new Date();
   const currentHourTimestamp = new Date(
@@ -125,80 +81,24 @@ export function AiForecastHighlights({
     now.getHours(),
   ).getTime();
 
-  const allHourlyData = Array.from({ length: 168 }, (_, i) => {
-    const stepDate = new Date(currentHourTimestamp + i * 3600_000);
-    const hour = stepDate.getHours();
-    const dayIndex = Math.min(6, Math.floor(i / 24));
-    const mod = getDayWeatherModifier(dayIndex);
-
-    // Look up matching forecast PM2.5 from daily forecast points
-    const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
-    const targetDaily = dailyRaw[dayIndex];
-    const baseDayPm25 = targetDaily?.pm25 ?? (12 + dayIndex);
-
-    // Diurnal curve for PM2.5 (higher in morning/evening, lower at midday)
-    const diurnalFactor = 0.88 + 0.24 * Math.cos(((hour - 7) / 24) * 2 * Math.PI);
-    const livePm25 = forecast?.current;
-    const pm25Val = i === 0 && livePm25 != null
-      ? livePm25
-      : Math.max(1, +(baseDayPm25 * diurnalFactor).toFixed(1));
-
-    const aqiVal = pm25ToAqi(pm25Val);
-    const band = bandForAqi(aqiVal);
-
-    const isCurrentHour = i === 0;
-    const isDayStart = hour === 0 && i > 0;
-    const timeLabel = isCurrentHour
-      ? "ตอนนี้"
-      : `${String(hour).padStart(2, "0")}:00`;
-
-    const dayName = isDayStart ? formatThaiShortDay(stepDate) : null;
-
-    // Day-specific diurnal temperature & humidity curves
-    const dayBaseTemp = baseTemp + mod.tempOffset;
-    const dayBaseHumidity = Math.min(98, Math.max(35, baseHumidity + mod.humidityOffset));
-    const dayBaseWind = Math.max(1.0, baseWind * mod.windMultiplier);
-
-    // For current hour, use actual live readings from database
-    const temp = isCurrentHour && currentWeather?.temperature != null
-      ? Math.round(currentWeather.temperature)
-      : getHourlyTemp(dayBaseTemp, hour);
-    const humidity = isCurrentHour && currentWeather?.humidity != null
-      ? Math.round(currentWeather.humidity)
-      : getHourlyHumidity(dayBaseHumidity, hour);
-    const windSpeed = isCurrentHour && currentWeather?.windSpeed != null
-      ? +(currentWeather.windSpeed).toFixed(1)
-      : getHourlyWind(dayBaseWind, hour);
-    const windDir = isCurrentHour && currentWeather?.windDirection != null
-      ? Math.round(currentWeather.windDirection)
-      : Math.round((baseWindDir + mod.windDirShift + hour * 8) % 360);
-
-    // Rain probability based on real humidity & precipitation
-    const rainChance = isCurrentHour && (currentWeather?.precipitation ?? 0) > 0
-      ? 80
-      : humidity > 85
-      ? mod.rainBaseChance
-      : humidity > 75
-      ? Math.max(10, mod.rainBaseChance - 20)
-      : 0;
-
-    return {
-      hour,
-      dayIndex,
-      timeLabel,
-      isCurrentHour,
-      isDayStart,
-      dayName,
-      aqi: aqiVal,
-      band,
-      temp,
-      humidity,
-      windSpeed,
-      windDir,
-      rainChance,
-      dateObj: stepDate,
-    };
-  });
+  const allHourlyData = computeHourlyForecastStrip({
+    currentHourTimestamp,
+    hoursCount: 168,
+    livePm25: forecast?.current,
+    dailyForecast: forecast?.daily,
+    baseTemp: currentWeather?.temperature ?? 28,
+    baseHumidity: currentWeather?.humidity ?? 70,
+    baseWind: currentWeather?.windSpeed ?? 5.0,
+    baseWindDir: currentWeather?.windDirection ?? 180,
+    precipitation: currentWeather?.precipitation ?? currentWeather?.precipitation24h ?? 0,
+  }).map((item, idx) => ({
+    ...item,
+    dayIndex: Math.min(6, Math.floor(idx / 24)),
+    humidity: item.humid,
+    windSpeed: item.wind,
+    windDirection: item.windDir,
+    dateObj: new Date(currentHourTimestamp + idx * 3600_000),
+  }));
 
   // First 24 hours for the hourly card
   const hourlyData = allHourlyData.slice(0, 24);

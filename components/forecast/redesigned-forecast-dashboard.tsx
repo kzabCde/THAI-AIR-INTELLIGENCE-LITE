@@ -33,6 +33,7 @@ import {
 
 import type { IsanProvince } from "@/lib/isan";
 import { pm25ToAqi, bandForPm25, bandForAqi } from "@/lib/aqi";
+import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
 import { fmtPm25 } from "@/lib/format";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
@@ -409,78 +410,16 @@ export function RedesignedForecastDashboard({
                   now.getHours(),
                 ).getTime();
 
-                const hourly24Data = Array.from({ length: 24 }, (_, i) => {
-                  const stepDate = new Date(currentHourTimestamp + i * 3600_000);
-                  const hour = stepDate.getHours();
-                  const dayIndex = Math.min(6, Math.floor(i / 24));
-
-                  // Day-specific modifier for synoptic weather progression
-                  const wave = dayIndex === 0 ? 0 : Math.sin(dayIndex * 1.1 + 0.5);
-                  const tempOffset = +(wave * 2.2).toFixed(1);
-                  const humidityOffset = +(-wave * 12).toFixed(0);
-                  const windMultiplier = dayIndex === 0 ? 1.0 : Math.max(0.6, 1.0 + Math.cos(dayIndex * 1.3) * 0.35);
-                  const windDirShift = dayIndex === 0 ? 0 : Math.sin(dayIndex * 0.8) * 35;
-
-                  const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
-                  const targetDaily = dailyRaw[dayIndex];
-                  const baseDayPm25 = targetDaily?.pm25 ?? (12 + dayIndex);
-
-                  // Diurnal curve for PM2.5 (higher in morning/evening, lower at midday)
-                  const diurnalFactor = 0.88 + 0.24 * Math.cos(((hour - 7) / 24) * 2 * Math.PI);
-                  const livePm25 = forecast?.current;
-                  const pm25Val = i === 0 && livePm25 != null
-                    ? livePm25
-                    : Math.max(1, +(baseDayPm25 * diurnalFactor).toFixed(1));
-
-                  const aqiVal = pm25ToAqi(pm25Val);
-                  const band = bandForAqi(aqiVal);
-
-                  const isCurrentHour = i === 0;
-                  const isDayStart = hour === 0 && i > 0;
-                  const timeLabel = isCurrentHour ? "ตอนนี้" : `${String(hour).padStart(2, "0")}:00`;
-                  const dayName = isDayStart ? (THAI_SHORT_DAYS[stepDate.getDay()] ?? "-") : null;
-
-                  const dayBaseTemp = baseTemp + tempOffset;
-                  const dayBaseHumidity = Math.min(98, Math.max(35, baseHumidity + humidityOffset));
-                  const dayBaseWind = Math.max(1.0, baseWind * windMultiplier);
-
-                  const temp = isCurrentHour && weather?.temperature != null
-                    ? Math.round(weather.temperature)
-                    : getHourlyTemp(dayBaseTemp, hour);
-                  const humid = isCurrentHour && weather?.humidity != null
-                    ? Math.round(weather.humidity)
-                    : getHourlyHumidity(dayBaseHumidity, hour);
-                  const wind = isCurrentHour && weather?.wind_speed != null
-                    ? +(weather.wind_speed).toFixed(1)
-                    : getHourlyWind(dayBaseWind, hour);
-                  const windDir = isCurrentHour && weather?.wind_direction != null
-                    ? Math.round(weather.wind_direction)
-                    : Math.round((baseWindDir + windDirShift + hour * 8) % 360);
-
-                  const estimatedHum = Math.min(98, Math.max(40, baseHumidity + humidityOffset));
-                  const rainBaseChance = estimatedHum >= 85 ? 80 : estimatedHum >= 75 ? 60 : estimatedHum >= 65 ? 30 : 10;
-                  const rainChance = isCurrentHour && (precipitation ?? 0) > 0
-                    ? 80
-                    : humid > 85
-                    ? rainBaseChance
-                    : humid > 75
-                    ? Math.max(10, rainBaseChance - 20)
-                    : 0;
-
-                  return {
-                    hour,
-                    timeLabel,
-                    isCurrentHour,
-                    isDayStart,
-                    dayName,
-                    aqi: aqiVal,
-                    band,
-                    temp,
-                    humid,
-                    wind,
-                    windDir,
-                    rainChance,
-                  };
+                const hourly24Data = computeHourlyForecastStrip({
+                  currentHourTimestamp,
+                  hoursCount: 24,
+                  livePm25: forecast?.current,
+                  dailyForecast: forecast?.daily,
+                  baseTemp: baseTemp,
+                  baseHumidity: baseHumidity,
+                  baseWind: baseWind,
+                  baseWindDir: baseWindDir,
+                  precipitation: precipitation,
                 });
 
                 return (
