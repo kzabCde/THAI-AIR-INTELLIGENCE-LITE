@@ -212,7 +212,11 @@ export function TrendsDashboard({
 
           {/* 2. เทียบช่วงก่อนหน้า */}
           <div className="flex flex-col items-center justify-between rounded-2xl border border-zinc-100 bg-white p-2.5 text-center shadow-xs dark:border-zinc-800 dark:bg-zinc-900 sm:p-3.5">
-            <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 sm:text-xs">เทียบช่วงก่อนหน้า</p>
+            <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 sm:text-xs">
+              {rangeDays >= 180
+                ? `เทียบ ${rangeDays === 180 ? "6 เดือนก่อน" : "1 ปีก่อน"}`
+                : `เทียบ ${rangeDays} วันก่อน`}
+            </p>
             <div className="my-1 flex items-center justify-center">
               <p
                 className={`text-xl font-black tabular-nums tracking-tight sm:text-3xl ${
@@ -240,8 +244,8 @@ export function TrendsDashboard({
               {analysis.comparisonPercent == null
                 ? "ไม่มีข้อมูล"
                 : comparisonWorse
-                  ? "สูงขึ้น"
-                  : "ดีขึ้น"}
+                  ? "ฝุ่นเพิ่มขึ้น"
+                  : "ฝุ่นลดลง"}
             </p>
           </div>
 
@@ -284,15 +288,29 @@ export function TrendsDashboard({
               }`}
             >
               {analysis.direction === "improving"
-                ? "ดีขึ้น"
+                ? "ดีขึ้น (7 วัน)"
                 : analysis.direction === "worsening"
-                  ? "สูงขึ้น"
+                  ? "สูงขึ้น (7 วัน)"
                   : analysis.direction === "stable"
-                    ? "ทรงตัว"
+                    ? "ทรงตัว (7 วัน)"
                     : "ข้อมูลไม่ครบ"}
             </p>
           </div>
         </div>
+
+        {/* ─── OPTION B: COMPARISON TIMEFRAME INFO BANNER ─── */}
+        {analysis.previousFromDate && analysis.previousToDate && (
+          <div className="flex items-center gap-2 rounded-2xl border border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60 px-3.5 py-2.5 text-[11px] text-zinc-600 dark:text-zinc-300">
+            <Info size={14} className="text-sky-600 dark:text-sky-400 shrink-0" />
+            <p className="leading-normal">
+              <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                เปรียบเทียบช่วงเวลา:
+              </span>{" "}
+              รอบปัจจุบัน ({formatTrendRange(analysis.fromDate, analysis.anchorDate)}){" "}
+              เทียบกับรอบก่อนหน้า ({formatTrendRange(analysis.previousFromDate, analysis.previousToDate)})
+            </p>
+          </div>
+        )}
       </section>
 
       {/* ─── COVERAGE WARNING ─── */}
