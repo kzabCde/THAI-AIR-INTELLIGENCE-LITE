@@ -387,27 +387,66 @@ export function TrendsDashboard({
             )}
           </div>
 
-          {/* Cleanest & Peak Milestone — Clean 1-liner with generous whitespace */}
+          {/* ─── MILESTONE BOXES: 1 ROW DIVIDED INTO 2 COLUMNS ─── */}
           {cleanestPoint && (
-            <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-xs">
-              <span className="text-zinc-500 dark:text-zinc-400">
-                วันที่อากาศดีที่สุด: <strong className="text-zinc-800 dark:text-zinc-200 font-bold">{formatTrendDate(cleanestPoint.date)}</strong>
-                {cleanestPoint.wind != null && ` (ลม ${(+cleanestPoint.wind).toFixed(1)} m/s)`}
-              </span>
-              <span className="font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {fmtPm25(cleanestPoint.pm25)} <span className="text-[10px] font-normal text-zinc-400">µg/m³</span>
-              </span>
-            </div>
-          )}
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+              {/* Box 1: วันที่อากาศสะอาดที่สุด */}
+              <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-2.5 sm:p-3.5 flex flex-col justify-between">
+                <div>
+                  <p className="text-[10px] sm:text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">
+                    <span className="sm:hidden">อากาศดีที่สุด</span>
+                    <span className="hidden sm:inline">วันที่อากาศสะอาดที่สุด</span>
+                  </p>
+                  <p className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white mt-0.5 truncate">
+                    <span className="sm:hidden">{formatTrendDate(cleanestPoint.date)}</span>
+                    <span className="hidden sm:inline">{formatTrendDateFull(cleanestPoint.date)}</span>
+                  </p>
+                  <p className="text-[9.5px] sm:text-[10.5px] text-zinc-400 mt-0.5 truncate">
+                    {cleanestPoint.wind != null
+                      ? `ลม ${(+cleanestPoint.wind).toFixed(1)} m/s`
+                      : "คุณภาพอากาศดี"}
+                  </p>
+                </div>
+                <div className="mt-1.5 sm:mt-2 text-right">
+                  <span className="text-base sm:text-xl font-black tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {fmtPm25(cleanestPoint.pm25)}
+                  </span>
+                  <span className="text-[9px] sm:text-[10px] text-zinc-400 ml-1">µg/m³</span>
+                </div>
+              </div>
 
-          {hasUnhealthyDay && peakPoint && (
-            <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-xs">
-              <span className="text-zinc-500 dark:text-zinc-400">
-                วันที่ค่าฝุ่นสูงสุด: <strong className="text-zinc-800 dark:text-zinc-200 font-bold">{formatTrendDate(peakPoint.date)}</strong>
-              </span>
-              <span className="font-black text-rose-600 dark:text-rose-400 tabular-nums">
-                {fmtPm25(peakPoint.pm25)} <span className="text-[10px] font-normal text-zinc-400">µg/m³</span>
-              </span>
+              {/* Box 2: วันที่ค่าฝุ่นสูงสุด */}
+              {peakPoint && (() => {
+                const peakMean = peakPoint.pm25 ?? 0;
+                const isHigh = peakMean > 37.5;
+                return (
+                  <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-2.5 sm:p-3.5 flex flex-col justify-between">
+                    <div>
+                      <p className="text-[10px] sm:text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">
+                        <span className="sm:hidden">ค่าฝุ่นสูงสุด</span>
+                        <span className="hidden sm:inline">{isHigh ? "วันที่ค่าฝุ่นเกินเกณฑ์สูงสุด" : "วันที่ค่าฝุ่นสูงสุด"}</span>
+                      </p>
+                      <p className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white mt-0.5 truncate">
+                        <span className="sm:hidden">{formatTrendDate(peakPoint.date)}</span>
+                        <span className="hidden sm:inline">{formatTrendDateFull(peakPoint.date)}</span>
+                      </p>
+                      <p className="text-[9.5px] sm:text-[10.5px] text-zinc-400 mt-0.5 truncate">
+                        {peakPoint.pm25Max != null && peakPoint.pm25Max > peakMean
+                          ? `สูงสุด ${fmtPm25(peakPoint.pm25Max)} µg/m³`
+                          : peakPoint.wind != null
+                          ? `ลม ${(+peakPoint.wind).toFixed(1)} m/s`
+                          : "คุณภาพอากาศปกติ"}
+                      </p>
+                    </div>
+                    <div className="mt-1.5 sm:mt-2 text-right">
+                      <span className={`text-base sm:text-xl font-black tabular-nums ${isHigh ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
+                        {fmtPm25(peakMean)}
+                      </span>
+                      <span className="text-[9px] sm:text-[10px] text-zinc-400 ml-1">µg/m³</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
