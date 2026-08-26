@@ -352,249 +352,128 @@ export function TrendsDashboard({
           </div>
         </div>
 
-        {/* ─── OPTION B: COMPARISON TIMEFRAME INFO BANNER ─── */}
+        {/* ─── OPTION B: COMPARISON TIMEFRAME NOTE (BORDERLESS) ─── */}
         {analysis.previousFromDate && analysis.previousToDate && (
-          <div className="flex items-center gap-2 rounded-2xl border border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60 px-3.5 py-2.5 text-[11px] text-zinc-600 dark:text-zinc-300">
-            <Info size={14} className="text-sky-600 dark:text-sky-400 shrink-0" />
-            <p className="leading-normal">
-              <span className="font-bold text-zinc-800 dark:text-zinc-200">
-                เปรียบเทียบช่วงเวลา:
-              </span>{" "}
-              รอบปัจจุบัน ({formatTrendRange(analysis.fromDate, analysis.anchorDate)}){" "}
-              เทียบกับรอบก่อนหน้า ({formatTrendRange(analysis.previousFromDate, analysis.previousToDate)})
-            </p>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 px-0.5">
+            เปรียบเทียบข้อมูลรอบปัจจุบัน ({formatTrendRange(analysis.fromDate, analysis.anchorDate)}) กับรอบก่อนหน้า ({formatTrendRange(analysis.previousFromDate, analysis.previousToDate)})
+          </p>
+        )}
+
+        {/* ─── PROVINCE REGIONAL CONTEXT (Province View Mode) ─── */}
+        {!isRegional && province && currentProvinceStat && rankNumber != null && regionalAvgPm25 != null && (
+          <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-zinc-50 dark:bg-zinc-850 border border-zinc-200/60 dark:border-zinc-800 px-3.5 py-2.5 text-xs text-zinc-600 dark:text-zinc-300">
+            <div>
+              <span className="font-bold text-zinc-900 dark:text-white">{province.nameTh}</span> อยู่อันดับที่{" "}
+              <span className="font-bold text-emerald-600 dark:text-emerald-400">{rankNumber} จาก 20 จังหวัด</span>{" "}
+              (เฉลี่ย {currentProvinceStat.avgPm25} µg/m³)
+            </div>
+            <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              {currentProvinceStat.avgPm25 < regionalAvgPm25
+                ? `สะอาดกว่าค่าเฉลี่ยภาค ${Math.round(((regionalAvgPm25 - currentProvinceStat.avgPm25) / regionalAvgPm25) * 100)}%`
+                : currentProvinceStat.avgPm25 > regionalAvgPm25
+                ? `สูงกว่าค่าเฉลี่ยภาค ${Math.round(((currentProvinceStat.avgPm25 - regionalAvgPm25) / regionalAvgPm25) * 100)}%`
+                : "เท่ากับค่าเฉลี่ยภาคพอดี"}
+            </div>
           </div>
         )}
 
-        {/* ─── PROVINCE REGIONAL CONTEXT BADGE (Province View Mode) ─── */}
-        {!isRegional && province && currentProvinceStat && rankNumber != null && regionalAvgPm25 != null && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200/80 bg-emerald-50/60 dark:border-emerald-950/60 dark:bg-emerald-950/20 px-3.5 py-2.5 text-xs text-emerald-900 dark:text-emerald-200">
-            <div className="flex items-center gap-2">
-              <Award size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-              <span>
-                <strong>{province.nameTh}</strong> อยู่อันดับที่{" "}
-                <strong className="text-emerald-700 dark:text-emerald-300">
-                  {rankNumber} จาก 20 จังหวัด
-                </strong>{" "}
-                (เฉลี่ย {currentProvinceStat.avgPm25} µg/m³)
+        {/* ─── QUALITY DAYS & MILESTONES: CLEAN MINIMALIST CARD ─── */}
+        <div className="rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 sm:p-5 shadow-xs space-y-4">
+          {/* Header & Quality Proportion */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-zinc-900 dark:text-white">
+              <span>สัดส่วนคุณภาพอากาศ ({validPoints.length} วันที่มีข้อมูล)</span>
+              <span className="text-[11px] font-normal text-zinc-400">
+                {unhealthyDaysCount === 0 ? "อยู่ในเกณฑ์มาตรฐานทุกวัน" : `เกินเกณฑ์ ${unhealthyDaysCount} วัน`}
               </span>
             </div>
-            <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-              {currentProvinceStat.avgPm25 < regionalAvgPm25 ? (
-                <span>🌿 สะอาดกว่าค่าเฉลี่ยภาค {Math.round(((regionalAvgPm25 - currentProvinceStat.avgPm25) / regionalAvgPm25) * 100)}%</span>
-              ) : currentProvinceStat.avgPm25 > regionalAvgPm25 ? (
-                <span>⚠️ สูงกว่าค่าเฉลี่ยภาค {Math.round(((currentProvinceStat.avgPm25 - regionalAvgPm25) / regionalAvgPm25) * 100)}%</span>
-              ) : (
-                <span>เท่ากับค่าเฉลี่ยภาคพอดี</span>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* ─── QUALITY DAYS & MILESTONES: REDESIGNED EXECUTIVE DASHBOARD CARDS ─── */}
-        <div className="space-y-3">
-          {/* 1. Quality Days Distribution & Health Score Card */}
-          <div className="rounded-3xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 sm:p-5 shadow-xs space-y-3">
-            {/* Header with celebratory status */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
-                  <BarChart3 size={15} />
-                </span>
-                <div>
-                  <h4 className="text-xs sm:text-sm font-black text-zinc-900 dark:text-white">
-                    สัดส่วนคุณภาพอากาศในรอบ {rangeDays} วัน
-                  </h4>
-                  <p className="text-[10px] text-zinc-400">
-                    วิเคราะห์จากข้อมูลตรวจวัดจริง {validPoints.length} วัน
-                  </p>
-                </div>
-              </div>
-
-              {/* High-level status badge */}
-              {unhealthyDaysCount === 0 ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1 text-[11px] font-black text-emerald-700 dark:text-emerald-300 shadow-2xs">
-                  <Sparkles size={12} className="text-emerald-600 animate-pulse" />
-                  อากาศสะอาด 100% ไม่มีวันเกินเกณฑ์
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-950/80 border border-amber-200 dark:border-amber-800 px-2.5 py-1 text-[11px] font-black text-amber-700 dark:text-amber-300">
-                  <AlertTriangle size={12} className="text-amber-600" />
-                  เกินมาตรฐาน {unhealthyDaysCount} วัน ({unhealthyPct}%)
-                </span>
-              )}
-            </div>
-
-            {/* Segmented Gradient Progress Bar */}
-            <div className="h-3.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800/80 p-0.5 flex gap-1 shadow-inner">
+            {/* Segmented Progress Bar */}
+            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800 flex gap-0.5">
               {goodDaysCount > 0 && (
-                <div
-                  style={{ width: `${goodPct}%` }}
-                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500 shadow-xs"
-                  title={`อากาศดีมาก (0–15 µg/m³): ${goodDaysCount} วัน (${goodPct}%)`}
-                />
+                <div style={{ width: `${goodPct}%` }} className="h-full bg-emerald-500 rounded-full" />
               )}
               {moderateDaysCount > 0 && (
-                <div
-                  style={{ width: `${moderatePct}%` }}
-                  className="h-full bg-gradient-to-r from-amber-400 to-yellow-400 rounded-full transition-all duration-500 shadow-xs"
-                  title={`ปานกลาง (15.1–37.5 µg/m³): ${moderateDaysCount} วัน (${moderatePct}%)`}
-                />
+                <div style={{ width: `${moderatePct}%` }} className="h-full bg-amber-400 rounded-full" />
               )}
               {unhealthyDaysCount > 0 && (
-                <div
-                  style={{ width: `${unhealthyPct}%` }}
-                  className="h-full bg-gradient-to-r from-rose-500 to-red-600 rounded-full transition-all duration-500 shadow-xs"
-                  title={`เกินมาตรฐาน (>37.5 µg/m³): ${unhealthyDaysCount} วัน (${unhealthyPct}%)`}
-                />
+                <div style={{ width: `${unhealthyPct}%` }} className="h-full bg-rose-500 rounded-full" />
               )}
             </div>
 
-            {/* 3 Metric Pills Grid */}
-            <div className="grid grid-cols-3 gap-2 sm:gap-3 pt-1">
-              {/* ดีมาก */}
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-emerald-100 bg-emerald-50/50 dark:border-emerald-950/50 dark:bg-emerald-950/20 p-2.5 text-center">
-                <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                  🟢 อากาศดีมาก
-                </span>
-                <span className="text-base sm:text-lg font-black text-emerald-900 dark:text-emerald-200 tabular-nums leading-tight mt-0.5">
-                  {goodDaysCount} <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">วัน ({goodPct}%)</span>
-                </span>
+            {/* Clean Legend */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-zinc-600 dark:text-zinc-400 pt-0.5">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                <span>อากาศดี: <strong className="text-zinc-900 dark:text-white font-bold">{goodDaysCount} วัน</strong> ({goodPct}%)</span>
               </div>
-
-              {/* ปานกลาง */}
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-amber-100 bg-amber-50/50 dark:border-amber-950/50 dark:bg-amber-950/20 p-2.5 text-center">
-                <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
-                  🟡 ปานกลาง
-                </span>
-                <span className="text-base sm:text-lg font-black text-amber-900 dark:text-amber-200 tabular-nums leading-tight mt-0.5">
-                  {moderateDaysCount} <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">วัน ({moderatePct}%)</span>
-                </span>
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
+                <span>ปานกลาง: <strong className="text-zinc-900 dark:text-white font-bold">{moderateDaysCount} วัน</strong> ({moderatePct}%)</span>
               </div>
-
-              {/* เกินเกณฑ์ */}
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-rose-100 bg-rose-50/50 dark:border-rose-950/50 dark:bg-rose-950/20 p-2.5 text-center">
-                <span className="text-[10px] font-bold text-rose-700 dark:text-rose-400">
-                  🔴 เกินมาตรฐาน
-                </span>
-                <span className="text-base sm:text-lg font-black text-rose-900 dark:text-rose-200 tabular-nums leading-tight mt-0.5">
-                  {unhealthyDaysCount} <span className="text-[10px] font-medium text-rose-600 dark:text-rose-400">วัน ({unhealthyPct}%)</span>
-                </span>
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
+                <span>เกินเกณฑ์: <strong className="text-zinc-900 dark:text-white font-bold">{unhealthyDaysCount} วัน</strong> ({unhealthyPct}%)</span>
               </div>
             </div>
           </div>
 
-          {/* 2. Milestone Cards Grid: Peak Day (Context-Aware AQI Color!) vs Cleanest Day */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* 🔴/🟡/🟢 Peak Day (Context-aware: only red if genuinely unhealthy) */}
+          {/* Milestones: Cleanest & Peak */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+            {/* Cleanest Day */}
+            {cleanestPoint && (
+              <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-3.5 flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                    วันที่อากาศสะอาดที่สุด
+                  </p>
+                  <p className="text-xs font-bold text-zinc-900 dark:text-white">
+                    {formatTrendDateFull(cleanestPoint.date)}
+                  </p>
+                  <p className="text-[10.5px] text-zinc-400">
+                    {cleanestPoint.wind != null ? `ความเร็วลม ${cleanestPoint.wind} m/s` : "คุณภาพอากาศดีมาก"}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-lg font-black tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {fmtPm25(cleanestPoint.pm25)}
+                  </span>
+                  <span className="text-[9px] text-zinc-400 block -mt-0.5">µg/m³</span>
+                </div>
+              </div>
+            )}
+
+            {/* Peak Day */}
             {peakPoint && (() => {
               const peakVal = peakPoint.pm25Max ?? peakPoint.pm25 ?? 0;
-              const peakBand = bandForPm25(peakVal);
               const isUnhealthy = peakVal > 37.5;
-
               return (
-                <div
-                  className={`rounded-3xl border p-4 sm:p-4.5 shadow-xs transition space-y-2 ${
-                    isUnhealthy
-                      ? "border-rose-200 bg-rose-50/50 dark:border-rose-950/60 dark:bg-rose-950/20"
-                      : "border-zinc-200/90 bg-white dark:border-zinc-800 dark:bg-zinc-900"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                      {isUnhealthy ? (
-                        <AlertTriangle size={14} className="text-rose-600 shrink-0" />
-                      ) : (
-                        <TrendingUp size={14} className="text-amber-500 shrink-0" />
-                      )}
-                      วันที่ฝุ่นสูงสุดในรอบนี้
-                    </span>
-
-                    {/* Peak Value Badge */}
-                    <span
-                      className="rounded-full px-2.5 py-0.5 text-xs font-black text-white shadow-2xs tabular-nums"
-                      style={{ backgroundColor: peakBand.color }}
-                    >
-                      {fmtPm25(peakVal)} µg/m³
-                    </span>
-                  </div>
-
-                  {/* Date & Day Details */}
-                  <div>
-                    <h5 className="text-sm font-black text-zinc-900 dark:text-white">
+                <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-3.5 flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                      วันที่ค่าฝุ่นสูงสุดในรอบนี้
+                    </p>
+                    <p className="text-xs font-bold text-zinc-900 dark:text-white">
                       {formatTrendDateFull(peakPoint.date)}
-                    </h5>
-                    <p className="text-[11px] font-semibold mt-0.5" style={{ color: peakBand.color }}>
-                      {isUnhealthy
-                        ? `⚠️ เกินเกณฑ์มาตรฐาน (${peakBand.labelTh})`
-                        : `🌿 ยังอยู่ในเกณฑ์ปกติ (${peakBand.labelTh})`}
+                    </p>
+                    <p className="text-[10.5px] text-zinc-400">
+                      {peakPoint.hotspots != null && peakPoint.hotspots > 0
+                        ? `จุดความร้อน ${peakPoint.hotspots} จุด · `
+                        : ""}
+                      {peakPoint.wind != null ? `ความเร็วลม ${peakPoint.wind} m/s` : ""}
                     </p>
                   </div>
-
-                  {/* Weather Factors Pill */}
-                  <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-zinc-500 dark:text-zinc-400 border-t border-zinc-100 dark:border-zinc-800">
-                    {peakPoint.wind != null && (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 font-bold">
-                        💨 ลม {peakPoint.wind} m/s
-                      </span>
-                    )}
-                    {peakPoint.hotspots != null && peakPoint.hotspots > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 px-2 py-0.5 font-bold">
-                        <Flame size={11} /> จุดความร้อน {peakPoint.hotspots} จุด
-                      </span>
-                    )}
-                    {peakPoint.temp != null && (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 font-bold">
-                        🌡 {Math.round(peakPoint.temp)}°C
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* 🟢 Cleanest Day Card */}
-            {cleanestPoint && (() => {
-              const cleanVal = cleanestPoint.pm25 ?? 0;
-              const cleanBand = bandForPm25(cleanVal);
-
-              return (
-                <div className="rounded-3xl border border-emerald-200/90 bg-emerald-50/50 dark:border-emerald-950/60 dark:bg-emerald-950/20 p-4 sm:p-4.5 shadow-xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
-                      <Sparkles size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      วันที่อากาศสะอาดที่สุด
-                    </span>
-
-                    {/* Clean Value Badge */}
+                  <div className="text-right shrink-0">
                     <span
-                      className="rounded-full px-2.5 py-0.5 text-xs font-black text-white shadow-2xs tabular-nums"
-                      style={{ backgroundColor: cleanBand.color }}
+                      className={`text-lg font-black tabular-nums ${
+                        isUnhealthy
+                          ? "text-rose-600 dark:text-rose-400"
+                          : "text-zinc-800 dark:text-zinc-200"
+                      }`}
                     >
-                      {fmtPm25(cleanVal)} µg/m³
+                      {fmtPm25(peakVal)}
                     </span>
-                  </div>
-
-                  {/* Date & Day Details */}
-                  <div>
-                    <h5 className="text-sm font-black text-zinc-900 dark:text-white">
-                      {formatTrendDateFull(cleanestPoint.date)}
-                    </h5>
-                    <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
-                      ✨ คุณภาพอากาศดีเยี่ยม ({cleanBand.labelTh})
-                    </p>
-                  </div>
-
-                  {/* Weather Factors Pill */}
-                  <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-emerald-800 dark:text-emerald-300 border-t border-emerald-200/50 dark:border-emerald-900/50">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 px-2 py-0.5 font-bold">
-                      🌿 อากาศสดชื่น เหมาะแก่กิจกรรมกลางแจ้ง
-                    </span>
-                    {cleanestPoint.wind != null && (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 px-2 py-0.5 font-bold">
-                        💨 ลม {cleanestPoint.wind} m/s
-                      </span>
-                    )}
+                    <span className="text-[9px] text-zinc-400 block -mt-0.5">µg/m³</span>
                   </div>
                 </div>
               );
@@ -651,16 +530,15 @@ export function TrendsDashboard({
           {isRegional && rankings.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* 🔴 Top 5 Highest PM2.5 */}
-              <div className="rounded-3xl border border-red-100 bg-white dark:border-red-950/60 dark:bg-zinc-900/90 p-4 shadow-sm space-y-3">
+              <div className="rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 shadow-xs space-y-3">
                 <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2.5">
-                  <div className="flex items-center gap-1.5 text-xs sm:text-sm font-black text-red-600 dark:text-red-400">
-                    <Flame size={15} />
-                    <span>5 จังหวัดที่ฝุ่นสะสมสูงสุด</span>
+                  <div className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-white">
+                    5 อันดับจังหวัดค่าฝุ่นสูงสุด
                   </div>
-                  <span className="text-[10px] font-bold text-zinc-400">เฉลี่ย {rangeDays} วัน</span>
+                  <span className="text-[10px] text-zinc-400">เฉลี่ย {rangeDays} วัน</span>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   {topPolluted.map((p, idx) => {
                     const band = bandForPm25(p.avgPm25);
                     return (
@@ -671,14 +549,14 @@ export function TrendsDashboard({
                         className="w-full flex items-center justify-between rounded-xl px-2.5 py-2 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60 text-left group"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/60 text-[10px] font-black text-red-600 dark:text-red-400 shrink-0">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 shrink-0">
                             {idx + 1}
                           </span>
                           <div className="min-w-0">
-                            <p className="text-xs font-black text-zinc-900 dark:text-white truncate group-hover:text-red-600 transition">
+                            <p className="text-xs font-bold text-zinc-900 dark:text-white truncate group-hover:text-emerald-600 transition">
                               {p.nameTh}
                             </p>
-                            <p className="text-[9.5px] text-zinc-400">
+                            <p className="text-[10px] text-zinc-400">
                               เกินเกณฑ์ {p.exceedanceDays} วัน
                             </p>
                           </div>
@@ -686,7 +564,7 @@ export function TrendsDashboard({
 
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
-                            <span className="text-xs sm:text-sm font-black tabular-nums" style={{ color: band.color }}>
+                            <span className="text-xs sm:text-sm font-bold tabular-nums" style={{ color: band.color }}>
                               {p.avgPm25}
                             </span>
                             <span className="text-[9px] text-zinc-400 block -mt-0.5">µg/m³</span>
@@ -700,16 +578,15 @@ export function TrendsDashboard({
               </div>
 
               {/* 🟢 Top 5 Cleanest Air */}
-              <div className="rounded-3xl border border-emerald-100 bg-white dark:border-emerald-950/60 dark:bg-emerald-950/20 p-4 shadow-sm space-y-3">
+              <div className="rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 shadow-xs space-y-3">
                 <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2.5">
-                  <div className="flex items-center gap-1.5 text-xs sm:text-sm font-black text-emerald-600 dark:text-emerald-400">
-                    <Sparkles size={15} />
-                    <span>5 จังหวัดที่อากาศดีที่สุด</span>
+                  <div className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-white">
+                    5 อันดับจังหวัดอากาศดีที่สุด
                   </div>
-                  <span className="text-[10px] font-bold text-zinc-400">เฉลี่ย {rangeDays} วัน</span>
+                  <span className="text-[10px] text-zinc-400">เฉลี่ย {rangeDays} วัน</span>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   {topClean.map((p, idx) => {
                     const band = bandForPm25(p.avgPm25);
                     return (
@@ -720,14 +597,14 @@ export function TrendsDashboard({
                         className="w-full flex items-center justify-between rounded-xl px-2.5 py-2 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60 text-left group"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-[10px] font-black text-emerald-600 dark:text-emerald-400 shrink-0">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 shrink-0">
                             {idx + 1}
                           </span>
                           <div className="min-w-0">
-                            <p className="text-xs font-black text-zinc-900 dark:text-white truncate group-hover:text-emerald-600 transition">
+                            <p className="text-xs font-bold text-zinc-900 dark:text-white truncate group-hover:text-emerald-600 transition">
                               {p.nameTh}
                             </p>
-                            <p className="text-[9.5px] text-zinc-400">
+                            <p className="text-[10px] text-zinc-400">
                               อากาศดี {p.cleanDays} วัน
                             </p>
                           </div>
@@ -735,7 +612,7 @@ export function TrendsDashboard({
 
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
-                            <span className="text-xs sm:text-sm font-black tabular-nums" style={{ color: band.color }}>
+                            <span className="text-xs sm:text-sm font-bold tabular-nums" style={{ color: band.color }}>
                               {p.avgPm25}
                             </span>
                             <span className="text-[9px] text-zinc-400 block -mt-0.5">µg/m³</span>
