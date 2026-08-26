@@ -126,16 +126,7 @@ export function TrendsDashboard({
   /* ─── Empty state ─── */
   if (!analysis.latestDataDate) {
     return (
-      <div className="mx-auto max-w-5xl space-y-4 pb-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-black tracking-tight text-zinc-900 dark:text-white sm:text-2xl">
-              แนวโน้มย้อนหลัง
-            </h1>
-            <p className="text-sm text-zinc-500">{displayName}</p>
-          </div>
-        </div>
-
+      <div className="mx-auto max-w-5xl space-y-3.5 pb-8">
         {/* View Mode Toggle */}
         <ViewModeBar
           viewMode={viewMode}
@@ -205,35 +196,24 @@ export function TrendsDashboard({
       : null;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 pb-8">
-      {/* ─── HEADER ─── */}
-      <header>
-        <h1 className="text-xl font-black tracking-tight text-zinc-900 dark:text-white sm:text-2xl">
-          แนวโน้มย้อนหลัง
-        </h1>
-        <div
-          className={`mt-1 flex items-center gap-1.5 text-[11px] font-bold ${
-            analysis.staleDays > 0
-              ? "text-amber-600 dark:text-amber-400"
-              : "text-zinc-400 dark:text-zinc-500"
-          }`}
+    <div className="mx-auto max-w-5xl space-y-3.5 pb-8">
+      {/* ─── UPDATE INFO BAR (SLEEK & MINIMALIST) ─── */}
+      <div className="flex items-center justify-end gap-1.5 text-[11.5px] font-medium text-zinc-500 dark:text-zinc-400 px-1">
+        <Clock3 size={12} className="shrink-0 text-zinc-400" />
+        <span>
+          {analysis.staleDays > 0
+            ? `ข้อมูลล่าช้า ${analysis.staleDays} วัน`
+            : `อัปเดต ${formatTrendObservedAt(analysis.latestTrustedObservedAt)}`}
+        </span>
+        <button
+          type="button"
+          onClick={refresh}
+          className="rounded-full p-1 transition hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+          title="โหลดข้อมูลใหม่"
         >
-          <Clock3 size={12} />
-          <span>
-            {analysis.staleDays > 0
-              ? `ล่าช้า ${analysis.staleDays} วัน`
-              : `อัปเดต ${formatTrendObservedAt(analysis.latestTrustedObservedAt)}`}
-          </span>
-          <button
-            type="button"
-            onClick={refresh}
-            className="rounded-full p-1 transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            title="โหลดข้อมูลใหม่"
-          >
-            <RefreshCw size={12} className={refreshing ? "animate-spin text-emerald-600" : ""} />
-          </button>
-        </div>
-      </header>
+          <RefreshCw size={12} className={refreshing ? "animate-spin text-emerald-600" : ""} />
+        </button>
+      </div>
 
       {/* ─── VIEW MODE + CONTROLS BAR ─── */}
       <ViewModeBar

@@ -68,24 +68,18 @@ export function MapPageDashboard({
     : 0;
 
   return (
-    <div className="space-y-4 max-w-6xl mx-auto pb-6">
-      {/* 1. Header Bar: Title + Timestamp */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
-          แผนที่คุณภาพอากาศภาคอีสาน
-        </h1>
-
-        <div className="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-          <span>อัปเดตล่าสุด {fmtTimeTh(observedAt)} น.</span>
-          <button
-            type="button"
-            onClick={() => setRefreshKey((prev) => prev + 1)}
-            title="รีเฟรชข้อมูล"
-            className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-900 transition"
-          >
-            <RefreshCw size={14} />
-          </button>
-        </div>
+    <div className="space-y-3.5 max-w-6xl mx-auto pb-6">
+      {/* Update Info Bar - Sleek & Minimalist */}
+      <div className="flex items-center justify-end gap-1.5 text-[11.5px] font-medium text-zinc-500 dark:text-zinc-400 px-1">
+        <span>อัปเดตล่าสุด {fmtTimeTh(observedAt)} น.</span>
+        <button
+          type="button"
+          onClick={() => setRefreshKey((prev) => prev + 1)}
+          title="รีเฟรชข้อมูล"
+          className="p-1 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+        >
+          <RefreshCw size={12} />
+        </button>
       </div>
 
       {/* 2. Map Control Filter Bar with Custom Opaque Province Select Modal */}
