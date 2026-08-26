@@ -4,6 +4,7 @@ import { isNetworkRestrictedError } from "@/services/_db";
 import { isServiceSupabaseConfigured, isSupabaseConfigured } from "@/lib/supabase/server";
 import {
   getLatestCompletedBangkokDate,
+  getRegionalProvinceRankings,
   getRegionalTrendHistory,
   getTrendHistory,
 } from "@/services/daily-summary.service";
@@ -36,9 +37,12 @@ export default async function TrendsPage({
     const rangeDays = ALLOWED_RANGES.has(requestedRange) ? requestedRange : 90;
 
     const throughDate = getLatestCompletedBangkokDate();
-    const history = isRegional
-      ? await getRegionalTrendHistory(730, throughDate)
-      : await getTrendHistory(province!.id, 730, throughDate);
+    const [history, rankings] = await Promise.all([
+      isRegional
+        ? getRegionalTrendHistory(730, throughDate)
+        : getTrendHistory(province!.id, 730, throughDate),
+      getRegionalProvinceRankings(rangeDays, throughDate),
+    ]);
 
     return (
       <TrendsDashboard
@@ -47,6 +51,7 @@ export default async function TrendsPage({
         rangeDays={rangeDays}
         throughDate={throughDate}
         viewMode={isRegional ? "regional" : "province"}
+        rankings={rankings}
       />
     );
   } catch (error) {

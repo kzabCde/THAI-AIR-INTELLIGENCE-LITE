@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ISAN_PROVINCES } from "@/lib/isan";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   dateDaysAgo,
@@ -258,6 +259,8 @@ export async function getYesterdayMeanByProvince(): Promise<Map<string, number>>
   for (const r of data ?? []) {
     const n = seen.get(r.province_id) ?? 0;
     if (n === 1 && r.pm25_mean != null) result.set(r.province_id, r.pm25_mean);
+
+
     seen.set(r.province_id, n + 1);
   }
   return result;
@@ -322,4 +325,66 @@ export async function getSeasonalAverages(provinceId: string): Promise<SeasonPoi
       samples: rows.length,
     };
   });
+}
+
+export type ProvinceTrendSummary = {
+  provinceId: string;
+  nameTh: string;
+  nameEn: string;
+  avgPm25: number;
+  maxPm25: number;
+  exceedanceDays: number;
+  cleanDays: number;
+  observedDays: number;
+};
+
+/** Fetch ranking summary of all 20 provinces for the given timeframe. */
+export async function getRegionalProvinceRankings(
+  days = 180,
+  throughDate = getLatestCompletedBangkokDate(),
+): Promise<ProvinceTrendSummary[]> {
+  if (!isServiceSupabaseConfigured) return [];
+  const client = getServiceSupabase();
+  const fromDate = shiftDateKey(throughDate, -(days - 1));
+
+  // Query daily metrics for all provinces in the requested range
+  const { data, error } = await client
+    .from("trusted_daily_metrics_v1")
+    .select("province_id, pm25_mean, pm25_max")
+    .gte("date", fromDate)
+    .lte("date", throughDate);
+
+  if (error) throw error;
+
+  const map = new Map<string, { sum: number; count: number; max: number; exceed: number; clean: number }>();
+  for (const r of data ?? []) {
+    if (!r.province_id || r.pm25_mean == null) continue;
+    const cur = map.get(r.province_id) ?? { sum: 0, count: 0, max: 0, exceed: 0, clean: 0 };
+    cur.sum += r.pm25_mean;
+    cur.count += 1;
+    if (r.pm25_mean > cur.max) cur.max = r.pm25_mean;
+    if (r.pm25_mean > 37.5) cur.exceed += 1;
+    if (r.pm25_mean <= 15.0) cur.clean += 1;
+    map.set(r.province_id, cur);
+  }
+
+  const result: ProvinceTrendSummary[] = [];
+  for (const p of ISAN_PROVINCES) {
+    const stat = map.get(p.id);
+    if (!stat || stat.count === 0) continue;
+    result.push({
+      provinceId: p.id,
+      nameTh: p.nameTh,
+      nameEn: p.nameEn,
+      avgPm25: +(stat.sum / stat.count).toFixed(1),
+      maxPm25: +stat.max.toFixed(1),
+      exceedanceDays: stat.exceed,
+      cleanDays: stat.clean,
+      observedDays: stat.count,
+    });
+  }
+
+  // Sort ascending by avgPm25 (cleanest to highest)
+  result.sort((a, b) => a.avgPm25 - b.avgPm25);
+  return result;
 }
