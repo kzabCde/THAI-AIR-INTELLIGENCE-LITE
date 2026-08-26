@@ -387,31 +387,31 @@ export function TrendsDashboard({
             )}
           </div>
 
-          {/* ─── MILESTONE BOXES: 1 ROW DIVIDED INTO 2 COLUMNS ─── */}
+          {/* ─── MILESTONE BOXES: 1 ROW DIVIDED INTO 2 COLUMNS (COMPACT SLIM HEIGHT) ─── */}
           {cleanestPoint && (
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+            <div className="grid grid-cols-2 gap-2 sm:gap-2.5 pt-2.5 border-t border-zinc-100 dark:border-zinc-800">
               {/* Box 1: วันที่อากาศสะอาดที่สุด */}
-              <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-2.5 sm:p-3.5 flex flex-col justify-between">
-                <div>
-                  <p className="text-[10px] sm:text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">
+              <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 px-2.5 py-2 sm:px-3 sm:py-2.5 flex items-center justify-between gap-2 min-w-0">
+                <div className="min-w-0">
+                  <p className="text-[10px] sm:text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 truncate">
                     <span className="sm:hidden">อากาศดีที่สุด</span>
                     <span className="hidden sm:inline">วันที่อากาศสะอาดที่สุด</span>
                   </p>
-                  <p className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white mt-0.5 truncate">
+                  <p className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white truncate">
                     <span className="sm:hidden">{formatTrendDate(cleanestPoint.date)}</span>
                     <span className="hidden sm:inline">{formatTrendDateFull(cleanestPoint.date)}</span>
                   </p>
-                  <p className="text-[9.5px] sm:text-[10.5px] text-zinc-400 mt-0.5 truncate">
+                  <p className="text-[9.5px] sm:text-[10.5px] text-zinc-400 truncate">
                     {cleanestPoint.wind != null
                       ? `ลม ${(+cleanestPoint.wind).toFixed(1)} m/s`
                       : "คุณภาพอากาศดี"}
                   </p>
                 </div>
-                <div className="mt-1.5 sm:mt-2 text-right">
-                  <span className="text-base sm:text-xl font-black tabular-nums text-emerald-600 dark:text-emerald-400">
+                <div className="text-right shrink-0">
+                  <span className="text-sm sm:text-lg font-black tabular-nums text-emerald-600 dark:text-emerald-400">
                     {fmtPm25(cleanestPoint.pm25)}
                   </span>
-                  <span className="text-[9px] sm:text-[10px] text-zinc-400 ml-1">µg/m³</span>
+                  <span className="text-[8px] sm:text-[9px] text-zinc-400 block -mt-0.5 sm:-mt-1">µg/m³</span>
                 </div>
               </div>
 
@@ -420,17 +420,17 @@ export function TrendsDashboard({
                 const peakMean = peakPoint.pm25 ?? 0;
                 const isHigh = peakMean > 37.5;
                 return (
-                  <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-2.5 sm:p-3.5 flex flex-col justify-between">
-                    <div>
-                      <p className="text-[10px] sm:text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">
+                  <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 px-2.5 py-2 sm:px-3 sm:py-2.5 flex items-center justify-between gap-2 min-w-0">
+                    <div className="min-w-0">
+                      <p className="text-[10px] sm:text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 truncate">
                         <span className="sm:hidden">ค่าฝุ่นสูงสุด</span>
                         <span className="hidden sm:inline">{isHigh ? "วันที่ค่าฝุ่นเกินเกณฑ์สูงสุด" : "วันที่ค่าฝุ่นสูงสุด"}</span>
                       </p>
-                      <p className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white mt-0.5 truncate">
+                      <p className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white truncate">
                         <span className="sm:hidden">{formatTrendDate(peakPoint.date)}</span>
                         <span className="hidden sm:inline">{formatTrendDateFull(peakPoint.date)}</span>
                       </p>
-                      <p className="text-[9.5px] sm:text-[10.5px] text-zinc-400 mt-0.5 truncate">
+                      <p className="text-[9.5px] sm:text-[10.5px] text-zinc-400 truncate">
                         {peakPoint.pm25Max != null && peakPoint.pm25Max > peakMean
                           ? `สูงสุด ${fmtPm25(peakPoint.pm25Max)} µg/m³`
                           : peakPoint.wind != null
@@ -438,11 +438,11 @@ export function TrendsDashboard({
                           : "คุณภาพอากาศปกติ"}
                       </p>
                     </div>
-                    <div className="mt-1.5 sm:mt-2 text-right">
-                      <span className={`text-base sm:text-xl font-black tabular-nums ${isHigh ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    <div className="text-right shrink-0">
+                      <span className={`text-sm sm:text-lg font-black tabular-nums ${isHigh ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
                         {fmtPm25(peakMean)}
                       </span>
-                      <span className="text-[9px] sm:text-[10px] text-zinc-400 ml-1">µg/m³</span>
+                      <span className="text-[8px] sm:text-[9px] text-zinc-400 block -mt-0.5 sm:-mt-1">µg/m³</span>
                     </div>
                   </div>
                 );
