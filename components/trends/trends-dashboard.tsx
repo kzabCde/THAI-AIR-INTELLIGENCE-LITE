@@ -157,13 +157,14 @@ export function TrendsDashboard({
   }
 
   /* ─── Computed values ─── */
-  const heroValue = analysis.latest7Average ?? analysis.current.averagePm25;
+  const periodAverage = analysis.current.averagePm25;
+  const heroValue = periodAverage;
   const comparisonWorse = (analysis.comparisonDelta ?? 0) > 0;
 
   /* ─── Computed Peak and Cleanest Days ─── */
   const validPoints = analysis.calendar.filter((p) => p.pm25 != null);
   const peakPoint = validPoints.reduce<typeof analysis.calendar[0] | null>(
-    (max, p) => (!max || (p.pm25Max ?? p.pm25!) > (max.pm25Max ?? max.pm25!) ? p : max),
+    (max, p) => (!max || p.pm25! > max.pm25! ? p : max),
     null,
   );
   const cleanestPoint = validPoints.reduce<typeof analysis.calendar[0] | null>(
@@ -185,7 +186,7 @@ export function TrendsDashboard({
 
   const hasUnhealthyDay =
     unhealthyDaysCount > 0 ||
-    (peakPoint != null && (peakPoint.pm25Max ?? peakPoint.pm25 ?? 0) > 37.5);
+    (peakPoint != null && (peakPoint.pm25 ?? 0) > 37.5);
 
   /* ─── Province Rankings ─── */
   const topClean = rankings.slice(0, 5);
@@ -260,7 +261,7 @@ export function TrendsDashboard({
             </p>
             <div className="my-1 flex items-center justify-center">
               <span className="text-xl font-black tabular-nums tracking-tight text-zinc-900 dark:text-white sm:text-3xl">
-                {fmtPm25(heroValue)}
+                {fmtPm25(periodAverage)}
               </span>
             </div>
             <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 sm:text-xs">
@@ -334,7 +335,7 @@ export function TrendsDashboard({
           >
             <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 sm:text-xs">แนวโน้มล่าสุด</p>
             <div className="my-1 flex items-center justify-center">
-              <AqiFaceIcon level={pm25ToAqi(heroValue ?? 0)} size={32} className="drop-shadow-xs sm:size-9" />
+              <AqiFaceIcon level={pm25ToAqi(analysis.latest7Average ?? periodAverage ?? 0)} size={32} className="drop-shadow-xs sm:size-9" />
             </div>
             <p
               className={`text-[10px] font-bold sm:text-xs ${
@@ -365,11 +366,11 @@ export function TrendsDashboard({
 
         {/* ─── PROVINCE REGIONAL CONTEXT (Province View Mode) ─── */}
         {!isRegional && province && currentProvinceStat && rankNumber != null && regionalAvgPm25 != null && (
-          <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-zinc-50 dark:bg-zinc-850 border border-zinc-200/60 dark:border-zinc-800 px-3.5 py-2.5 text-xs text-zinc-600 dark:text-zinc-300">
+          <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 px-3.5 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">
             <div>
               <span className="font-bold text-zinc-900 dark:text-white">{province.nameTh}</span> อยู่อันดับที่{" "}
               <span className="font-bold text-emerald-600 dark:text-emerald-400">{rankNumber} จาก 20 จังหวัด</span>{" "}
-              (เฉลี่ย {currentProvinceStat.avgPm25} µg/m³)
+              <span className="text-zinc-500 dark:text-zinc-400">(เฉลี่ย {currentProvinceStat.avgPm25} µg/m³)</span>
             </div>
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
               {currentProvinceStat.avgPm25 < regionalAvgPm25
@@ -441,7 +442,7 @@ export function TrendsDashboard({
                     {formatTrendDateFull(cleanestPoint.date)}
                   </p>
                   <p className="text-[10.5px] text-zinc-400">
-                    {cleanestPoint.wind != null ? `ความเร็วลม ${cleanestPoint.wind} m/s` : "คุณภาพอากาศดีมาก"}
+                    {cleanestPoint.wind != null ? `ความเร็วลม ${(+cleanestPoint.wind).toFixed(1)} m/s` : "คุณภาพอากาศดีมาก"}
                   </p>
                 </div>
                 <div className="text-right shrink-0">
@@ -454,7 +455,7 @@ export function TrendsDashboard({
 
               {/* Peak Day (Only show if there was an unhealthy day) */}
               {hasUnhealthyDay && peakPoint && (() => {
-                const peakVal = peakPoint.pm25Max ?? peakPoint.pm25 ?? 0;
+                const peakMean = peakPoint.pm25 ?? 0;
                 return (
                   <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-3.5 flex items-start justify-between gap-3">
                     <div className="space-y-0.5">
@@ -465,15 +466,18 @@ export function TrendsDashboard({
                         {formatTrendDateFull(peakPoint.date)}
                       </p>
                       <p className="text-[10.5px] text-zinc-400">
+                        {peakPoint.pm25Max != null && peakPoint.pm25Max > peakMean
+                          ? `สูงสุดรายชั่วโมง ${fmtPm25(peakPoint.pm25Max)} µg/m³ · `
+                          : ""}
                         {peakPoint.hotspots != null && peakPoint.hotspots > 0
                           ? `จุดความร้อน ${peakPoint.hotspots} จุด · `
                           : ""}
-                        {peakPoint.wind != null ? `ความเร็วลม ${peakPoint.wind} m/s` : ""}
+                        {peakPoint.wind != null ? `ความเร็วลม ${(+peakPoint.wind).toFixed(1)} m/s` : ""}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
                       <span className="text-lg font-black tabular-nums text-rose-600 dark:text-rose-400">
-                        {fmtPm25(peakVal)}
+                        {fmtPm25(peakMean)}
                       </span>
                       <span className="text-[9px] text-zinc-400 block -mt-0.5">µg/m³</span>
                     </div>
