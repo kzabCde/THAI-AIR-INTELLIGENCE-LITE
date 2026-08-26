@@ -416,6 +416,8 @@ export function RedesignedForecastDashboard({
                       {forecast.hourly.slice(0, 24).map((h, i) => {
                         const d = new Date(h.t);
                         const hour = d.getHours();
+                        const currentLocalHour = new Date().getHours();
+                        const isCurrent = hour === currentLocalHour;
                         const aqi = pm25ToAqi(h.pm25);
                         const band = bandForAqi(aqi);
                         const temp = getHourlyTemp(baseTemp, hour);
@@ -426,11 +428,26 @@ export function RedesignedForecastDashboard({
                         return (
                           <div
                             key={i}
-                            className={`flex flex-col items-center gap-1 px-2.5 sm:px-3 py-2.5 min-w-[56px] sm:min-w-[64px] transition hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl ${i === 0 ? "bg-emerald-50/60 dark:bg-emerald-950/20" : ""}`}
+                            className={`flex flex-col items-center gap-1 px-2 sm:px-2.5 py-2 min-w-[58px] sm:min-w-[66px] transition rounded-2xl ${
+                              isCurrent
+                                ? "bg-emerald-500/15 dark:bg-emerald-950/50 border border-emerald-500/50 dark:border-emerald-500/50 shadow-xs ring-2 ring-emerald-500/20 z-10"
+                                : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                            }`}
                           >
-                            <span className={`text-[10px] font-bold ${i === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400"}`}>
-                              {String(hour).padStart(2, "0")}:00
-                            </span>
+                            {isCurrent ? (
+                              <div className="flex flex-col items-center">
+                                <span className="rounded-full bg-emerald-600 dark:bg-emerald-500 px-1.5 py-0.2 text-[8px] font-black text-white uppercase tracking-wider mb-0.5 shadow-2xs">
+                                  ตอนนี้
+                                </span>
+                                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400">
+                                  {String(hour).padStart(2, "0")}:00
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                {String(hour).padStart(2, "0")}:00
+                              </span>
+                            )}
                             <span className="rounded-full px-2 py-0.5 text-[10px] font-black text-white shadow-2xs tabular-nums" style={{ backgroundColor: band.color }}>
                               {aqi}
                             </span>

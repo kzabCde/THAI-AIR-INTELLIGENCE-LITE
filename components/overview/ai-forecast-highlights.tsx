@@ -297,21 +297,29 @@ export function AiForecastHighlights({
           {hourlyData.map((item, idx) => (
             <div
               key={idx}
-              className={`flex flex-col items-center justify-between min-w-[76px] sm:min-w-[84px] px-2 py-1 text-center shrink-0 space-y-2.5 ${
+              className={`flex flex-col items-center justify-between min-w-[76px] sm:min-w-[84px] px-2 py-2 text-center shrink-0 space-y-2.5 rounded-2xl transition ${
+                item.isCurrentHour
+                  ? "bg-emerald-500/15 dark:bg-emerald-950/50 border border-emerald-500/50 dark:border-emerald-500/50 shadow-xs ring-2 ring-emerald-500/20 z-10"
+                  : ""
+              } ${
                 item.isDayStart ? "border-l-2 border-dashed border-zinc-300 dark:border-zinc-700 pl-3" : ""
               }`}
             >
               {/* 1. Time / Day Header */}
-              <div className="text-center min-h-[32px] flex flex-col justify-center">
-                {item.dayName && (
+              <div className="text-center min-h-[32px] flex flex-col justify-center items-center">
+                {item.isCurrentHour ? (
+                  <span className="rounded-full bg-emerald-600 dark:bg-emerald-500 px-1.5 py-0.2 text-[8px] font-black text-white uppercase tracking-wider mb-0.5 shadow-2xs">
+                    ตอนนี้
+                  </span>
+                ) : item.dayName ? (
                   <span className="block text-[10px] font-black text-zinc-800 dark:text-zinc-200">
                     {item.dayName}
                   </span>
-                )}
+                ) : null}
                 <span
                   className={`block text-xs font-bold ${
                     item.isCurrentHour
-                      ? "text-emerald-600 dark:text-emerald-400 font-extrabold"
+                      ? "text-emerald-600 dark:text-emerald-400 font-black"
                       : "text-zinc-600 dark:text-zinc-400"
                   }`}
                 >
