@@ -22,9 +22,6 @@ function formatThaiDayName(d: Date, isToday: boolean): string {
   if (isToday) return "วันนี้";
   return THAI_FULL_DAYS[d.getDay()] ?? "-";
 }
-  const rad = ((hour - 14) / 24) * 2 * Math.PI;
-  return +(Math.max(1, baseWind + 2 * Math.cos(rad))).toFixed(1);
-}
 
 export interface CurrentWeatherInfo {
   temperature?: number | null;
@@ -72,6 +69,13 @@ export function AiForecastHighlights({
     };
   }, [provinceId, refreshKey]);
 
+  // ── Base weather values from REAL DB data ──────────────────────────────
+  const baseTemp = currentWeather?.temperature ?? 28;
+  const baseHumidity = currentWeather?.humidity ?? 70;
+  const baseWind = currentWeather?.windSpeed ?? 5.0;
+  const baseWindDir = currentWeather?.windDirection ?? 180;
+  const basePrecip = currentWeather?.precipitation ?? currentWeather?.precipitation24h ?? 0;
+
   // ── Generate ALL hourly data for 7 days (168 hours) starting from CURRENT HOUR ──
   const now = new Date();
   const currentHourTimestamp = new Date(
@@ -86,11 +90,11 @@ export function AiForecastHighlights({
     hoursCount: 168,
     livePm25: forecast?.current,
     dailyForecast: forecast?.daily,
-    baseTemp: currentWeather?.temperature ?? 28,
-    baseHumidity: currentWeather?.humidity ?? 70,
-    baseWind: currentWeather?.windSpeed ?? 5.0,
-    baseWindDir: currentWeather?.windDirection ?? 180,
-    precipitation: currentWeather?.precipitation ?? currentWeather?.precipitation24h ?? 0,
+    baseTemp,
+    baseHumidity,
+    baseWind,
+    baseWindDir,
+    precipitation: basePrecip,
   }).map((item, idx) => ({
     ...item,
     dayIndex: Math.min(6, Math.floor(idx / 24)),
@@ -107,14 +111,10 @@ export function AiForecastHighlights({
   const dailyData = Array.from({ length: 7 }, (_, dayIdx) => {
     const dayDate = new Date(currentHourTimestamp + dayIdx * 86400_000);
     const dayHours = allHourlyData.filter((h) => h.dayIndex === dayIdx);
-    const mod = getDayWeatherModifier(dayIdx);
 
     // AQI: use daily forecast point if available, else average from hourly
     const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
     const rawPoint = dailyRaw[dayIdx];
-    const pm25Val = rawPoint?.pm25 ?? (dayHours.length
-      ? dayHours.reduce((s, h) => s + pm25ToAqi(h.aqi), 0) / dayHours.length
-      : 12 + dayIdx);
     const aqiVal = dayIdx === 0 && avgAqi != null
       ? avgAqi
       : (rawPoint ? pm25ToAqi(rawPoint.pm25) : Math.round(dayHours.reduce((s, h) => s + h.aqi, 0) / (dayHours.length || 1)));
@@ -124,13 +124,13 @@ export function AiForecastHighlights({
 
     // Temperature: derive max/min from hourly temps of this day
     const temps = dayHours.map((h) => h.temp);
-    const tempMax = temps.length ? Math.max(...temps) : Math.round(baseTemp + mod.tempOffset + 3);
-    const tempMin = temps.length ? Math.min(...temps) : Math.round(baseTemp + mod.tempOffset - 3);
+    const tempMax = temps.length ? Math.max(...temps) : Math.round(baseTemp + 3);
+    const tempMin = temps.length ? Math.min(...temps) : Math.round(baseTemp - 3);
 
     // Wind: average speed from hourly
     const avgWindSpeed = dayHours.length
       ? +(dayHours.reduce((s, h) => s + h.windSpeed, 0) / dayHours.length).toFixed(1)
-      : +(baseWind * mod.windMultiplier).toFixed(1);
+      : +(baseWind).toFixed(1);
 
     // Wind direction: circular mean from hourly
     let sinSum = 0, cosSum = 0;
@@ -141,17 +141,17 @@ export function AiForecastHighlights({
     }
     const windDir = dayHours.length
       ? Math.round(((Math.atan2(sinSum, cosSum) * 180) / Math.PI + 360) % 360)
-      : Math.round((baseWindDir + mod.windDirShift) % 360);
+      : Math.round(baseWindDir);
 
     // Humidity: average from hourly
     const humidity = dayHours.length
       ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length)
-      : Math.min(98, Math.max(40, baseHumidity + mod.humidityOffset));
+      : baseHumidity;
 
     // Rain: max chance from hourly hours of this day
     const rainChance = dayHours.length
       ? Math.max(...dayHours.map((h) => h.rainChance))
-      : mod.rainBaseChance;
+      : (basePrecip > 0 ? 80 : 20);
 
     return {
       dayName,
