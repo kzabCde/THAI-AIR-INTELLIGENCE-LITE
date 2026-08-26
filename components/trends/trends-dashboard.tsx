@@ -357,42 +357,38 @@ export function TrendsDashboard({
           </div>
         </div>
 
-        {/* ─── OPTION B: COMPARISON TIMEFRAME NOTE (SHORT & CONCISE) ─── */}
-        {analysis.previousFromDate && analysis.previousToDate && (
-          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 px-0.5">
-            เทียบ {formatTrendRange(analysis.fromDate, analysis.anchorDate)} กับ {formatTrendRange(analysis.previousFromDate, analysis.previousToDate)}
-          </p>
-        )}
-
-        {/* ─── PROVINCE REGIONAL CONTEXT (Province View Mode) ─── */}
-        {!isRegional && province && currentProvinceStat && rankNumber != null && regionalAvgPm25 != null && (
-          <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 px-3.5 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-            <div>
-              <span className="font-bold text-zinc-900 dark:text-white">{province.nameTh}</span> อยู่อันดับที่{" "}
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">{rankNumber} จาก 20 จังหวัด</span>{" "}
-              <span className="text-zinc-500 dark:text-zinc-400">(เฉลี่ย {currentProvinceStat.avgPm25} µg/m³)</span>
-            </div>
-            <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              {currentProvinceStat.avgPm25 < regionalAvgPm25
-                ? `สะอาดกว่าค่าเฉลี่ยภาค ${Math.round(((regionalAvgPm25 - currentProvinceStat.avgPm25) / regionalAvgPm25) * 100)}%`
-                : currentProvinceStat.avgPm25 > regionalAvgPm25
-                ? `สูงกว่าค่าเฉลี่ยภาค ${Math.round(((currentProvinceStat.avgPm25 - regionalAvgPm25) / regionalAvgPm25) * 100)}%`
-                : "เท่ากับค่าเฉลี่ยภาคพอดี"}
-            </div>
-          </div>
-        )}
-
-        {/* ─── QUALITY DAYS & MILESTONES: CLEAN MINIMALIST CARD ─── */}
+        {/* ─── QUALITY DAYS & REGIONAL CONTEXT (UNIFIED & BREATHABLE CARD) ─── */}
         <div className="rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 sm:p-5 shadow-xs space-y-4">
-          {/* Header & Quality Proportion */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-zinc-900 dark:text-white">
-              <span>สัดส่วนคุณภาพอากาศ ({validPoints.length} วันที่มีข้อมูล)</span>
-              <span className="text-[11px] font-normal text-zinc-400">
-                {unhealthyDaysCount === 0 ? "อยู่ในเกณฑ์มาตรฐานทุกวัน" : `เกินเกณฑ์ ${unhealthyDaysCount} วัน`}
-              </span>
+          {/* Header Row: Title, Comparison Period & Province Rank Context */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-1">
+            <div className="space-y-0.5">
+              <h4 className="text-sm font-black text-zinc-900 dark:text-white">
+                สัดส่วนคุณภาพอากาศ ({validPoints.length} วัน)
+              </h4>
+              {analysis.previousFromDate && analysis.previousToDate && (
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  เทียบ {formatTrendRange(analysis.fromDate, analysis.anchorDate)} กับ {formatTrendRange(analysis.previousFromDate, analysis.previousToDate)}
+                </p>
+              )}
             </div>
 
+            {/* Province Rank Context (in Province View) */}
+            {!isRegional && province && currentProvinceStat && rankNumber != null && (
+              <div className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-2.5 py-1 text-xs text-zinc-600 dark:text-zinc-300 self-start sm:self-auto">
+                <span>อันดับที่ <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{rankNumber}</strong>/20</span>
+                <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                <span>เฉลี่ย {currentProvinceStat.avgPm25} µg/m³</span>
+                {regionalAvgPm25 != null && currentProvinceStat.avgPm25 !== regionalAvgPm25 && (
+                  <span className="text-[10.5px] text-zinc-400">
+                    ({currentProvinceStat.avgPm25 < regionalAvgPm25 ? `สะอาดกว่าภาค ${Math.round(((regionalAvgPm25 - currentProvinceStat.avgPm25) / regionalAvgPm25) * 100)}%` : `สูงกว่าภาค ${Math.round(((currentProvinceStat.avgPm25 - regionalAvgPm25) / regionalAvgPm25) * 100)}%`})
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Progress Bar & Clean Legend */}
+          <div className="space-y-2.5">
             {/* Segmented Progress Bar */}
             <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800 flex gap-0.5">
               {goodDaysCount > 0 && (
@@ -406,26 +402,32 @@ export function TrendsDashboard({
               )}
             </div>
 
-            {/* Clean Legend - Only show categories that occurred */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-zinc-600 dark:text-zinc-400 pt-0.5">
-              {goodDaysCount > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-                  <span>อากาศดี: <strong className="text-zinc-900 dark:text-white font-bold">{goodDaysCount} วัน</strong> ({goodPct}%)</span>
-                </div>
-              )}
-              {moderateDaysCount > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                  <span>ปานกลาง: <strong className="text-zinc-900 dark:text-white font-bold">{moderateDaysCount} วัน</strong> ({moderatePct}%)</span>
-                </div>
-              )}
-              {unhealthyDaysCount > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
-                  <span>เกินเกณฑ์: <strong className="text-zinc-900 dark:text-white font-bold">{unhealthyDaysCount} วัน</strong> ({unhealthyPct}%)</span>
-                </div>
-              )}
+            {/* Clean Legend */}
+            <div className="flex flex-wrap items-center justify-between gap-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-zinc-600 dark:text-zinc-400">
+                {goodDaysCount > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span>อากาศดี <strong className="text-zinc-900 dark:text-white font-bold">{goodDaysCount} วัน</strong> ({goodPct}%)</span>
+                  </div>
+                )}
+                {moderateDaysCount > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
+                    <span>ปานกลาง <strong className="text-zinc-900 dark:text-white font-bold">{moderateDaysCount} วัน</strong> ({moderatePct}%)</span>
+                  </div>
+                )}
+                {unhealthyDaysCount > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
+                    <span>เกินเกณฑ์ <strong className="text-zinc-900 dark:text-white font-bold">{unhealthyDaysCount} วัน</strong> ({unhealthyPct}%)</span>
+                  </div>
+                )}
+              </div>
+
+              <span className="text-[11px] text-zinc-400 font-medium">
+                {unhealthyDaysCount === 0 ? "อยู่ในเกณฑ์มาตรฐานทุกวัน" : `เกินเกณฑ์ ${unhealthyDaysCount} วัน`}
+              </span>
             </div>
           </div>
 
@@ -433,7 +435,7 @@ export function TrendsDashboard({
           {cleanestPoint && (
             <div className={`grid gap-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 ${hasUnhealthyDay ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
               {/* Cleanest Day */}
-              <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-3.5 flex items-start justify-between gap-3">
+              <div className="rounded-xl bg-zinc-50/60 dark:bg-zinc-800/30 p-3.5 flex items-start justify-between gap-3">
                 <div className="space-y-0.5">
                   <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
                     วันที่อากาศสะอาดที่สุด
@@ -457,7 +459,7 @@ export function TrendsDashboard({
               {hasUnhealthyDay && peakPoint && (() => {
                 const peakMean = peakPoint.pm25 ?? 0;
                 return (
-                  <div className="rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 p-3.5 flex items-start justify-between gap-3">
+                  <div className="rounded-xl bg-zinc-50/60 dark:bg-zinc-800/30 p-3.5 flex items-start justify-between gap-3">
                     <div className="space-y-0.5">
                       <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
                         วันที่ค่าฝุ่นเกินเกณฑ์สูงสุด
