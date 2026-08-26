@@ -31,6 +31,7 @@ import {
 } from "./trend-insight-panels";
 import {
   formatTrendObservedAt,
+  formatTrendRange,
   RANGE_OPTIONS,
 } from "./trend-format";
 
