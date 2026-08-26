@@ -8,6 +8,7 @@ import {
   CloudRain,
   Droplets,
   Loader2,
+  Moon,
   Navigation,
   Sun,
 } from "lucide-react";
@@ -341,7 +342,7 @@ export function AiForecastHighlights({
                 ) : item.hour >= 6 && item.hour <= 18 ? (
                   <Sun className="h-5 w-5 text-amber-500" />
                 ) : (
-                  <Cloud className="h-5 w-5 text-zinc-400" />
+                  <Moon className="h-5 w-5 text-indigo-400" />
                 )}
                 {item.rainChance > 0 && (
                   <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">

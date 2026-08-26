@@ -290,11 +290,13 @@ export function RedesignedForecastDashboard({
   const confidenceVal = Math.round((forecast.daily[0]?.confidence ?? 0.82) * 100);
   const refreshedTimeStr = formatTimeString(lastRefreshedAt);
 
-  // ── Weather base values for hourly strip ─────────────────────────────────────
-  const baseTemp = weather?.temperature ?? 28;
-  const baseHumidity = weather?.humidity ?? 70;
-  const baseWind = weather?.wind_speed ?? 5;
-  const baseWindDir = weather?.wind_direction ?? 180;
+  // ── Weather base values from snapshot for 100% parity across pages ───────────
+  const currentSnapshot = overview.snapshots.find((s) => s.province.id === province.id);
+  const baseTemp = currentSnapshot?.temperature ?? weather?.temperature ?? 28;
+  const baseHumidity = currentSnapshot?.humidity ?? weather?.humidity ?? 70;
+  const baseWind = currentSnapshot?.windSpeed ?? weather?.wind_speed ?? 5;
+  const baseWindDir = currentSnapshot?.windDirection ?? weather?.wind_direction ?? 180;
+  const precipitation = currentSnapshot?.precipitation ?? currentSnapshot?.precipitation24h ?? weather?.precipitation ?? null;
 
   // ── Helper: render N/A when no data ─────────────────────────────────────────
   function pmRange(min: number | null, max: number | null) {
