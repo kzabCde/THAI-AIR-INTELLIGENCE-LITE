@@ -92,11 +92,11 @@ body {
   margin-top: -1px;
 }
 .leaflet-popup-tip {
-  background: #ffffff !important;
+  background: #0f172a !important;
   box-shadow: none !important;
 }
 .dark .leaflet-popup-tip {
-  background: #18181b !important;
+  background: #0f172a !important;
 }
 .leaflet-tooltip.province-tip {
   background: rgb(var(--surface));
