@@ -76,13 +76,13 @@ export function AiForecastHighlights({
     };
   }, [provinceId, refreshKey]);
 
-  // Extract 24 hourly forecast points
-  const hourlyRaw: ForecastPoint[] = forecast?.hourly?.slice(0, 24) ?? [];
+  // ── Generate ALL hourly data for 7 days (168 hours) using consistent formulas ──
+  const hourlyRaw: ForecastPoint[] = forecast?.hourly?.slice(0, 168) ?? [];
   const baseTemp = 27;
   const baseHumidity = 80;
   const baseWind = 5.0;
 
-  const hourlyData = Array.from({ length: 24 }, (_, i) => {
+  const allHourlyData = Array.from({ length: 168 }, (_, i) => {
     const rawPoint = hourlyRaw[i];
     const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + i * 3600_000);
     const hour = dateObj.getHours();
@@ -102,11 +102,12 @@ export function AiForecastHighlights({
     const windSpeed = getHourlyWind(baseWind, hour);
     const windDir = (180 + hour * 15) % 360;
 
-    // Rain probability simulation based on humidity
-    const rainChance = humidity > 90 ? 80 : humidity > 85 ? 50 : 0;
+    // Rain probability based on humidity (consistent formula)
+    const rainChance = humidity > 90 ? 80 : humidity > 85 ? 50 : humidity > 82 ? 20 : 0;
 
     return {
       hour,
+      dayIndex: Math.floor(i / 24),
       timeLabel,
       isCurrentHour,
       isDayStart,
@@ -118,26 +119,60 @@ export function AiForecastHighlights({
       windSpeed,
       windDir,
       rainChance,
+      dateObj,
     };
   });
 
-  // Extract daily forecast points (always 7 days)
-  const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
+  // First 24 hours for the hourly card
+  const hourlyData = allHourlyData.slice(0, 24);
 
-  const dailyData = Array.from({ length: 7 }, (_, idx) => {
-    const rawPoint = dailyRaw[idx];
-    const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + idx * 86400_000);
-    const pm25Val = rawPoint?.pm25 ?? (12 + idx);
-    const aqiVal = pm25ToAqi(pm25Val);
+  // ── Derive daily data by aggregating hourly data per day ──
+  const dailyData = Array.from({ length: 7 }, (_, dayIdx) => {
+    const dayHours = allHourlyData.filter((h) => h.dayIndex === dayIdx);
+    const firstHour = dayHours[0];
+    const dateObj = firstHour?.dateObj ?? new Date(Date.now() + dayIdx * 86400_000);
+
+    // AQI: use daily forecast point if available, else average from hourly
+    const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
+    const rawPoint = dailyRaw[dayIdx];
+    const pm25Val = rawPoint?.pm25 ?? (dayHours.length
+      ? dayHours.reduce((s, h) => s + pm25ToAqi(h.aqi), 0) / dayHours.length
+      : 12 + dayIdx);
+    const aqiVal = rawPoint ? pm25ToAqi(rawPoint.pm25) : Math.round(dayHours.reduce((s, h) => s + h.aqi, 0) / (dayHours.length || 1));
     const band = bandForAqi(aqiVal);
 
-    const dayName = formatThaiDayName(dateObj, idx === 0);
-    const tempMax = Math.round((rawPoint?.pm25Max ? rawPoint.pm25Max * 0.8 : 32) - idx * 0.5);
-    const tempMin = 24;
-    const windSpeed = +(6.0 + idx * 1.5).toFixed(1);
-    const windDir = (200 + idx * 25) % 360;
-    const humidity = Math.min(95, 78 + idx * 2);
-    const rainChance = idx === 2 ? 90 : 0;
+    const dayName = formatThaiDayName(dateObj, dayIdx === 0);
+
+    // Temperature: derive max/min from hourly temps of this day
+    const temps = dayHours.map((h) => h.temp);
+    const tempMax = temps.length ? Math.max(...temps) : 32;
+    const tempMin = temps.length ? Math.min(...temps) : 24;
+
+    // Wind: average speed from hourly
+    const avgWindSpeed = dayHours.length
+      ? +(dayHours.reduce((s, h) => s + h.windSpeed, 0) / dayHours.length).toFixed(1)
+      : 5;
+
+    // Wind direction: circular mean from hourly
+    let sinSum = 0, cosSum = 0;
+    for (const h of dayHours) {
+      const rad = (h.windDir * Math.PI) / 180;
+      sinSum += Math.sin(rad);
+      cosSum += Math.cos(rad);
+    }
+    const windDir = dayHours.length
+      ? Math.round(((Math.atan2(sinSum, cosSum) * 180) / Math.PI + 360) % 360)
+      : 200;
+
+    // Humidity: average from hourly
+    const humidity = dayHours.length
+      ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length)
+      : 80;
+
+    // Rain: max chance from hourly hours of this day
+    const rainChance = dayHours.length
+      ? Math.max(...dayHours.map((h) => h.rainChance))
+      : 0;
 
     return {
       dayName,
@@ -145,7 +180,7 @@ export function AiForecastHighlights({
       band,
       tempMax,
       tempMin,
-      windSpeed,
+      windSpeed: avgWindSpeed,
       windDir,
       humidity,
       rainChance,
