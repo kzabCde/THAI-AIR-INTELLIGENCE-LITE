@@ -45,39 +45,7 @@ function getAdviceItems(aqi: number): AdviceItem[] {
   ];
 }
 
-function formatTimeString(d: Date): string {
-  const hours = String(d.getHours()).padStart(2, "0");
-  const mins = String(d.getMinutes()).padStart(2, "0");
-  return `${hours}:${mins}`;
-}
-
-function findTimeWindow(
-  hourly: ForecastPoint[],
-  mode: "min" | "max",
-  windowHours: number = 3,
-): { startTime: string; endTime: string; minPm: number; maxPm: number } | null {
-  if (!hourly.length) return null;
-  let bestScore = mode === "min" ? Infinity : -Infinity;
-  let bestIdx = 0;
-  for (let i = 0; i <= hourly.length - windowHours; i++) {
-    const slice = hourly.slice(i, i + windowHours);
-    const avg = slice.reduce((s, p) => s + p.pm25, 0) / slice.length;
-    if (mode === "min" ? avg < bestScore : avg > bestScore) {
-      bestScore = avg;
-      bestIdx = i;
-    }
-  }
-  const slice = hourly.slice(bestIdx, bestIdx + windowHours);
-  const startD = new Date(slice[0].t);
-  const endD = new Date(slice[slice.length - 1].t);
-  endD.setHours(endD.getHours() + 1);
-  return {
-    startTime: formatTimeString(startD),
-    endTime: formatTimeString(endD),
-    minPm: Math.round(Math.min(...slice.map((p) => p.pm25))),
-    maxPm: Math.round(Math.max(...slice.map((p) => p.pm25))),
-  };
-}
+import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
 
 export function HealthAdviceGrid({
   pm25 = 0,
@@ -92,26 +60,82 @@ export function HealthAdviceGrid({
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     fetch(`/api/forecast?province=${provinceId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         const data = json?.data ?? json;
-        if (data && Array.isArray(data.hourly)) {
+        if (isMounted && data && Array.isArray(data.daily)) {
           setForecast(data);
         }
       })
       .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
   }, [provinceId]);
 
   const band = aqi ? bandForAqi(aqi) : bandForPm25(pm25);
   const items = getAdviceItems(aqi);
 
-  const hourly24 = forecast?.hourly?.slice(0, 24) ?? [];
-  const rawBestWindow = hourly24.length ? findTimeWindow(hourly24, "min", 3) : null;
-  const rawRiskWindow = hourly24.length ? findTimeWindow(hourly24, "max", 4) : null;
+  // ── Dynamic 24h Hourly Forecast Strip ──
+  const now = new Date();
+  const currentHourTimestamp = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    now.getHours(),
+  ).getTime();
 
-  const bestWindow = rawBestWindow ?? { startTime: "07:30", endTime: "10:30", minPm: 5, maxPm: 12 };
-  const riskWindow = rawRiskWindow && rawRiskWindow.maxPm > 37.5 ? rawRiskWindow : null;
+  const hourlyStrip = computeHourlyForecastStrip({
+    currentHourTimestamp,
+    hoursCount: 24,
+    livePm25: forecast?.current ?? (pm25 > 0 ? pm25 : null),
+    dailyForecast: forecast?.daily,
+  });
+
+  // ── Dynamic Sliding Window Calculation based on real hourly data ──
+  let minAvg = Infinity;
+  let bestStartIdx = 0;
+  for (let i = 0; i <= hourlyStrip.length - 3; i++) {
+    const slice = hourlyStrip.slice(i, i + 3);
+    const avg = slice.reduce((s, it) => s + it.pm25, 0) / 3;
+    if (avg < minAvg) {
+      minAvg = avg;
+      bestStartIdx = i;
+    }
+  }
+  const bestSlice = hourlyStrip.slice(bestStartIdx, bestStartIdx + 3);
+  const bestStartHour = bestSlice[0]?.hour ?? 7;
+  const bestEndHour = ((bestSlice[bestSlice.length - 1]?.hour ?? 9) + 1) % 24;
+  const bestWindow = {
+    startTime: `${String(bestStartHour).padStart(2, "0")}:00`,
+    endTime: `${String(bestEndHour).padStart(2, "0")}:00`,
+    minPm: bestSlice.length ? Math.round(Math.min(...bestSlice.map((it) => it.pm25))) : 5,
+    maxPm: bestSlice.length ? Math.round(Math.max(...bestSlice.map((it) => it.pm25))) : 12,
+  };
+
+  // Find risk window (> 37.5 µg/m³)
+  let maxAvg = -Infinity;
+  let riskStartIdx = 0;
+  for (let i = 0; i <= hourlyStrip.length - 4; i++) {
+    const slice = hourlyStrip.slice(i, i + 4);
+    const avg = slice.reduce((s, it) => s + it.pm25, 0) / 4;
+    if (avg > maxAvg) {
+      maxAvg = avg;
+      riskStartIdx = i;
+    }
+  }
+  const riskSlice = hourlyStrip.slice(riskStartIdx, riskStartIdx + 4);
+  const maxPmInRisk = riskSlice.length ? Math.max(...riskSlice.map((it) => it.pm25)) : 0;
+  const riskWindow = maxPmInRisk > 37.5 && riskSlice.length
+    ? {
+        startTime: `${String(riskSlice[0].hour).padStart(2, "0")}:00`,
+        endTime: `${String((riskSlice[riskSlice.length - 1].hour + 1) % 24).padStart(2, "0")}:00`,
+        maxPm: Math.round(maxPmInRisk),
+      }
+    : null;
 
   return (
     <div className="space-y-2.5">
