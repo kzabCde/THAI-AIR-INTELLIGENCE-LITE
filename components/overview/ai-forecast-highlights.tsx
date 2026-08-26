@@ -52,7 +52,6 @@ export function AiForecastHighlights({
 }) {
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
   const [loading, setLoading] = useState(false);
-  const [dailyRange, setDailyRange] = useState<"3d" | "7d">("7d");
 
   // Fetch real ML forecast predictions
   useEffect(() => {
@@ -122,11 +121,10 @@ export function AiForecastHighlights({
     };
   });
 
-  // Extract daily forecast points (3 days vs 7 days)
+  // Extract daily forecast points (always 7 days)
   const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
-  const displayCount = dailyRange === "3d" ? 3 : 7;
 
-  const dailyData = Array.from({ length: displayCount }, (_, idx) => {
+  const dailyData = Array.from({ length: 7 }, (_, idx) => {
     const rawPoint = dailyRaw[idx];
     const dateObj = rawPoint ? new Date(rawPoint.t) : new Date(Date.now() + idx * 86400_000);
     const pm25Val = rawPoint?.pm25 ?? (12 + idx);
@@ -266,38 +264,18 @@ export function AiForecastHighlights({
           CARD 2: พยากรณ์อากาศประจำวัน (Daily Weather Forecast)
           ═══════════════════════════════════════════════════════════ */}
       <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 sm:p-5 shadow-sm space-y-3">
-        {/* Header with 3 วัน | 7 วัน Toggle */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
             พยากรณ์อากาศประจำวัน
           </h3>
-
-          {/* Segmented Toggle: 3 วัน | 7 วัน */}
-          <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-0.5 text-xs font-bold">
-            <button
-              type="button"
-              onClick={() => setDailyRange("3d")}
-              className={`rounded-full px-3 py-1 text-xs transition ${
-                dailyRange === "3d"
-                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-2xs font-black"
-                  : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
-              }`}
-            >
-              3 วัน
-            </button>
-            <span className="text-zinc-300 dark:text-zinc-600">|</span>
-            <button
-              type="button"
-              onClick={() => setDailyRange("7d")}
-              className={`rounded-full px-3 py-1 text-xs transition ${
-                dailyRange === "7d"
-                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-2xs font-black"
-                  : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
-              }`}
-            >
-              7 วัน
-            </button>
-          </div>
+          <Link
+            href={`/forecast?province=${provinceId}`}
+            className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
+          >
+            ดูรายละเอียด
+            <ChevronRight size={14} />
+          </Link>
         </div>
 
         {/* Daily Rows List — Clean borderless rows with divide-y and balanced spacing */}
