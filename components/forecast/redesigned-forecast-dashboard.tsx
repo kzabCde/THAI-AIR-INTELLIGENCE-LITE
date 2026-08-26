@@ -235,11 +235,10 @@ export function RedesignedForecastDashboard({
   const seg3 = segmentLabel(q3);
 
   // ── AI Insight: derive from real weather data ────────────────────────────────
-  const windSpeed = weather?.wind_speed ?? null;
-  // Use 24h accumulated precipitation from overview snapshot instead of 1h
   const currentSnapshot = overview.snapshots.find((s) => s.province.id === province.id);
-  const precipitation = currentSnapshot?.precipitation24h ?? null;
-  const humidity = weather?.humidity ?? null;
+  const precipitation = currentSnapshot?.precipitation ?? currentSnapshot?.precipitation24h ?? weather?.precipitation ?? null;
+  const windSpeed = currentSnapshot?.windSpeed ?? weather?.wind_speed ?? null;
+  const humidity = currentSnapshot?.humidity ?? weather?.humidity ?? null;
   const totalHotspots = overview.totalHotspots;
 
   // Dynamic factor statuses based on actual thresholds
@@ -291,12 +290,10 @@ export function RedesignedForecastDashboard({
   const refreshedTimeStr = formatTimeString(lastRefreshedAt);
 
   // ── Weather base values from snapshot for 100% parity across pages ───────────
-  const currentSnapshot = overview.snapshots.find((s) => s.province.id === province.id);
   const baseTemp = currentSnapshot?.temperature ?? weather?.temperature ?? 28;
-  const baseHumidity = currentSnapshot?.humidity ?? weather?.humidity ?? 70;
-  const baseWind = currentSnapshot?.windSpeed ?? weather?.wind_speed ?? 5;
+  const baseHumidity = humidity ?? 70;
+  const baseWind = windSpeed ?? 5;
   const baseWindDir = currentSnapshot?.windDirection ?? weather?.wind_direction ?? 180;
-  const precipitation = currentSnapshot?.precipitation ?? currentSnapshot?.precipitation24h ?? weather?.precipitation ?? null;
 
   // ── Helper: render N/A when no data ─────────────────────────────────────────
   function pmRange(min: number | null, max: number | null) {
