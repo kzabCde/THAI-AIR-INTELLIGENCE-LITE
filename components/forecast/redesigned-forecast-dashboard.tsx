@@ -707,49 +707,7 @@ export function RedesignedForecastDashboard({
               </div>
             </div>
 
-            {/* 5. COMPACT RECOMMENDED TIME WINDOW CARD */}
-            {bestWindow && (
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 sm:p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-                <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white mb-2.5">
-                  ช่วงเวลาแนะนำสำหรับวันนี้
-                </h3>
-                <div className={`grid ${bestWindow && riskWindow ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"} gap-2.5 sm:gap-3`}>
-                  {bestWindow && (
-                    <div className="rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                          <Leaf className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                          <span>อากาศดีที่สุด</span>
-                        </div>
-                        <p className="text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-400 mt-1 leading-tight">
-                          {bestWindow.startTime} - {bestWindow.endTime}
-                        </p>
-                      </div>
-                      <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1">
-                        เหมาะสำหรับกิจกรรมกลางแจ้ง
-                      </p>
-                    </div>
-                  )}
 
-                  {riskWindow ? (
-                    <div className="rounded-xl bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-orange-600 dark:text-orange-400">
-                          <ShieldAlert className="h-3.5 w-3.5 text-orange-500 shrink-0" />
-                          <span>ช่วงเวลาควรระวัง</span>
-                        </div>
-                        <p className="text-base sm:text-lg font-black text-slate-900 dark:text-white mt-1 leading-tight">
-                          {riskWindow.startTime} - {riskWindow.endTime}
-                        </p>
-                      </div>
-                      <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1">
-                        ควรหลีกเลี่ยงกิจกรรมกลางแจ้ง
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            )}
 
             {/* 6. PM2.5 RANGE (CLEAN 3-BOX DESIGN) */}
             {forecast.daily[0] && (forecast.daily[0].pm25P10 != null || forecast.daily[0].pm25P90 != null) && (() => {

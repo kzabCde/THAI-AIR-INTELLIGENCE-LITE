@@ -47,8 +47,8 @@ export function OverviewDashboard({
         onRefreshAll={handleRefreshAll}
       />
 
-      {/* 2. Dynamic Health Guidance Pills based on actual AQI */}
-      <HealthAdviceGrid pm25={currentPm25} aqi={currentAqi} />
+      {/* 2. Dynamic Health Guidance Pills & Recommended Time Window Tabs */}
+      <HealthAdviceGrid pm25={currentPm25} aqi={currentAqi} provinceId={selectedProvinceId} />
 
       {/* 3. Real ML Forecast Predictions (24h Trend Chart & 7-Day Forecast with AqiFaceIcon & Full Refresh Trigger) */}
       <AiForecastHighlights
