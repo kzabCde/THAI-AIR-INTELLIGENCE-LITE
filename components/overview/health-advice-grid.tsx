@@ -7,10 +7,6 @@ import {
   ShieldAlert,
   DoorClosed,
   Leaf,
-  Bike,
-  Sun,
-  DoorOpen,
-  Car,
   Wind,
 } from "lucide-react";
 import { bandForAqi, bandForPm25 } from "@/lib/aqi";
@@ -77,7 +73,7 @@ export function HealthAdviceGrid({
   provinceId?: string;
   currentWeather?: CurrentWeatherInfo;
 }) {
-  const [activeTab, setActiveTab] = useState<"advice" | "window" | "lifestyle">("advice");
+  const [activeTab, setActiveTab] = useState<"advice" | "window">("advice");
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
 
   useEffect(() => {
@@ -169,56 +165,6 @@ export function HealthAdviceGrid({
       }
     : null;
 
-  // ── Lifestyle / Activity Suitability Metrics ──
-  const maxRainChanceToday = hourlyStrip.length ? Math.max(...hourlyStrip.map((h) => h.rainChance)) : (basePrecip > 0 ? 80 : 20);
-
-  const lifestyleItems = [
-    {
-      icon: Bike,
-      title: "ออกกำลังกายกลางแจ้ง",
-      status: aqi <= 50 ? "เหมาะสมมาก" : aqi <= 100 ? "พอใช้" : "งดกิจกรรม",
-      badgeColor: aqi <= 50 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : aqi <= 100 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
-      desc: aqi <= 50
-        ? "อากาศสะอาด เหมาะสำหรับวิ่ง ปั่นจักรยาน หรือเล่นกีฬากลางแจ้ง"
-        : aqi <= 100
-        ? "ทำได้ตามปกติ แต่ผู้มีโรคประจำตัวหรือภูมิแพ้ควรลดระยะเวลาลง"
-        : "ค่าฝุ่นเกินมาตรฐาน แนะนำออกกำลังกายในอาคารหรือฟิตเนส",
-    },
-    {
-      icon: Sun,
-      title: "ตากผ้ากลางแจ้ง",
-      status: maxRainChanceToday >= 60 ? "เสี่ยงฝนตก" : baseHumidity >= 80 ? "แห้งช้า" : "แห้งไว ไร้ฝุ่น",
-      badgeColor: maxRainChanceToday >= 60 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : baseHumidity >= 80 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-      desc: maxRainChanceToday >= 60
-        ? `มีโอกาสเกิดฝน ${maxRainChanceToday}% แนะนำตากในที่ร่มหรือใช้เครื่องอบผ้า`
-        : baseHumidity >= 80
-        ? `ความชื้นในอากาศ ${Math.round(baseHumidity)}% ผ้าอาจแห้งช้ากว่าปกติเล็กน้อย`
-        : "แดดดี ลมถ่ายเทสะดวก และฝุ่นน้อย ผ้าแห้งไวไม่อับชื้น",
-    },
-    {
-      icon: DoorOpen,
-      title: "การระบายอากาศในบ้าน",
-      status: aqi <= 50 ? "เปิดได้ตลอดวัน" : aqi <= 100 ? "เปิดช่วงบ่าย" : "ปิดมิดชิด",
-      badgeColor: aqi <= 50 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : aqi <= 100 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
-      desc: aqi <= 50
-        ? "เปิดหน้าต่างให้อากาศบริสุทธิ์หมุนเวียน ลดการสะสมของ CO₂"
-        : aqi <= 100
-        ? `แนะนำเปิดหน้าต่างเฉพาะช่วง ${bestWindow.startTime} - ${bestWindow.endTime} น. ที่อากาศถ่ายเทดี`
-        : "แนะนำปิดหน้าต่างและเปิดเครื่องฟอกอากาศเพื่อสุขอนามัยที่ดี",
-    },
-    {
-      icon: Car,
-      title: "การล้างรถ",
-      status: maxRainChanceToday >= 50 ? "ชะลอไว้ก่อน" : aqi > 100 ? "ระวังฝุ่นจับ" : "เหมาะสม",
-      badgeColor: maxRainChanceToday >= 50 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : aqi > 100 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-      desc: maxRainChanceToday >= 50
-        ? `มีโอกาสเกิดฝน ${maxRainChanceToday}% ในวันนี้ แนะนำชะลอการล้างรถ`
-        : aqi > 100
-        ? "มีฝุ่นสะสมในบรรยากาศ รถอาจเปื้อนฝุ่นได้ง่ายหลังล้าง"
-        : "ไม่มีแนวโน้มฝนตก สภาพอากาศแจ่มใส ล้างแล้วสะอาดเงางามยาวนาน",
-    },
-  ];
-
   return (
     <div className="space-y-2.5">
       {/* ── Tab Switcher Bar ── */}
@@ -246,25 +192,12 @@ export function HealthAdviceGrid({
           >
             ช่วงเวลาแนะนำ
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("lifestyle")}
-            className={`rounded-lg px-2.5 sm:px-3 py-1 text-xs font-bold transition ${
-              activeTab === "lifestyle"
-                ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs"
-                : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-            }`}
-          >
-            กิจกรรมประจำวัน
-          </button>
         </div>
 
         <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 hidden sm:inline">
           {activeTab === "advice"
             ? `ประเมินตาม AQI ${aqi} (${band.labelTh})`
-            : activeTab === "window"
-            ? "ประเมินตามพยากรณ์ 24 ชม."
-            : "ประเมินจากคุณภาพอากาศ & สภาพอากาศ"}
+            : "ประเมินตามพยากรณ์ 24 ชม."}
         </span>
       </div>
 
@@ -346,39 +279,6 @@ export function HealthAdviceGrid({
                 <span>การระบายอากาศที่แนะนำ: ช่วง {bestWindow.startTime} - {bestWindow.endTime} น.</span>
               </span>
             </div>
-          </div>
-        )}
-
-        {/* Tab 3: กิจกรรมประจำวัน (Lifestyle - Slim Horizontal Rows) */}
-        {activeTab === "lifestyle" && (
-          <div className="space-y-1.5 sm:space-y-2">
-            {lifestyleItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.title}
-                  className="rounded-xl border border-zinc-100/90 dark:border-zinc-800/80 bg-zinc-50/70 dark:bg-zinc-800/40 px-2.5 py-2 sm:px-3 sm:py-2.5 flex items-center justify-between gap-2.5 sm:gap-3 transition hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <div className="flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-lg bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-200/60 dark:border-zinc-700 shadow-2xs">
-                      <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs sm:text-[13px] font-bold text-zinc-900 dark:text-white leading-tight">
-                        {item.title}
-                      </p>
-                      <p className="text-[10.5px] sm:text-[11.5px] text-zinc-500 dark:text-zinc-400 leading-snug mt-0.5">
-                        {item.desc}
-                      </p>
-                    </div>
-                  </div>
-
-                  <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md border shrink-0 self-center ${item.badgeColor}`}>
-                    {item.status}
-                  </span>
-                </div>
-              );
-            })}
           </div>
         )}
       </div>
