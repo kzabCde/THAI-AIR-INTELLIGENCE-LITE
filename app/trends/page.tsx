@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { getProvince } from "@/lib/isan";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isServiceSupabaseConfigured, isSupabaseConfigured } from "@/lib/supabase/server";
 import {
   getLatestCompletedBangkokDate,
+  getRegionalProvinceRankings,
   getRegionalTrendHistory,
   getTrendHistory,
 } from "@/services/daily-summary.service";
@@ -13,6 +15,7 @@ import {
   NetworkRestrictedState,
   NotConfiguredState,
 } from "@/components/ui/states";
+import { ProvinceRedirect } from "@/components/ui/province-redirect";
 
 export const metadata: Metadata = { title: "แนวโน้มย้อนหลัง" };
 export const revalidate = 300;
@@ -36,18 +39,27 @@ export default async function TrendsPage({
     const rangeDays = ALLOWED_RANGES.has(requestedRange) ? requestedRange : 90;
 
     const throughDate = getLatestCompletedBangkokDate();
-    const history = isRegional
-      ? await getRegionalTrendHistory(730, throughDate)
-      : await getTrendHistory(province!.id, 730, throughDate);
+    const [history, rankings] = await Promise.all([
+      isRegional
+        ? getRegionalTrendHistory(730, throughDate)
+        : getTrendHistory(province!.id, 730, throughDate),
+      getRegionalProvinceRankings(rangeDays, throughDate),
+    ]);
 
     return (
-      <TrendsDashboard
-        province={province}
-        history={history}
-        rangeDays={rangeDays}
-        throughDate={throughDate}
-        viewMode={isRegional ? "regional" : "province"}
-      />
+      <>
+        <Suspense fallback={null}>
+          <ProvinceRedirect page="trends" />
+        </Suspense>
+        <TrendsDashboard
+          province={province}
+          history={history}
+          rangeDays={rangeDays}
+          throughDate={throughDate}
+          viewMode={isRegional ? "regional" : "province"}
+          rankings={rankings}
+        />
+      </>
     );
   } catch (error) {
     if (isNetworkRestrictedError(error)) return <NetworkRestrictedState />;

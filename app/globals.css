@@ -92,11 +92,11 @@ body {
   margin-top: -1px;
 }
 .leaflet-popup-tip {
-  background: #ffffff !important;
+  background: #0f172a !important;
   box-shadow: none !important;
 }
 .dark .leaflet-popup-tip {
-  background: #18181b !important;
+  background: #0f172a !important;
 }
 .leaflet-tooltip.province-tip {
   background: rgb(var(--surface));
@@ -139,4 +139,33 @@ body {
 ::-webkit-scrollbar-thumb {
   background: rgb(var(--border));
   border-radius: 8px;
+}
+
+/* Hourly forecast scroll strip — thin visible scrollbar on desktop */
+.hourly-scroll-strip {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 130, 0.35) transparent;
+}
+.hourly-scroll-strip::-webkit-scrollbar {
+  height: 5px;
+}
+.hourly-scroll-strip::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 0 8px;
+}
+.hourly-scroll-strip::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 130, 0.3);
+  border-radius: 999px;
+}
+.hourly-scroll-strip::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 130, 0.5);
+}
+@media (max-width: 639px) {
+  .hourly-scroll-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .hourly-scroll-strip {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }

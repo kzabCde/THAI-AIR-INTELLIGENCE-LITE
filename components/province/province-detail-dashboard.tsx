@@ -264,6 +264,14 @@ export function ProvinceDetailDashboard({
         provinceId={province.id}
         avgAqi={aqi}
         refreshKey={refreshKey}
+        currentWeather={{
+          temperature: snapshot.temperature,
+          humidity: snapshot.humidity,
+          windSpeed: snapshot.windSpeed,
+          windDirection: snapshot.windDirection,
+          precipitation: snapshot.precipitation,
+          precipitation24h: snapshot.precipitation24h,
+        }}
       />
 
       {/* ═══════════════════════════════════════════

@@ -33,9 +33,11 @@ import {
 
 import type { IsanProvince } from "@/lib/isan";
 import { pm25ToAqi, bandForPm25, bandForAqi } from "@/lib/aqi";
+import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
 import { fmtPm25 } from "@/lib/format";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
+import { useUiStore } from "@/stores/ui-store";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 import type { WeatherRow } from "@/services/weather.service";
 import type { RegionOverview } from "@/services/types";
@@ -148,6 +150,7 @@ export function RedesignedForecastDashboard({
   overview,
 }: RedesignedForecastDashboardProps) {
   const router = useRouter();
+  const setPageProvince = useUiStore((s) => s.setPageProvince);
   const [horizon, setHorizon] = useState<"24h" | "3d" | "7d">("24h");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
@@ -235,11 +238,10 @@ export function RedesignedForecastDashboard({
   const seg3 = segmentLabel(q3);
 
   // ── AI Insight: derive from real weather data ────────────────────────────────
-  const windSpeed = weather?.wind_speed ?? null;
-  // Use 24h accumulated precipitation from overview snapshot instead of 1h
   const currentSnapshot = overview.snapshots.find((s) => s.province.id === province.id);
-  const precipitation = currentSnapshot?.precipitation24h ?? null;
-  const humidity = weather?.humidity ?? null;
+  const precipitation = currentSnapshot?.precipitation ?? currentSnapshot?.precipitation24h ?? weather?.precipitation ?? null;
+  const windSpeed = currentSnapshot?.windSpeed ?? weather?.wind_speed ?? null;
+  const humidity = currentSnapshot?.humidity ?? weather?.humidity ?? null;
   const totalHotspots = overview.totalHotspots;
 
   // Dynamic factor statuses based on actual thresholds
@@ -290,11 +292,11 @@ export function RedesignedForecastDashboard({
   const confidenceVal = Math.round((forecast.daily[0]?.confidence ?? 0.82) * 100);
   const refreshedTimeStr = formatTimeString(lastRefreshedAt);
 
-  // ── Weather base values for hourly strip ─────────────────────────────────────
-  const baseTemp = weather?.temperature ?? 28;
-  const baseHumidity = weather?.humidity ?? 70;
-  const baseWind = weather?.wind_speed ?? 5;
-  const baseWindDir = weather?.wind_direction ?? 180;
+  // ── Weather base values from snapshot for 100% parity across pages ───────────
+  const baseTemp = currentSnapshot?.temperature ?? weather?.temperature ?? 28;
+  const baseHumidity = humidity ?? 70;
+  const baseWind = windSpeed ?? 5;
+  const baseWindDir = currentSnapshot?.windDirection ?? weather?.wind_direction ?? 180;
 
   // ── Helper: render N/A when no data ─────────────────────────────────────────
   function pmRange(min: number | null, max: number | null) {
@@ -318,7 +320,10 @@ export function RedesignedForecastDashboard({
                 <ProvinceSelectModal
                   snapshots={overview.snapshots}
                   selectedId={province.id}
-                  onSelect={(id) => router.push(`/forecast?province=${id}`)}
+                  onSelect={(id) => {
+                    setPageProvince("forecast", id);
+                    router.push(`/forecast?province=${id}`);
+                  }}
                 />
               </div>
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
@@ -401,56 +406,106 @@ export function RedesignedForecastDashboard({
             <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
 
               {/* ── 24h MODE: Hourly scrollable strip ── */}
-              {horizon === "24h" && (
-                <>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white sm:text-sm">
-                      การพยากรณ์อากาศรายชั่วโมง
-                    </h3>
-                    <span className="text-[10px] font-semibold text-slate-400">
-                      24 ชั่วโมง · เลื่อนดูได้ →
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
-                    <div className="flex gap-0">
-                      {forecast.hourly.slice(0, 24).map((h, i) => {
-                        const d = new Date(h.t);
-                        const hour = d.getHours();
-                        const aqi = pm25ToAqi(h.pm25);
-                        const band = bandForAqi(aqi);
-                        const temp = getHourlyTemp(baseTemp, hour);
-                        const humid = getHourlyHumidity(baseHumidity, hour);
-                        const wind = getHourlyWind(baseWind, hour);
-                        const windDir = (baseWindDir + ((hour * 7) % 30) - 15 + 360) % 360;
-                        const rainChance = humid > 80 ? Math.min(95, 40 + Math.round((humid - 80) * 2)) : humid > 70 ? 20 : 0;
-                        return (
+              {horizon === "24h" && (() => {
+                const now = new Date();
+                const currentHourTimestamp = new Date(
+                  now.getFullYear(),
+                  now.getMonth(),
+                  now.getDate(),
+                  now.getHours(),
+                ).getTime();
+
+                const hourly24Data = computeHourlyForecastStrip({
+                  currentHourTimestamp,
+                  hoursCount: 24,
+                  livePm25: forecast?.current,
+                  dailyForecast: forecast?.daily,
+                  baseTemp: baseTemp,
+                  baseHumidity: baseHumidity,
+                  baseWind: baseWind,
+                  baseWindDir: baseWindDir,
+                  precipitation: precipitation,
+                });
+
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-white sm:text-sm">
+                        การพยากรณ์อากาศรายชั่วโมง
+                      </h3>
+                      <span className="text-[10px] font-semibold text-slate-400">
+                        24 ชั่วโมง · เลื่อนดูได้ →
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+                      <div className="flex gap-0">
+                        {hourly24Data.map((item, i) => (
                           <div
                             key={i}
-                            className={`flex flex-col items-center gap-1 px-2.5 sm:px-3 py-2.5 min-w-[56px] sm:min-w-[64px] transition hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl ${i === 0 ? "bg-emerald-50/60 dark:bg-emerald-950/20" : ""}`}
+                            className={`flex flex-col items-center gap-1 px-2 sm:px-2.5 py-2 min-w-[58px] sm:min-w-[66px] transition rounded-2xl ${
+                              item.isCurrentHour
+                                ? "bg-emerald-500/15 dark:bg-emerald-950/50 border border-emerald-500/50 dark:border-emerald-500/50 shadow-xs ring-2 ring-emerald-500/20 z-10"
+                                : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                            }`}
                           >
-                            <span className={`text-[10px] font-bold ${i === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400"}`}>
-                              {String(hour).padStart(2, "0")}:00
-                            </span>
-                            <span className="rounded-full px-2 py-0.5 text-[10px] font-black text-white shadow-2xs tabular-nums" style={{ backgroundColor: band.color }}>
-                              {aqi}
+                            {item.isCurrentHour ? (
+                              <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+                                ตอนนี้
+                              </span>
+                            ) : (
+                              <div className="flex flex-col items-center">
+                                {item.dayName && (
+                                  <span className="text-[9px] font-black text-slate-800 dark:text-slate-200">
+                                    {item.dayName}
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                  {item.timeLabel}
+                                </span>
+                              </div>
+                            )}
+                            <span
+                              className="rounded-full px-2 py-0.5 text-[10px] font-black text-white shadow-2xs tabular-nums"
+                              style={{ backgroundColor: item.band.color }}
+                            >
+                              {item.aqi}
                             </span>
                             <div className="flex flex-col items-center">
-                              {rainChance > 40 ? <CloudRain className="h-4 w-4 text-blue-500" /> : hour >= 6 && hour <= 18 ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-400" />}
-                              {rainChance > 0 && <span className="text-[8px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">{rainChance}%</span>}
+                              {item.rainChance > 40 ? (
+                                <CloudRain className="h-4 w-4 text-blue-500" />
+                              ) : item.hour >= 6 && item.hour <= 18 ? (
+                                <Sun className="h-4 w-4 text-amber-400" />
+                              ) : (
+                                <Moon className="h-4 w-4 text-indigo-400" />
+                              )}
+                              {item.rainChance > 0 && (
+                                <span className="text-[8px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                                  {item.rainChance}%
+                                </span>
+                              )}
                             </div>
-                            <span className="text-[11px] font-black text-slate-900 dark:text-white tabular-nums">{temp}°</span>
+                            <span className="text-[11px] font-black text-slate-900 dark:text-white tabular-nums">
+                              {item.temp}°
+                            </span>
                             <div className="flex flex-col items-center gap-0.5">
-                              <Navigation className="h-3 w-3 text-slate-400" style={{ transform: `rotate(${windDir}deg)` }} />
-                              <span className="text-[8px] font-semibold text-slate-500 tabular-nums">{wind}</span>
+                              <Navigation
+                                className="h-3 w-3 text-slate-400"
+                                style={{ transform: `rotate(${item.windDir}deg)` }}
+                              />
+                              <span className="text-[8px] font-semibold text-slate-500 tabular-nums">
+                                {item.wind}
+                              </span>
                             </div>
-                            <span className="text-[8px] font-bold text-blue-500 dark:text-blue-400 tabular-nums">{humid}%</span>
+                            <span className="text-[8px] font-bold text-blue-500 dark:text-blue-400 tabular-nums">
+                              {item.humid}%
+                            </span>
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                );
+              })()}
 
               {/* ── 3d / 7d MODE: Accordion daily cards ── */}
               {horizon !== "24h" && (() => {
@@ -657,49 +712,7 @@ export function RedesignedForecastDashboard({
               </div>
             </div>
 
-            {/* 5. COMPACT RECOMMENDED TIME WINDOW CARD */}
-            {bestWindow && (
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 sm:p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-                <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white mb-2.5">
-                  ช่วงเวลาแนะนำสำหรับวันนี้
-                </h3>
-                <div className={`grid ${bestWindow && riskWindow ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"} gap-2.5 sm:gap-3`}>
-                  {bestWindow && (
-                    <div className="rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                          <Leaf className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                          <span>อากาศดีที่สุด</span>
-                        </div>
-                        <p className="text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-400 mt-1 leading-tight">
-                          {bestWindow.startTime} - {bestWindow.endTime}
-                        </p>
-                      </div>
-                      <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1">
-                        เหมาะสำหรับกิจกรรมกลางแจ้ง
-                      </p>
-                    </div>
-                  )}
 
-                  {riskWindow ? (
-                    <div className="rounded-xl bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-orange-600 dark:text-orange-400">
-                          <ShieldAlert className="h-3.5 w-3.5 text-orange-500 shrink-0" />
-                          <span>ช่วงเวลาควรระวัง</span>
-                        </div>
-                        <p className="text-base sm:text-lg font-black text-slate-900 dark:text-white mt-1 leading-tight">
-                          {riskWindow.startTime} - {riskWindow.endTime}
-                        </p>
-                      </div>
-                      <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1">
-                        ควรหลีกเลี่ยงกิจกรรมกลางแจ้ง
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            )}
 
             {/* 6. PM2.5 RANGE (CLEAN 3-BOX DESIGN) */}
             {forecast.daily[0] && (forecast.daily[0].pm25P10 != null || forecast.daily[0].pm25P90 != null) && (() => {

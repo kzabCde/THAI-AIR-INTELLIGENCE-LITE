@@ -6,7 +6,7 @@ import type { MapProvince, MapFilterMode } from "./types";
 
 const IsanMap = dynamic(() => import("./isan-map"), {
   ssr: false,
-  loading: () => <Skeleton className="h-full w-full rounded-3xl min-h-[520px]" />,
+  loading: () => <Skeleton className="h-full w-full rounded-2xl min-h-[160px]" />,
 });
 
 export function IsanMapCard({
@@ -19,6 +19,7 @@ export function IsanMapCard({
   totalHotspots = 0,
   windSpeed = 0,
   windDirection = "ไม่มีข้อมูล",
+  isMiniPreview = false,
 }: {
   provinces: MapProvince[];
   height?: string;
@@ -29,6 +30,7 @@ export function IsanMapCard({
   totalHotspots?: number;
   windSpeed?: number;
   windDirection?: string;
+  isMiniPreview?: boolean;
 }) {
   return (
     <div className={`w-full ${height}`}>
@@ -41,6 +43,7 @@ export function IsanMapCard({
         totalHotspots={totalHotspots}
         windSpeed={windSpeed}
         windDirection={windDirection}
+        isMiniPreview={isMiniPreview}
       />
     </div>
   );
