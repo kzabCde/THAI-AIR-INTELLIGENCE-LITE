@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import Link from "next/link";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import { Header } from "@/components/layout/header";
@@ -46,12 +47,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AppProviders>
           <Header />
           <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-          <footer className="mx-auto flex max-w-7xl flex-col items-center justify-center gap-2 px-4 pb-24 pt-8 text-center text-xs muted md:pb-8">
+          <footer className="mx-auto flex max-w-7xl flex-col items-center justify-center gap-2.5 px-4 pb-24 pt-8 text-center text-xs text-zinc-500 dark:text-zinc-400 md:pb-8">
             <div className="flex items-center gap-2">
               <Image src="/images/cloud-logo.png" alt="Logo" width={24} height={24} className="h-6 w-6 object-contain" />
-              <span className="font-bold">Isan Air Intelligence</span>
+              <span className="font-bold text-zinc-800 dark:text-zinc-200">Isan Air Intelligence</span>
             </div>
-            <p>ข้อมูลเชิงสาธิตจาก Supabase · Isan Air Intelligence · © 2026</p>
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px]">
+              <span>ข้อมูลคุณภาพอากาศ 20 จังหวัดภาคอีสาน · © 2026</span>
+              <span className="text-zinc-300 dark:text-zinc-700">·</span>
+              <Link
+                href="/system"
+                className="inline-flex items-center gap-1.5 font-semibold text-zinc-600 dark:text-zinc-300 hover:text-teal-600 dark:hover:text-teal-400 transition"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span>ตรวจสอบสถานะระบบ (System Status) ↗</span>
+              </Link>
+            </div>
           </footer>
           <MobileNav />
         </AppProviders>
