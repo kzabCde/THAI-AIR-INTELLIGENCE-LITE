@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, AlertTriangle } from "lucide-react";
 import type { ProvinceSnapshot } from "@/services/types";
 
 export function WatchlistAndGoodAir({
@@ -15,60 +15,69 @@ export function WatchlistAndGoodAir({
     .sort((a, b) => (b.pm25 ?? 0) - (a.pm25 ?? 0))
     .slice(0, 5);
 
+  const hasRisk = highRiskProvinces.length > 0;
+
   return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-bold text-fg">สถานการณ์ที่ควรรู้</h3>
-
-      {/* Standalone Real Watchlist Card */}
-      <div className="rounded-3xl border border-rose-500/20 bg-rose-50/30 dark:bg-rose-950/20 p-4 sm:p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <h4 className="text-xs font-black text-rose-600 dark:text-rose-400">
-            จังหวัดที่ควรเฝ้าระวัง
-          </h4>
-          {highRiskProvinces.length > 0 && (
-            <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
-              พบ {highRiskProvinces.length} จังหวัดที่มีฝุ่นเกินเกณฑ์
-            </span>
-          )}
-        </div>
-
-        {highRiskProvinces.length > 0 ? (
-          <div className="space-y-2">
-            {highRiskProvinces.map((s, idx) => (
-              <Link
-                key={s.province.id}
-                href={`/province/${s.province.id}`}
-                className="flex items-center justify-between rounded-2xl bg-white/90 dark:bg-zinc-900/90 p-2.5 text-xs font-bold transition hover:bg-white border border-rose-100 dark:border-rose-900/40"
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 font-extrabold text-[10px] text-white">
-                    {idx + 1}
-                  </span>
-                  <span className="text-zinc-900 dark:text-zinc-100">{s.province.nameTh}</span>
-                </div>
-
-                <div className="flex items-center gap-3 text-[11px] font-black text-rose-600 dark:text-rose-400 tabular-nums">
-                  <span>PM2.5: {Math.round(s.pm25 ?? 0)} µg/m³</span>
-                  <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px]">
-                    AQI {s.aqi ?? 0}
-                  </span>
-                </div>
-              </Link>
-            ))}
-          </div>
+    <div className="rounded-2xl border border-zinc-100 bg-white/80 p-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/80">
+      {/* Header */}
+      <div className="mb-3 flex items-center gap-2">
+        {hasRisk ? (
+          <AlertTriangle size={14} className="text-amber-500" />
         ) : (
-          /* Empty State when 100% of provinces have good/safe air quality */
-          <div className="flex flex-col items-center justify-center py-6 text-center space-y-2 bg-white/60 dark:bg-zinc-900/60 rounded-2xl border border-emerald-200/60 dark:border-emerald-800/40">
-            <ShieldCheck size={28} className="text-emerald-500" />
-            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
-              ไม่มีจังหวัดที่ต้องเฝ้าระวังในขณะนี้
-            </span>
-            <span className="text-[10px] font-medium text-zinc-500">
-              ทุกจังหวัดในภาคอีสานมีคุณภาพอากาศอยู่ในเกณฑ์ดีและปลอดภัย
-            </span>
-          </div>
+          <ShieldCheck size={14} className="text-emerald-500" />
+        )}
+        <h3 className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+          {hasRisk ? "จังหวัดที่ควรเฝ้าระวัง" : "สถานการณ์อากาศ"}
+        </h3>
+        {hasRisk && (
+          <span className="ml-auto rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
+            {highRiskProvinces.length} จังหวัด
+          </span>
         )}
       </div>
+
+      {hasRisk ? (
+        <div className="space-y-1.5">
+          {highRiskProvinces.map((s, idx) => (
+            <Link
+              key={s.province.id}
+              href={`/province/${s.province.id}`}
+              className="flex items-center justify-between rounded-xl bg-zinc-50/80 p-2.5 text-xs transition hover:bg-zinc-100 dark:bg-zinc-800/50 dark:hover:bg-zinc-800"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-5 w-5 items-center justify-center rounded-md bg-amber-100 text-[10px] font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                  {idx + 1}
+                </span>
+                <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                  {s.province.nameTh}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 tabular-nums">
+                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                  {Math.round(s.pm25 ?? 0)} µg/m³
+                </span>
+                <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                  AQI {s.aqi ?? 0}
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        /* Empty State — all provinces safe */
+        <div className="flex items-center gap-3 rounded-xl bg-emerald-50/50 p-3.5 dark:bg-emerald-950/10">
+          <ShieldCheck size={20} className="shrink-0 text-emerald-400" />
+          <div>
+            <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+              ทุกจังหวัดอยู่ในเกณฑ์ปลอดภัย
+            </p>
+            <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+              ไม่มีจังหวัดที่ต้องเฝ้าระวังในขณะนี้
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
