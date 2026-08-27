@@ -64,10 +64,10 @@ export function OverviewMiniMap({
         </Link>
       </div>
 
-      {/* ── Map Card Container ── */}
+      {/* ── Map Card Container (Compact & Sleek) ── */}
       <div className="rounded-2xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-xs">
-        {/* Interactive Leaflet mini map */}
-        <div className="h-[360px] sm:h-[420px] w-full">
+        {/* Interactive Leaflet mini map (Compact Height) */}
+        <div className="h-[180px] sm:h-[220px] w-full">
           <IsanMapCard
             provinces={mapProvinces}
             height="h-full"
@@ -80,24 +80,24 @@ export function OverviewMiniMap({
         </div>
 
         {/* Quick Summary Pill Bar at bottom of map */}
-        <div className="px-3.5 py-2.5 bg-zinc-50/90 dark:bg-zinc-900/90 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="px-3 py-1.5 bg-zinc-50/90 dark:bg-zinc-900/90 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">
-              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+            <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 text-[11px]">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
               <span>อยู่ในเกณฑ์ดี <strong className="font-bold text-zinc-900 dark:text-white">{goodAirCount}</strong>/20 จังหวัด</span>
             </div>
 
-            <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">
-              <Flame className="h-4 w-4 text-orange-500" />
+            <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 text-[11px]">
+              <Flame className="h-3.5 w-3.5 text-orange-500" />
               <span>จุดความร้อน <strong className="font-bold text-zinc-900 dark:text-white">{overview.totalHotspots ?? 0}</strong> จุด</span>
             </div>
           </div>
 
           <Link
             href="/map"
-            className="text-[11px] font-bold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white underline underline-offset-2"
+            className="text-[10.5px] font-bold text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
           >
-            ดูทิศทางลมและชั้นข้อมูลแบบเต็ม →
+            เปิดแผนที่เต็มรูปแบบ →
           </Link>
         </div>
       </div>
