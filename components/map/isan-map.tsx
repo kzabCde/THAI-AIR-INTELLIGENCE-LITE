@@ -18,13 +18,43 @@ L.Icon.Default.mergeOptions({
 });
 
 /** Helper component to fly/pan map to a selected province from dropdown */
-function MapFlyTo({ province }: { province?: MapProvince }) {
+function MapFlyTo({
+  province,
+  isMiniPreview = false,
+}: {
+  province?: MapProvince;
+  isMiniPreview?: boolean;
+}) {
   const map = useMap();
   useEffect(() => {
+    map.invalidateSize();
     if (province) {
-      map.flyTo([province.lat, province.lon], 9, { duration: 1.0 });
+      // In mini preview, zoom 8.0 centers the province pin perfectly in the middle
+      const targetZoom = isMiniPreview ? 8.0 : 9;
+      map.flyTo([province.lat, province.lon], targetZoom, {
+        duration: 0.8,
+        easeLinearity: 0.25,
+      });
+    } else {
+      map.flyTo(ISAN_CENTER, isMiniPreview ? 6.5 : 7, { duration: 0.8 });
     }
-  }, [province, map]);
+  }, [province, isMiniPreview, map]);
+  return null;
+}
+
+/** Map Auto-Resizer for dynamic and mini containers */
+function MapAutoResizer() {
+  const map = useMap();
+  useEffect(() => {
+    const t1 = setTimeout(() => map.invalidateSize(), 50);
+    const t2 = setTimeout(() => map.invalidateSize(), 250);
+    const t3 = setTimeout(() => map.invalidateSize(), 600);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [map]);
   return null;
 }
 
@@ -139,6 +169,7 @@ export default function IsanMap({
   totalHotspots = 0,
   windSpeed = 0,
   windDirection = "ไม่มีข้อมูล",
+  isMiniPreview = false,
 }: {
   provinces: MapProvince[];
   activeMode?: MapFilterMode;
@@ -148,6 +179,7 @@ export default function IsanMap({
   totalHotspots?: number;
   windSpeed?: number;
   windDirection?: string;
+  isMiniPreview?: boolean;
 }) {
   const router = useRouter();
   const selectedProvince = useMemo(
@@ -163,21 +195,22 @@ export default function IsanMap({
   const provincesWithHotspots = provinces.filter((p) => (p.hotspots ?? 0) > 0).length;
 
   return (
-    <div className="relative w-full h-full min-h-[540px] rounded-3xl overflow-hidden shadow-lg border border-zinc-200 dark:border-zinc-800">
+    <div className={`relative w-full h-full ${isMiniPreview ? "min-h-[180px] rounded-2xl" : "min-h-[540px] rounded-3xl"} overflow-hidden shadow-lg border border-zinc-200 dark:border-zinc-800`}>
       <MapContainer
-        center={ISAN_CENTER}
-        zoom={7}
+        center={selectedProvince ? [selectedProvince.lat, selectedProvince.lon] : ISAN_CENTER}
+        zoom={selectedProvince ? (isMiniPreview ? 8.0 : 9) : (isMiniPreview ? 6.5 : 7)}
         minZoom={5}
-        scrollWheelZoom={true}
+        scrollWheelZoom={!isMiniPreview}
         zoomControl={false}
         className="h-full w-full z-0"
         preferCanvas
       >
         {/* Fly to selected province */}
-        <MapFlyTo province={selectedProvince} />
+        <MapFlyTo province={selectedProvince} isMiniPreview={isMiniPreview} />
+        <MapAutoResizer />
 
-        {/* Custom Zoom Controls */}
-        <CustomZoomControls />
+        {/* Custom Zoom Controls (Only in full map) */}
+        {!isMiniPreview && <CustomZoomControls />}
 
         {/* Base Tile Layer: Google Maps Hybrid Satellite */}
         <TileLayer
@@ -293,175 +326,181 @@ export default function IsanMap({
         })}
       </MapContainer>
 
-      {/* ── Compact Summary Card (Top Left) ── */}
-      <div className="absolute left-2 top-2 z-10 pointer-events-auto transition-all duration-200">
-        {showSummaryCard ? (
-          <div className="max-w-[145px] rounded-xl border border-white/15 bg-slate-900/90 px-2.5 py-1.5 text-white backdrop-blur-md shadow-xl space-y-0.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[8.5px] font-bold text-slate-400 uppercase tracking-wide leading-tight">
-                {activeMode === "hotspot"
-                  ? "จุดความร้อน"
-                  : activeMode === "weather"
-                  ? "อุณหภูมิเฉลี่ย"
-                  : activeMode === "wind"
-                  ? "ลมเฉลี่ย"
-                  : activeMode === "aqi"
-                  ? "AQI เฉลี่ย"
-                  : "PM2.5 เฉลี่ย"}
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowSummaryCard(false)}
-                className="p-0.5 text-slate-500 hover:text-white transition"
-              >
-                <ChevronUp size={11} />
-              </button>
-            </div>
-
-            <div className="flex items-baseline gap-1">
-              <span className="text-lg font-black tabular-nums leading-none">
-                {activeMode === "hotspot"
-                  ? totalHotspots
-                  : activeMode === "weather"
-                  ? `${Math.round(
-                      provinces.reduce((s, p) => s + (p.temperature ?? 0), 0) /
-                        (provinces.filter((p) => p.temperature != null).length || 1)
-                    )}°`
-                  : activeMode === "wind"
-                  ? `${windSpeed}`
-                  : activeMode === "aqi"
-                  ? Math.round(avgPm25 * 2.2)
-                  : fmtPm25(avgPm25)}
-              </span>
-              <span className="text-[9px] font-bold text-slate-400">
-                {activeMode === "hotspot"
-                  ? "จุด"
-                  : activeMode === "weather"
-                  ? "C"
-                  : activeMode === "wind"
-                  ? "km/h"
-                  : activeMode === "aqi"
-                  ? "AQI"
-                  : "µg/m³"}
-              </span>
-            </div>
-
-            {activeMode === "hotspot" ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-orange-600/90 px-1.5 py-[1px] text-[8px] font-black text-white">
-                <span className="h-1 w-1 rounded-full bg-white animate-pulse" />
-                {provincesWithHotspots} จว.
-              </span>
-            ) : (
-              <div className="flex items-center gap-1">
-                <span
-                  className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[8px] font-black text-white"
-                  style={{ backgroundColor: avgBand.color }}
+      {/* ── Compact Summary Card (Top Left - Full Map Only) ── */}
+      {!isMiniPreview && (
+        <div className="absolute left-2 top-2 z-10 pointer-events-auto transition-all duration-200">
+          {showSummaryCard ? (
+            <div className="max-w-[145px] rounded-xl border border-white/15 bg-slate-900/90 px-2.5 py-1.5 text-white backdrop-blur-md shadow-xl space-y-0.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[8.5px] font-bold text-slate-400 uppercase tracking-wide leading-tight">
+                  {activeMode === "hotspot"
+                    ? "จุดความร้อน"
+                    : activeMode === "weather"
+                    ? "อุณหภูมิเฉลี่ย"
+                    : activeMode === "wind"
+                    ? "ลมเฉลี่ย"
+                    : activeMode === "aqi"
+                    ? "AQI เฉลี่ย"
+                    : "PM2.5 เฉลี่ย"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowSummaryCard(false)}
+                  className="p-0.5 text-slate-500 hover:text-white transition"
                 >
+                  <ChevronUp size={11} />
+                </button>
+              </div>
+
+              <div className="flex items-baseline gap-1">
+                <span className="text-lg font-black tabular-nums leading-none">
+                  {activeMode === "hotspot"
+                    ? totalHotspots
+                    : activeMode === "weather"
+                    ? `${Math.round(
+                        provinces.reduce((s, p) => s + (p.temperature ?? 0), 0) /
+                          (provinces.filter((p) => p.temperature != null).length || 1)
+                      )}°`
+                    : activeMode === "wind"
+                    ? `${windSpeed}`
+                    : activeMode === "aqi"
+                    ? Math.round(avgPm25 * 2.2)
+                    : fmtPm25(avgPm25)}
+                </span>
+                <span className="text-[9px] font-bold text-slate-400">
+                  {activeMode === "hotspot"
+                    ? "จุด"
+                    : activeMode === "weather"
+                    ? "C"
+                    : activeMode === "wind"
+                    ? "km/h"
+                    : activeMode === "aqi"
+                    ? "AQI"
+                    : "µg/m³"}
+                </span>
+              </div>
+
+              {activeMode === "hotspot" ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-orange-600/90 px-1.5 py-[1px] text-[8px] font-black text-white">
                   <span className="h-1 w-1 rounded-full bg-white animate-pulse" />
-                  {avgBand.labelTh}
+                  {provincesWithHotspots} จว.
                 </span>
-                <span className="text-[8px] font-semibold text-slate-400">
-                  เกิน {exceededCount} จว.
-                </span>
-              </div>
-            )}
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setShowSummaryCard(true)}
-            className="flex items-center gap-1 rounded-xl border border-white/20 bg-slate-900/90 px-2 py-1 text-[9.5px] font-black text-white backdrop-blur-md shadow-lg hover:bg-slate-800 transition"
-          >
-            {activeMode === "hotspot" ? (
-              <>
-                <Flame size={10} className="text-orange-500 fill-orange-500" />
-                <span>🔥 {totalHotspots}</span>
-              </>
-            ) : (
-              <>
-                <Activity size={10} className="text-blue-400" />
-                <span>{fmtPm25(avgPm25)}</span>
-              </>
-            )}
-            <ChevronDown size={11} />
-          </button>
-        )}
-      </div>
-
-      {/* ── Compact Legend (Bottom Right) ── */}
-      <div className="absolute right-2 bottom-2 z-10 hidden sm:block pointer-events-auto transition-all duration-200">
-        {showLegendCard ? (
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-900/95 p-2 text-[8.5px] backdrop-blur-md shadow-lg text-zinc-900 dark:text-zinc-100 space-y-1">
-            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-0.5">
-              <span className="font-black text-[9.5px]">
-                {activeMode === "hotspot" ? "จุดความร้อน" : "ระดับ AQI"}
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowLegendCard(false)}
-                className="p-0.5 text-zinc-400 hover:text-zinc-700 dark:hover:text-white transition"
-              >
-                <ChevronDown size={11} />
-              </button>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[8px] font-black text-white"
+                    style={{ backgroundColor: avgBand.color }}
+                  >
+                    <span className="h-1 w-1 rounded-full bg-white animate-pulse" />
+                    {avgBand.labelTh}
+                  </span>
+                  <span className="text-[8px] font-semibold text-slate-400">
+                    เกิน {exceededCount} จว.
+                  </span>
+                </div>
+              )}
             </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowSummaryCard(true)}
+              className="flex items-center gap-1 rounded-xl border border-white/20 bg-slate-900/90 px-2 py-1 text-[9.5px] font-black text-white backdrop-blur-md shadow-lg hover:bg-slate-800 transition"
+            >
+              {activeMode === "hotspot" ? (
+                <>
+                  <Flame size={10} className="text-orange-500 fill-orange-500" />
+                  <span>🔥 {totalHotspots}</span>
+                </>
+              ) : (
+                <>
+                  <Activity size={10} className="text-blue-400" />
+                  <span>{fmtPm25(avgPm25)}</span>
+                </>
+              )}
+              <ChevronDown size={11} />
+            </button>
+          )}
+        </div>
+      )}
 
-            {activeMode === "hotspot" ? (
-              <div className="space-y-0.5 font-bold">
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-orange-600 shrink-0" />
-                  <span>มีจุดความร้อน</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-slate-600 shrink-0" />
-                  <span>ไม่มี (0)</span>
-                </div>
+      {/* ── Compact Legend (Bottom Right - Full Map Only) ── */}
+      {!isMiniPreview && (
+        <div className="absolute right-2 bottom-2 z-10 hidden sm:block pointer-events-auto transition-all duration-200">
+          {showLegendCard ? (
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-900/95 p-2 text-[8.5px] backdrop-blur-md shadow-lg text-zinc-900 dark:text-zinc-100 space-y-1">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-0.5">
+                <span className="font-black text-[9.5px]">
+                  {activeMode === "hotspot" ? "จุดความร้อน" : "ระดับ AQI"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowLegendCard(false)}
+                  className="p-0.5 text-zinc-400 hover:text-zinc-700 dark:hover:text-white transition"
+                >
+                  <ChevronDown size={11} />
+                </button>
               </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-x-2.5 gap-y-0.5 font-bold">
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
-                  <span>ดีมาก</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                  <span>ปานกลาง</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-lime-500 shrink-0" />
-                  <span>ดี</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" />
-                  <span>มีผลกระทบ</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
-                  <span>อันตราย</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-purple-600 shrink-0" />
-                  <span>วิกฤต</span>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setShowLegendCard(true)}
-            className="flex items-center gap-1 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white/95 dark:bg-zinc-900/95 px-2 py-1 text-[9.5px] font-black text-zinc-900 dark:text-zinc-100 backdrop-blur-md shadow-lg hover:bg-zinc-100 transition"
-          >
-            <Palette size={10} className="text-emerald-500" />
-            <span>สัญลักษณ์</span>
-            <ChevronUp size={11} />
-          </button>
-        )}
-      </div>
 
-      {/* Scale Bar */}
-      <div className="absolute left-2 bottom-2 z-10 bg-slate-900/80 backdrop-blur-xs px-1.5 py-0.5 rounded-md text-[8px] font-black text-white border border-white/15">
-        50 km —
-      </div>
+              {activeMode === "hotspot" ? (
+                <div className="space-y-0.5 font-bold">
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-orange-600 shrink-0" />
+                    <span>มีจุดความร้อน</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-slate-600 shrink-0" />
+                    <span>ไม่มี (0)</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-2.5 gap-y-0.5 font-bold">
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+                    <span>ดีมาก</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                    <span>ปานกลาง</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-lime-500 shrink-0" />
+                    <span>ดี</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" />
+                    <span>มีผลกระทบ</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
+                    <span>อันตราย</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-purple-600 shrink-0" />
+                    <span>วิกฤต</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowLegendCard(true)}
+              className="flex items-center gap-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/90 px-2 py-1 text-[9.5px] font-bold text-zinc-700 dark:text-zinc-300 backdrop-blur-md shadow-lg hover:bg-white dark:hover:bg-zinc-900 transition"
+            >
+              <Palette size={10} className="text-zinc-500" />
+              <span>เกณฑ์</span>
+              <ChevronUp size={11} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Scale Bar (Full Map Only) */}
+      {!isMiniPreview && (
+        <div className="absolute left-2 bottom-2 z-10 bg-slate-900/80 backdrop-blur-xs px-1.5 py-0.5 rounded-md text-[8px] font-black text-white border border-white/15">
+          50 km —
+        </div>
+      )}
     </div>
   );
 }

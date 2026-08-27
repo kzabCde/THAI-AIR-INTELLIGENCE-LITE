@@ -76,6 +76,7 @@ export function OverviewMiniMap({
             avgPm25={overview.avgPm25 ?? 0}
             exceededCount={exceededCount}
             totalHotspots={overview.totalHotspots ?? 0}
+            isMiniPreview={true}
           />
         </div>
 
