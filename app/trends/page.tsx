@@ -49,7 +49,7 @@ export default async function TrendsPage({
     return (
       <>
         <Suspense fallback={null}>
-          <ProvinceRedirect />
+          <ProvinceRedirect page="trends" />
         </Suspense>
         <TrendsDashboard
           province={province}

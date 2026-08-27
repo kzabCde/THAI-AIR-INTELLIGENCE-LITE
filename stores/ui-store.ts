@@ -5,10 +5,13 @@ import { persist } from "zustand/middleware";
 
 export type RealtimeStatus = "connecting" | "live" | "offline" | "disabled";
 
+/** Page keys for per-page province memory */
+export type PageKey = "home" | "map" | "forecast" | "trends";
+
 type UiState = {
-  /** Province currently focused across selectors (id like "TH-30"). */
-  selectedProvinceId: string | null;
-  setSelectedProvince: (id: string | null) => void;
+  /** Per-page province memory: each page remembers its own last-selected province */
+  provinceByPage: Record<PageKey, string | null>;
+  setPageProvince: (page: PageKey, id: string | null) => void;
 
   /** Whether realtime-driven refetching is enabled. */
   autoRefresh: boolean;
@@ -25,8 +28,16 @@ type UiState = {
 export const useUiStore = create<UiState>()(
   persist(
     (set) => ({
-      selectedProvinceId: null,
-      setSelectedProvince: (id) => set({ selectedProvinceId: id }),
+      provinceByPage: {
+        home: null,
+        map: null,
+        forecast: null,
+        trends: null,
+      },
+      setPageProvince: (page, id) =>
+        set((s) => ({
+          provinceByPage: { ...s.provinceByPage, [page]: id },
+        })),
 
       autoRefresh: true,
       toggleAutoRefresh: () => set((s) => ({ autoRefresh: !s.autoRefresh })),
@@ -38,9 +49,9 @@ export const useUiStore = create<UiState>()(
       markEvent: () => set({ lastEventAt: Date.now() }),
     }),
     {
-      name: "isan-air-last-province",
-      // Only persist the selectedProvinceId to localStorage
-      partialize: (state) => ({ selectedProvinceId: state.selectedProvinceId }),
+      name: "isan-air-ui",
+      // Only persist per-page province selections to localStorage
+      partialize: (state) => ({ provinceByPage: state.provinceByPage }),
     },
   ),
 );

@@ -56,7 +56,7 @@ export default async function ForecastPage({
   return (
     <>
       <Suspense fallback={null}>
-        <ProvinceRedirect />
+        <ProvinceRedirect page="forecast" />
       </Suspense>
       <RedesignedForecastDashboard
         province={province}

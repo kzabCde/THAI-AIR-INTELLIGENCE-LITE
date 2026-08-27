@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
-import { useProvinceMemory } from "@/hooks/use-province-memory";
+import { useUiStore } from "@/stores/ui-store";
 import { EmptyState } from "@/components/ui/states";
 import { bandForPm25, pm25ToAqi } from "@/lib/aqi";
 import { fmtPm25 } from "@/lib/format";
@@ -95,7 +95,7 @@ export function TrendsDashboard({
   rankings?: ProvinceTrendSummary[];
 }) {
   const router = useRouter();
-  const { rememberProvince } = useProvinceMemory();
+  const setPageProvince = useUiStore((s) => s.setPageProvince);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "deepdive">("overview");
 
@@ -108,7 +108,7 @@ export function TrendsDashboard({
   );
 
   function navigate(nextProvince: string, nextRange: number) {
-    if (nextProvince !== "all") rememberProvince(nextProvince);
+    if (nextProvince !== "all") setPageProvince("trends", nextProvince);
     router.push(`/trends?province=${encodeURIComponent(nextProvince)}&range=${nextRange}`);
   }
 

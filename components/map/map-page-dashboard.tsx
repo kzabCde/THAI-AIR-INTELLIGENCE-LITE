@@ -6,7 +6,7 @@ import { MapControlBar } from "@/components/map/map-control-bar";
 import { IsanMapCard } from "@/components/map/isan-map-card";
 import { MapBottomCards } from "@/components/map/map-bottom-cards";
 import { fmtTimeTh } from "@/lib/format";
-import { useProvinceMemory } from "@/hooks/use-province-memory";
+import { useUiStore } from "@/stores/ui-store";
 import type { MapProvince, MapFilterMode } from "@/components/map/types";
 import type { RegionOverview } from "@/services/types";
 
@@ -29,11 +29,11 @@ export function MapPageDashboard({
   const [activeMode, setActiveMode] = useState<MapFilterMode>("pm25");
   const [selectedProvinceId, setSelectedProvinceId] = useState<string>("all");
   const [refreshKey, setRefreshKey] = useState<number>(0);
-  const { rememberProvince } = useProvinceMemory();
+  const setPageProvince = useUiStore((s) => s.setPageProvince);
 
   const handleProvinceChange = (id: string) => {
     setSelectedProvinceId(id);
-    if (id !== "all") rememberProvince(id);
+    if (id !== "all") setPageProvince("map", id);
   };
 
   const exceededCount = overview.snapshots.filter(

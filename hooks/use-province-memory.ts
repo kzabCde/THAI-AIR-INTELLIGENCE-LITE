@@ -1,51 +1,36 @@
 "use client";
 
 import { useEffect } from "react";
-import { useUiStore } from "@/stores/ui-store";
+import { useUiStore, type PageKey } from "@/stores/ui-store";
 
 /**
- * Hook that reads the last selected province from localStorage-backed Zustand store.
- * Returns: { rememberedProvinceId, rememberProvince }
+ * Hook for per-page province memory.
+ * Each page remembers its own last-selected province independently.
  *
- * - `rememberedProvinceId`: The province ID saved in localStorage, or null if none.
- * - `rememberProvince(id)`: Save a new province ID to localStorage and Zustand store.
- */
-export function useProvinceMemory() {
-  const selectedProvinceId = useUiStore((s) => s.selectedProvinceId);
-  const setSelectedProvince = useUiStore((s) => s.setSelectedProvince);
-
-  return {
-    rememberedProvinceId: selectedProvinceId,
-    rememberProvince: setSelectedProvince,
-  };
-}
-
-/**
- * Hook for pages that receive `initialProvinceId` from SSR.
- * On mount, if there's a remembered province in localStorage, uses it instead.
- * When user selects a province, saves it.
+ * @param page - Which page is using this hook (home | map | forecast | trends)
+ * @param initialProvinceId - SSR-provided default province
  *
  * Returns: { activeProvinceId, setActiveProvince }
  */
 export function useProvincePersistence(
+  page: PageKey,
   initialProvinceId: string,
-  onProvinceChange?: (id: string) => void,
 ) {
-  const { rememberedProvinceId, rememberProvince } = useProvinceMemory();
+  const rememberedId = useUiStore((s) => s.provinceByPage[page]);
+  const setPageProvince = useUiStore((s) => s.setPageProvince);
 
-  // On first render, if we have a remembered province, use it
-  const activeProvinceId = rememberedProvinceId ?? initialProvinceId;
+  // Use remembered province if available, otherwise use SSR default
+  const activeProvinceId = rememberedId ?? initialProvinceId;
 
-  // Sync initial province to store on mount if store is empty
+  // Sync initial province to store on mount if store is empty for this page
   useEffect(() => {
-    if (!rememberedProvinceId && initialProvinceId) {
-      rememberProvince(initialProvinceId);
+    if (!rememberedId && initialProvinceId) {
+      setPageProvince(page, initialProvinceId);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setActiveProvince = (id: string) => {
-    rememberProvince(id);
-    onProvinceChange?.(id);
+    setPageProvince(page, id);
   };
 
   return { activeProvinceId, setActiveProvince };

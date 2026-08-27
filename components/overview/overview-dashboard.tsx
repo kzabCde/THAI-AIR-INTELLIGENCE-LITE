@@ -19,7 +19,7 @@ export function OverviewDashboard({
   initialProvinceId: string;
 }) {
   const router = useRouter();
-  const { activeProvinceId, setActiveProvince } = useProvincePersistence(initialProvinceId);
+  const { activeProvinceId, setActiveProvince } = useProvincePersistence("home", initialProvinceId);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleRefreshAll = () => {
