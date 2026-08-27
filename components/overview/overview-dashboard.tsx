@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ProvinceHeroCard } from "@/components/overview/province-hero-card";
 import { HealthAdviceGrid } from "@/components/overview/health-advice-grid";
+import { OverviewMiniMap } from "@/components/overview/overview-mini-map";
 import { AiForecastHighlights } from "@/components/overview/ai-forecast-highlights";
 import { WatchlistAndGoodAir } from "@/components/overview/watchlist-and-good-air";
 import { AnnouncementBanner } from "@/components/overview/announcement-banner";
@@ -62,7 +63,13 @@ export function OverviewDashboard({
         }}
       />
 
-      {/* 3. Real ML Forecast Predictions (24h Trend Chart & 7-Day Forecast with AqiFaceIcon & Full Refresh Trigger) */}
+      {/* 3. Mini Isan Air Quality Map Preview (Click to open full /map) */}
+      <OverviewMiniMap
+        overview={overview}
+        selectedProvinceId={selectedProvinceId}
+      />
+
+      {/* 4. Real ML Forecast Predictions (24h Trend Chart & 7-Day Forecast with AqiFaceIcon & Full Refresh Trigger) */}
       <AiForecastHighlights
         provinceId={selectedProvinceId}
         avgAqi={currentAqi}
