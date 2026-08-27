@@ -268,29 +268,29 @@ export function HealthAdviceGrid({
         </span>
       </div>
 
-      {/* ── Tab Content Container ── */}
-      <div className="rounded-2xl border border-zinc-100 bg-white p-3.5 sm:p-4 shadow-xs dark:border-zinc-800 dark:bg-zinc-900">
+      {/* ── Tab Content Container (Ultra-Compact) ── */}
+      <div className="rounded-2xl border border-zinc-100 bg-white p-2.5 sm:p-3 shadow-xs dark:border-zinc-800 dark:bg-zinc-900">
         {/* Tab 1: คำแนะนำสุขภาพ */}
         {activeTab === "advice" && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {items.map((item) => {
               const Icon = item.icon;
               return (
-                <div key={item.title} className="flex items-start gap-3">
+                <div key={item.title} className="flex items-start gap-2.5">
                   <div
-                    className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                    className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                     style={{
                       backgroundColor: `${item.color}12`,
                       border: `1.5px solid ${item.color}25`,
                     }}
                   >
-                    <Icon className="h-4 w-4" style={{ color: item.color }} />
+                    <Icon className="h-3.5 w-3.5" style={{ color: item.color }} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[13px] font-bold text-zinc-800 dark:text-zinc-200">
+                    <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
                       {item.title}
                     </p>
-                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
                       {item.desc}
                     </p>
                   </div>
@@ -302,37 +302,37 @@ export function HealthAdviceGrid({
 
         {/* Tab 2: ช่วงเวลาแนะนำสำหรับวันนี้ */}
         {activeTab === "window" && (
-          <div className="space-y-3">
-            <div className={`grid ${bestWindow && riskWindow ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"} gap-3`}>
+          <div className="space-y-2">
+            <div className={`grid ${bestWindow && riskWindow ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"} gap-2 sm:gap-2.5`}>
               {/* กล่องเขียว: อากาศดีที่สุด */}
-              <div className="rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
+              <div className="rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 p-2.5 sm:p-3 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                    <Leaf className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  <div className="flex items-center gap-1.5 text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">
+                    <Leaf className="h-3 w-3 text-emerald-600 shrink-0" />
                     <span>อากาศดีที่สุด</span>
                   </div>
-                  <p className="text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-400 mt-1 leading-tight">
+                  <p className="text-sm sm:text-base font-black text-emerald-700 dark:text-emerald-400 mt-0.5 leading-tight">
                     {bestWindow.startTime} - {bestWindow.endTime} น.
                   </p>
                 </div>
-                <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1.5">
+                <p className="text-[10px] sm:text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
                   เหมาะสำหรับกิจกรรมกลางแจ้ง ออกกำลังกาย และเปิดหน้าต่างระบายอากาศ
                 </p>
               </div>
 
               {/* กล่องส้ม: ช่วงเวลาควรระวัง (ถ้ามี) */}
               {riskWindow && (
-                <div className="rounded-xl bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
+                <div className="rounded-xl bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 p-2.5 sm:p-3 flex flex-col justify-between">
                   <div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-orange-600 dark:text-orange-400">
-                      <ShieldAlert className="h-3.5 w-3.5 text-orange-500 shrink-0" />
+                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold text-orange-600 dark:text-orange-400">
+                      <ShieldAlert className="h-3 w-3 text-orange-500 shrink-0" />
                       <span>ช่วงเวลาควรระวัง</span>
                     </div>
-                    <p className="text-base sm:text-lg font-black text-zinc-900 dark:text-white mt-1 leading-tight">
+                    <p className="text-sm sm:text-base font-black text-zinc-900 dark:text-white mt-0.5 leading-tight">
                       {riskWindow.startTime} - {riskWindow.endTime} น.
                     </p>
                   </div>
-                  <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1.5">
+                  <p className="text-[10px] sm:text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
                     ควรหลีกเลี่ยงกิจกรรมกลางแจ้งเป็นเวลานาน และสวมหน้ากากเมื่อออกนอกอาคาร
                   </p>
                 </div>
@@ -340,38 +340,40 @@ export function HealthAdviceGrid({
             </div>
 
             {/* Quick Tip Bar */}
-            <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+            <div className="pt-1.5 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
               <span className="flex items-center gap-1.5">
-                <Wind className="h-3.5 w-3.5 text-teal-500" />
+                <Wind className="h-3 w-3 text-teal-500" />
                 <span>การระบายอากาศที่แนะนำ: ช่วง {bestWindow.startTime} - {bestWindow.endTime} น.</span>
               </span>
             </div>
           </div>
         )}
 
-        {/* Tab 3: กิจกรรมประจำวัน (Lifestyle) */}
+        {/* Tab 3: กิจกรรมประจำวัน (Lifestyle - Ultra Compact 2x2 Grid) */}
         {activeTab === "lifestyle" && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
             {lifestyleItems.map((item) => {
               const Icon = item.icon;
               return (
                 <div
                   key={item.title}
-                  className="rounded-xl border border-zinc-100 dark:border-zinc-800/70 bg-zinc-50/60 dark:bg-zinc-800/30 p-3 flex items-start gap-3"
+                  className="rounded-xl border border-zinc-100/90 dark:border-zinc-800/80 bg-zinc-50/70 dark:bg-zinc-800/40 p-2 sm:p-2.5 flex flex-col justify-between"
                 >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200/60 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 mt-0.5">
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="text-xs font-bold text-zinc-900 dark:text-white">
-                        {item.title}
-                      </span>
-                      <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border ${item.badgeColor}`}>
+                  <div>
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="flex h-5 w-5 sm:h-6 sm:w-6 shrink-0 items-center justify-center rounded-md bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-200/50 dark:border-zinc-700/60 shadow-2xs">
+                          <Icon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                        </div>
+                        <span className="text-[11px] sm:text-xs font-bold text-zinc-900 dark:text-white truncate">
+                          {item.title}
+                        </span>
+                      </div>
+                      <span className={`text-[9px] sm:text-[10px] font-black px-1.5 py-0.2 rounded border shrink-0 ${item.badgeColor}`}>
                         {item.status}
                       </span>
                     </div>
-                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 mt-1">
+                    <p className="text-[10px] sm:text-[10.5px] leading-snug text-zinc-500 dark:text-zinc-400 mt-1 line-clamp-2">
                       {item.desc}
                     </p>
                   </div>
