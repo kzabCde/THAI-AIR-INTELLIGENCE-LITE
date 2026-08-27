@@ -6,6 +6,7 @@ import { MapControlBar } from "@/components/map/map-control-bar";
 import { IsanMapCard } from "@/components/map/isan-map-card";
 import { MapBottomCards } from "@/components/map/map-bottom-cards";
 import { fmtTimeTh } from "@/lib/format";
+import { useProvinceMemory } from "@/hooks/use-province-memory";
 import type { MapProvince, MapFilterMode } from "@/components/map/types";
 import type { RegionOverview } from "@/services/types";
 
@@ -28,6 +29,12 @@ export function MapPageDashboard({
   const [activeMode, setActiveMode] = useState<MapFilterMode>("pm25");
   const [selectedProvinceId, setSelectedProvinceId] = useState<string>("all");
   const [refreshKey, setRefreshKey] = useState<number>(0);
+  const { rememberProvince } = useProvinceMemory();
+
+  const handleProvinceChange = (id: string) => {
+    setSelectedProvinceId(id);
+    if (id !== "all") rememberProvince(id);
+  };
 
   const exceededCount = overview.snapshots.filter(
     (s) => (s.pm25 ?? 0) > 37.5 || (s.aqi ?? 0) > 50,
@@ -88,7 +95,7 @@ export function MapPageDashboard({
         activeMode={activeMode}
         onModeChange={(mode) => setActiveMode(mode)}
         selectedProvinceId={selectedProvinceId}
-        onProvinceChange={(id) => setSelectedProvinceId(id)}
+        onProvinceChange={handleProvinceChange}
       />
 
       {/* 3. Interactive Leaflet Satellite Map Canvas */}

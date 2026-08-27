@@ -8,6 +8,7 @@ import { OverviewMiniMap } from "@/components/overview/overview-mini-map";
 import { AiForecastHighlights } from "@/components/overview/ai-forecast-highlights";
 import { WatchlistAndGoodAir } from "@/components/overview/watchlist-and-good-air";
 import { AnnouncementBanner } from "@/components/overview/announcement-banner";
+import { useProvincePersistence } from "@/hooks/use-province-memory";
 import type { RegionOverview } from "@/services/types";
 
 export function OverviewDashboard({
@@ -18,7 +19,7 @@ export function OverviewDashboard({
   initialProvinceId: string;
 }) {
   const router = useRouter();
-  const [selectedProvinceId, setSelectedProvinceId] = useState(initialProvinceId);
+  const { activeProvinceId, setActiveProvince } = useProvincePersistence(initialProvinceId);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleRefreshAll = () => {
@@ -29,7 +30,7 @@ export function OverviewDashboard({
   };
 
   const activeSnapshot =
-    overview.snapshots.find((s) => s.province.id === selectedProvinceId) ??
+    overview.snapshots.find((s) => s.province.id === activeProvinceId) ??
     overview.snapshots[0];
 
   const currentPm25 = activeSnapshot?.pm25 ?? overview.avgPm25;
@@ -43,8 +44,8 @@ export function OverviewDashboard({
       {/* 1. Hero Banner: Province Selector, Dynamic AQI Color Gradient, Weather Capsule Box & System Refresh */}
       <ProvinceHeroCard
         snapshots={overview.snapshots}
-        initialProvinceId={initialProvinceId}
-        onProvinceChange={(id) => setSelectedProvinceId(id)}
+        initialProvinceId={activeProvinceId}
+        onProvinceChange={(id) => setActiveProvince(id)}
         onRefreshAll={handleRefreshAll}
       />
 
@@ -52,7 +53,7 @@ export function OverviewDashboard({
       <HealthAdviceGrid
         pm25={currentPm25}
         aqi={currentAqi}
-        provinceId={selectedProvinceId}
+        provinceId={activeProvinceId}
         currentWeather={{
           temperature: activeSnapshot?.temperature,
           humidity: activeSnapshot?.humidity,
@@ -66,12 +67,12 @@ export function OverviewDashboard({
       {/* 3. Mini Isan Air Quality Map Preview (Click to open full /map) */}
       <OverviewMiniMap
         overview={overview}
-        selectedProvinceId={selectedProvinceId}
+        selectedProvinceId={activeProvinceId}
       />
 
       {/* 4. Real ML Forecast Predictions (24h Trend Chart & 7-Day Forecast with AqiFaceIcon & Full Refresh Trigger) */}
       <AiForecastHighlights
-        provinceId={selectedProvinceId}
+        provinceId={activeProvinceId}
         avgAqi={currentAqi}
         refreshKey={refreshKey}
         currentWeather={{
@@ -92,3 +93,4 @@ export function OverviewDashboard({
     </div>
   );
 }
+

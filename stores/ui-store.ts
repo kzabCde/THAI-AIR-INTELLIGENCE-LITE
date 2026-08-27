@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export type RealtimeStatus = "connecting" | "live" | "offline" | "disabled";
 
@@ -21,16 +22,25 @@ type UiState = {
   markEvent: () => void;
 };
 
-export const useUiStore = create<UiState>((set) => ({
-  selectedProvinceId: null,
-  setSelectedProvince: (id) => set({ selectedProvinceId: id }),
+export const useUiStore = create<UiState>()(
+  persist(
+    (set) => ({
+      selectedProvinceId: null,
+      setSelectedProvince: (id) => set({ selectedProvinceId: id }),
 
-  autoRefresh: true,
-  toggleAutoRefresh: () => set((s) => ({ autoRefresh: !s.autoRefresh })),
+      autoRefresh: true,
+      toggleAutoRefresh: () => set((s) => ({ autoRefresh: !s.autoRefresh })),
 
-  realtimeStatus: "connecting",
-  setRealtimeStatus: (realtimeStatus) => set({ realtimeStatus }),
+      realtimeStatus: "connecting",
+      setRealtimeStatus: (realtimeStatus) => set({ realtimeStatus }),
 
-  lastEventAt: null,
-  markEvent: () => set({ lastEventAt: Date.now() }),
-}));
+      lastEventAt: null,
+      markEvent: () => set({ lastEventAt: Date.now() }),
+    }),
+    {
+      name: "isan-air-last-province",
+      // Only persist the selectedProvinceId to localStorage
+      partialize: (state) => ({ selectedProvinceId: state.selectedProvinceId }),
+    },
+  ),
+);

@@ -37,6 +37,7 @@ import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
 import { fmtPm25 } from "@/lib/format";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
+import { useProvinceMemory } from "@/hooks/use-province-memory";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 import type { WeatherRow } from "@/services/weather.service";
 import type { RegionOverview } from "@/services/types";
@@ -149,6 +150,7 @@ export function RedesignedForecastDashboard({
   overview,
 }: RedesignedForecastDashboardProps) {
   const router = useRouter();
+  const { rememberProvince } = useProvinceMemory();
   const [horizon, setHorizon] = useState<"24h" | "3d" | "7d">("24h");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
@@ -318,7 +320,10 @@ export function RedesignedForecastDashboard({
                 <ProvinceSelectModal
                   snapshots={overview.snapshots}
                   selectedId={province.id}
-                  onSelect={(id) => router.push(`/forecast?province=${id}`)}
+                  onSelect={(id) => {
+                    rememberProvince(id);
+                    router.push(`/forecast?province=${id}`);
+                  }}
                 />
               </div>
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">

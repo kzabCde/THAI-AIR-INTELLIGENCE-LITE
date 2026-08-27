@@ -7,6 +7,7 @@ import { bandForAqi, bandForPm25 } from "@/lib/aqi";
 import { fmtPm25, fmtTimeTh } from "@/lib/format";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
+import { useProvinceMemory } from "@/hooks/use-province-memory";
 import type { ProvinceSnapshot } from "@/services/types";
 
 function getAqiInnerPanelTheme(aqi: number) {
@@ -52,6 +53,7 @@ export function ProvinceHeroCard({
   onRefreshAll?: () => void;
 }) {
   const router = useRouter();
+  const { rememberProvince } = useProvinceMemory();
   const [selectedId, setSelectedId] = useState(initialProvinceId);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedTime, setLastRefreshedTime] = useState<string | null>(null);
@@ -100,6 +102,7 @@ export function ProvinceHeroCard({
             selectedId={selectedId}
             onSelect={(id) => {
               setSelectedId(id);
+              rememberProvince(id);
               onProvinceChange?.(id);
             }}
           />

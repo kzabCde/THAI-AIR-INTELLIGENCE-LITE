@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { getProvince } from "@/lib/isan";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
@@ -7,6 +8,7 @@ import { getLatestWeather } from "@/services/weather.service";
 import { getRegionOverview } from "@/services/overview.service";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
 import { RedesignedForecastDashboard } from "@/components/forecast/redesigned-forecast-dashboard";
+import { ProvinceRedirect } from "@/components/ui/province-redirect";
 
 /**
  * Forecast Page — Renders real Supabase & ML prediction data with redesigned UI.
@@ -52,11 +54,16 @@ export default async function ForecastPage({
   }
 
   return (
-    <RedesignedForecastDashboard
-      province={province}
-      forecast={forecast}
-      weather={weather}
-      overview={overview}
-    />
+    <>
+      <Suspense fallback={null}>
+        <ProvinceRedirect />
+      </Suspense>
+      <RedesignedForecastDashboard
+        province={province}
+        forecast={forecast}
+        weather={weather}
+        overview={overview}
+      />
+    </>
   );
 }

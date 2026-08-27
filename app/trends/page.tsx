@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { getProvince } from "@/lib/isan";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { isServiceSupabaseConfigured, isSupabaseConfigured } from "@/lib/supabase/server";
@@ -14,6 +15,7 @@ import {
   NetworkRestrictedState,
   NotConfiguredState,
 } from "@/components/ui/states";
+import { ProvinceRedirect } from "@/components/ui/province-redirect";
 
 export const metadata: Metadata = { title: "แนวโน้มย้อนหลัง" };
 export const revalidate = 300;
@@ -45,14 +47,19 @@ export default async function TrendsPage({
     ]);
 
     return (
-      <TrendsDashboard
-        province={province}
-        history={history}
-        rangeDays={rangeDays}
-        throughDate={throughDate}
-        viewMode={isRegional ? "regional" : "province"}
-        rankings={rankings}
-      />
+      <>
+        <Suspense fallback={null}>
+          <ProvinceRedirect />
+        </Suspense>
+        <TrendsDashboard
+          province={province}
+          history={history}
+          rangeDays={rangeDays}
+          throughDate={throughDate}
+          viewMode={isRegional ? "regional" : "province"}
+          rankings={rankings}
+        />
+      </>
     );
   } catch (error) {
     if (isNetworkRestrictedError(error)) return <NetworkRestrictedState />;
