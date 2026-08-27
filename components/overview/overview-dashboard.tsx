@@ -47,8 +47,20 @@ export function OverviewDashboard({
         onRefreshAll={handleRefreshAll}
       />
 
-      {/* 2. Dynamic Health Guidance Pills & Recommended Time Window Tabs */}
-      <HealthAdviceGrid pm25={currentPm25} aqi={currentAqi} provinceId={selectedProvinceId} />
+      {/* 2. Dynamic Health Guidance Pills, Recommended Time Window & Lifestyle Tabs */}
+      <HealthAdviceGrid
+        pm25={currentPm25}
+        aqi={currentAqi}
+        provinceId={selectedProvinceId}
+        currentWeather={{
+          temperature: activeSnapshot?.temperature,
+          humidity: activeSnapshot?.humidity,
+          windSpeed: activeSnapshot?.windSpeed,
+          windDirection: activeSnapshot?.windDirection,
+          precipitation: activeSnapshot?.precipitation,
+          precipitation24h: activeSnapshot?.precipitation24h,
+        }}
+      />
 
       {/* 3. Real ML Forecast Predictions (24h Trend Chart & 7-Day Forecast with AqiFaceIcon & Full Refresh Trigger) */}
       <AiForecastHighlights

@@ -1,9 +1,30 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Activity, Users, ShieldAlert, DoorClosed, Leaf } from "lucide-react";
+import {
+  Activity,
+  Users,
+  ShieldAlert,
+  DoorClosed,
+  Leaf,
+  Bike,
+  Sun,
+  DoorOpen,
+  Car,
+  Wind,
+} from "lucide-react";
 import { bandForAqi, bandForPm25 } from "@/lib/aqi";
-import type { ProvinceForecast, ForecastPoint } from "@/services/types";
+import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
+import type { ProvinceForecast } from "@/services/types";
+
+export interface CurrentWeatherInfo {
+  temperature?: number | null;
+  humidity?: number | null;
+  windSpeed?: number | null;
+  windDirection?: number | null;
+  precipitation?: number | null;
+  precipitation24h?: number | null;
+}
 
 type AdviceItem = {
   title: string;
@@ -45,18 +66,18 @@ function getAdviceItems(aqi: number): AdviceItem[] {
   ];
 }
 
-import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
-
 export function HealthAdviceGrid({
   pm25 = 0,
   aqi = 0,
   provinceId = "TH-40",
+  currentWeather,
 }: {
   pm25?: number;
   aqi?: number;
   provinceId?: string;
+  currentWeather?: CurrentWeatherInfo;
 }) {
-  const [activeTab, setActiveTab] = useState<"advice" | "window">("advice");
+  const [activeTab, setActiveTab] = useState<"advice" | "window" | "lifestyle">("advice");
   const [forecast, setForecast] = useState<ProvinceForecast | null>(null);
 
   useEffect(() => {
@@ -79,6 +100,12 @@ export function HealthAdviceGrid({
   const band = aqi ? bandForAqi(aqi) : bandForPm25(pm25);
   const items = getAdviceItems(aqi);
 
+  const baseTemp = currentWeather?.temperature ?? 28;
+  const baseHumidity = currentWeather?.humidity ?? 70;
+  const baseWind = currentWeather?.windSpeed ?? 5.0;
+  const baseWindDir = currentWeather?.windDirection ?? 180;
+  const basePrecip = currentWeather?.precipitation ?? currentWeather?.precipitation24h ?? 0;
+
   // ── Dynamic 24h Hourly Forecast Strip ──
   const now = new Date();
   const currentHourTimestamp = new Date(
@@ -93,9 +120,14 @@ export function HealthAdviceGrid({
     hoursCount: 24,
     livePm25: forecast?.current ?? (pm25 > 0 ? pm25 : null),
     dailyForecast: forecast?.daily,
+    baseTemp,
+    baseHumidity,
+    baseWind,
+    baseWindDir,
+    precipitation: basePrecip,
   });
 
-  // ── Dynamic Sliding Window Calculation based on real hourly data ──
+  // ── Best Time Window (Lowest 3h PM2.5) ──
   let minAvg = Infinity;
   let bestStartIdx = 0;
   for (let i = 0; i <= hourlyStrip.length - 3; i++) {
@@ -116,7 +148,7 @@ export function HealthAdviceGrid({
     maxPm: bestSlice.length ? Math.round(Math.max(...bestSlice.map((it) => it.pm25))) : 12,
   };
 
-  // Find risk window (> 37.5 µg/m³)
+  // ── Risk Time Window (Highest 4h PM2.5 > 37.5) ──
   let maxAvg = -Infinity;
   let riskStartIdx = 0;
   for (let i = 0; i <= hourlyStrip.length - 4; i++) {
@@ -137,15 +169,65 @@ export function HealthAdviceGrid({
       }
     : null;
 
+  // ── Lifestyle / Activity Suitability Metrics ──
+  const maxRainChanceToday = hourlyStrip.length ? Math.max(...hourlyStrip.map((h) => h.rainChance)) : (basePrecip > 0 ? 80 : 20);
+
+  const lifestyleItems = [
+    {
+      icon: Bike,
+      title: "ออกกำลังกายกลางแจ้ง",
+      status: aqi <= 50 ? "เหมาะสมมาก" : aqi <= 100 ? "พอใช้" : "งดกิจกรรม",
+      badgeColor: aqi <= 50 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : aqi <= 100 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+      desc: aqi <= 50
+        ? "อากาศสะอาด เหมาะสำหรับวิ่ง ปั่นจักรยาน หรือเล่นกีฬากลางแจ้ง"
+        : aqi <= 100
+        ? "ทำได้ตามปกติ แต่ผู้มีโรคประจำตัวหรือภูมิแพ้ควรลดระยะเวลาลง"
+        : "ค่าฝุ่นเกินมาตรฐาน แนะนำออกกำลังกายในอาคารหรือฟิตเนส",
+    },
+    {
+      icon: Sun,
+      title: "ตากผ้ากลางแจ้ง",
+      status: maxRainChanceToday >= 60 ? "เสี่ยงฝนตก" : baseHumidity >= 80 ? "แห้งช้า" : "แห้งไว ไร้ฝุ่น",
+      badgeColor: maxRainChanceToday >= 60 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : baseHumidity >= 80 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+      desc: maxRainChanceToday >= 60
+        ? `มีโอกาสเกิดฝน ${maxRainChanceToday}% แนะนำตากในที่ร่มหรือใช้เครื่องอบผ้า`
+        : baseHumidity >= 80
+        ? `ความชื้นในอากาศ ${Math.round(baseHumidity)}% ผ้าอาจแห้งช้ากว่าปกติเล็กน้อย`
+        : "แดดดี ลมถ่ายเทสะดวก และฝุ่นน้อย ผ้าแห้งไวไม่อับชื้น",
+    },
+    {
+      icon: DoorOpen,
+      title: "การระบายอากาศในบ้าน",
+      status: aqi <= 50 ? "เปิดได้ตลอดวัน" : aqi <= 100 ? "เปิดช่วงบ่าย" : "ปิดมิดชิด",
+      badgeColor: aqi <= 50 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : aqi <= 100 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+      desc: aqi <= 50
+        ? "เปิดหน้าต่างให้อากาศบริสุทธิ์หมุนเวียน ลดการสะสมของ CO₂"
+        : aqi <= 100
+        ? `แนะนำเปิดหน้าต่างเฉพาะช่วง ${bestWindow.startTime} - ${bestWindow.endTime} น. ที่อากาศถ่ายเทดี`
+        : "แนะนำปิดหน้าต่างและเปิดเครื่องฟอกอากาศเพื่อสุขอนามัยที่ดี",
+    },
+    {
+      icon: Car,
+      title: "การล้างรถ",
+      status: maxRainChanceToday >= 50 ? "ชะลอไว้ก่อน" : aqi > 100 ? "ระวังฝุ่นจับ" : "เหมาะสม",
+      badgeColor: maxRainChanceToday >= 50 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : aqi > 100 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+      desc: maxRainChanceToday >= 50
+        ? `มีโอกาสเกิดฝน ${maxRainChanceToday}% ในวันนี้ แนะนำชะลอการล้างรถ`
+        : aqi > 100
+        ? "มีฝุ่นสะสมในบรรยากาศ รถอาจเปื้อนฝุ่นได้ง่ายหลังล้าง"
+        : "ไม่มีแนวโน้มฝนตก สภาพอากาศแจ่มใส ล้างแล้วสะอาดเงางามยาวนาน",
+    },
+  ];
+
   return (
     <div className="space-y-2.5">
-      {/* Tab Switcher Bar */}
-      <div className="flex items-center justify-between">
-        <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800 p-1">
+      {/* ── Tab Switcher Bar ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1 self-start sm:self-auto">
           <button
             type="button"
             onClick={() => setActiveTab("advice")}
-            className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
+            className={`rounded-lg px-2.5 sm:px-3 py-1 text-xs font-bold transition ${
               activeTab === "advice"
                 ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs"
                 : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
@@ -156,26 +238,40 @@ export function HealthAdviceGrid({
           <button
             type="button"
             onClick={() => setActiveTab("window")}
-            className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
+            className={`rounded-lg px-2.5 sm:px-3 py-1 text-xs font-bold transition ${
               activeTab === "window"
                 ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs"
                 : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
             }`}
           >
-            ช่วงเวลาแนะนำวันนี้
+            ช่วงเวลาแนะนำ
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("lifestyle")}
+            className={`rounded-lg px-2.5 sm:px-3 py-1 text-xs font-bold transition ${
+              activeTab === "lifestyle"
+                ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs"
+                : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+            }`}
+          >
+            กิจกรรมประจำวัน
           </button>
         </div>
 
         <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 hidden sm:inline">
           {activeTab === "advice"
             ? `ประเมินตาม AQI ${aqi} (${band.labelTh})`
-            : "ประเมินตามพยากรณ์ 24 ชม."}
+            : activeTab === "window"
+            ? "ประเมินตามพยากรณ์ 24 ชม."
+            : "ประเมินจากคุณภาพอากาศ & สภาพอากาศ"}
         </span>
       </div>
 
-      {/* Card Content */}
+      {/* ── Tab Content Container ── */}
       <div className="rounded-2xl border border-zinc-100 bg-white p-3.5 sm:p-4 shadow-xs dark:border-zinc-800 dark:bg-zinc-900">
-        {activeTab === "advice" ? (
+        {/* Tab 1: คำแนะนำสุขภาพ */}
+        {activeTab === "advice" && (
           <div className="space-y-3">
             {items.map((item) => {
               const Icon = item.icon;
@@ -202,10 +298,13 @@ export function HealthAdviceGrid({
               );
             })}
           </div>
-        ) : (
+        )}
+
+        {/* Tab 2: ช่วงเวลาแนะนำสำหรับวันนี้ */}
+        {activeTab === "window" && (
           <div className="space-y-3">
             <div className={`grid ${bestWindow && riskWindow ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"} gap-3`}>
-              {/* อากาศดีที่สุด */}
+              {/* กล่องเขียว: อากาศดีที่สุด */}
               <div className="rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
@@ -213,15 +312,15 @@ export function HealthAdviceGrid({
                     <span>อากาศดีที่สุด</span>
                   </div>
                   <p className="text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-400 mt-1 leading-tight">
-                    {bestWindow.startTime} - {bestWindow.endTime}
+                    {bestWindow.startTime} - {bestWindow.endTime} น.
                   </p>
                 </div>
-                <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1">
-                  เหมาะสำหรับกิจกรรมกลางแจ้ง ออกกำลังกาย
+                <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1.5">
+                  เหมาะสำหรับกิจกรรมกลางแจ้ง ออกกำลังกาย และเปิดหน้าต่างระบายอากาศ
                 </p>
               </div>
 
-              {/* ช่วงเวลาควรระวัง (ถ้ามี) */}
+              {/* กล่องส้ม: ช่วงเวลาควรระวัง (ถ้ามี) */}
               {riskWindow && (
                 <div className="rounded-xl bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 p-3 sm:p-3.5 flex flex-col justify-between">
                   <div>
@@ -230,15 +329,55 @@ export function HealthAdviceGrid({
                       <span>ช่วงเวลาควรระวัง</span>
                     </div>
                     <p className="text-base sm:text-lg font-black text-zinc-900 dark:text-white mt-1 leading-tight">
-                      {riskWindow.startTime} - {riskWindow.endTime}
+                      {riskWindow.startTime} - {riskWindow.endTime} น.
                     </p>
                   </div>
-                  <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1">
-                    ควรหลีกเลี่ยงกิจกรรมกลางแจ้งเป็นเวลานาน
+                  <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1.5">
+                    ควรหลีกเลี่ยงกิจกรรมกลางแจ้งเป็นเวลานาน และสวมหน้ากากเมื่อออกนอกอาคาร
                   </p>
                 </div>
               )}
             </div>
+
+            {/* Quick Tip Bar */}
+            <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="flex items-center gap-1.5">
+                <Wind className="h-3.5 w-3.5 text-teal-500" />
+                <span>การระบายอากาศที่แนะนำ: ช่วง {bestWindow.startTime} - {bestWindow.endTime} น.</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: กิจกรรมประจำวัน (Lifestyle) */}
+        {activeTab === "lifestyle" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
+            {lifestyleItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.title}
+                  className="rounded-xl border border-zinc-100 dark:border-zinc-800/70 bg-zinc-50/60 dark:bg-zinc-800/30 p-3 flex items-start gap-3"
+                >
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200/60 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 mt-0.5">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-xs font-bold text-zinc-900 dark:text-white">
+                        {item.title}
+                      </span>
+                      <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border ${item.badgeColor}`}>
+                        {item.status}
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 mt-1">
+                      {item.desc}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
