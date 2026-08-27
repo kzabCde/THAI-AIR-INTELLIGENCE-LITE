@@ -81,25 +81,16 @@ export function OverviewMiniMap({
         </div>
 
         {/* Quick Summary Pill Bar at bottom of map */}
-        <div className="px-3 py-1.5 bg-zinc-50/90 dark:bg-zinc-900/90 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 text-[11px]">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-              <span>อยู่ในเกณฑ์ดี <strong className="font-bold text-zinc-900 dark:text-white">{goodAirCount}</strong>/20 จังหวัด</span>
-            </div>
-
-            <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 text-[11px]">
-              <Flame className="h-3.5 w-3.5 text-orange-500" />
-              <span>จุดความร้อน <strong className="font-bold text-zinc-900 dark:text-white">{overview.totalHotspots ?? 0}</strong> จุด</span>
-            </div>
+        <div className="px-3 py-1.5 bg-zinc-50/90 dark:bg-zinc-900/90 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 text-[11px]">
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+            <span>อยู่ในเกณฑ์ดี <strong className="font-bold text-zinc-900 dark:text-white">{goodAirCount}</strong>/20 จังหวัด</span>
           </div>
 
-          <Link
-            href="/map"
-            className="text-[10.5px] font-bold text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
-          >
-            เปิดแผนที่เต็มรูปแบบ →
-          </Link>
+          <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300 text-[11px]">
+            <Flame className="h-3.5 w-3.5 text-orange-500" />
+            <span>จุดความร้อน <strong className="font-bold text-zinc-900 dark:text-white">{overview.totalHotspots ?? 0}</strong> จุด</span>
+          </div>
         </div>
       </div>
     </div>
