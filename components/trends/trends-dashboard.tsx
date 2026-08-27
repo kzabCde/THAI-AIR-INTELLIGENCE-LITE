@@ -642,35 +642,35 @@ function ViewModeBar({
   const isRegional = viewMode === "regional";
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-zinc-100 bg-white p-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-2xl border border-zinc-100 bg-white/80 p-3 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/80 sm:flex-row sm:items-center sm:justify-between">
       {/* Left: View mode toggle + Province selector */}
-      <div className="flex items-center gap-2">
-        {/* Segmented Control: ภาพรวมทั้งภาค / เจาะลึกรายจังหวัด */}
-        <div className="no-scrollbar flex gap-0.5 rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
+      <div className="flex items-center gap-2.5">
+        {/* Segmented Control */}
+        <div className="no-scrollbar flex gap-1 rounded-xl bg-zinc-50 p-1 dark:bg-zinc-800/60">
           <button
             type="button"
             onClick={() => onSwitchMode("regional")}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-black transition sm:text-xs ${
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold transition-all sm:text-xs ${
               isRegional
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+                ? "bg-white text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
+                : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
             }`}
           >
             <Globe size={13} />
-            <span className="hidden sm:inline">ภาพรวมทั้งภาคอีสาน</span>
+            <span className="hidden sm:inline">ทั้งภาคอีสาน</span>
             <span className="sm:hidden">ทั้งภาค</span>
           </button>
           <button
             type="button"
             onClick={() => onSwitchMode("province")}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-black transition sm:text-xs ${
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold transition-all sm:text-xs ${
               !isRegional
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+                ? "bg-white text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
+                : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
             }`}
           >
             <MapPin size={13} />
-            <span className="hidden sm:inline">เจาะลึกรายจังหวัด</span>
+            <span className="hidden sm:inline">รายจังหวัด</span>
             <span className="sm:hidden">รายจังหวัด</span>
           </button>
         </div>
@@ -685,24 +685,24 @@ function ViewModeBar({
           </div>
         )}
         {isRegional && (
-          <span className="flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-bold text-sky-700 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-300">
+          <span className="flex items-center gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-600 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-400">
             <Globe size={12} />
-            20 จังหวัดภาคอีสาน
+            20 จังหวัด
           </span>
         )}
       </div>
 
       {/* Right: Range presets */}
-      <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+      <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-xl bg-zinc-50 p-1 dark:bg-zinc-800/60">
         {RANGE_OPTIONS.map((option) => (
           <button
             key={option.days}
             type="button"
             onClick={() => onSelectRange(option.days)}
-            className={`shrink-0 rounded-full px-3.5 py-1.5 text-[11px] font-bold transition sm:text-xs ${
+            className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all sm:text-xs ${
               rangeDays === option.days
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+                ? "bg-white text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
+                : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
             }`}
           >
             {option.label}
@@ -712,3 +712,4 @@ function ViewModeBar({
     </div>
   );
 }
+
