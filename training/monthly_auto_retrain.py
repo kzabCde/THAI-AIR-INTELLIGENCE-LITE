@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Monthly champion/challenger retraining with fail-closed atomic promotion.
+"""Monthly champion/challenger retraining from Supabase only.
 
-The scheduled path trains a fresh residual LightGBM + pooled Random Forest
-challenger from a read-only Open-Meteo archive plus the trusted Supabase daily
-continuation. The currently active Production run is evaluated on the exact
-same latest 365-day D+1 holdout as the challenger. Production changes only
-when the challenger passes its own deployment gates, is non-inferior on both
-tasks, and materially improves at least one task.
+The historical Open-Meteo/CAMS archive is persisted once in Supabase with
+request-level source lineage. This scheduled retraining path performs no
+Open-Meteo archive requests and has no archive cache dependency. It trains a
+fresh residual LightGBM + pooled Random Forest challenger, evaluates the
+current Production champion on the exact same latest 365-day D+1 holdout, and
+promotes atomically only when the configured promotion policy approves it.
 """
 from __future__ import annotations
 
@@ -20,10 +20,8 @@ import numpy as np
 import pandas as pd
 
 from api.ml.forecast import load_active_task_models, load_runtime_artifact
-from api.ml.portable_trees import (
-    evaluate_lightgbm_regressor,
-    evaluate_random_forest_classifier,
-)
+from api.ml.portable_trees import evaluate_lightgbm_regressor, evaluate_random_forest_classifier
+from training.db_training_data import prepare_db_training_data
 from training.dual_model_config import (
     POOLED_EMBARGO_DAYS,
     POOLED_FEATURE_COLUMNS,
@@ -35,22 +33,10 @@ from training.dual_model_config import (
     POOLED_VALIDATION_DAYS,
     PipelineConfig,
 )
-from training.monthly_archive import (
-    fetch_archive_daily,
-    rebuild_leakage_safe_daily_features,
-)
 from training.pm25_classes import CLASS_IDS
 from training.promotion_policy import POLICY_VERSION, decide_promotion
-from training.supabase_large_artifact_upload import (
-    make_free_plan_upload_and_register,
-)
-from training.train_dual_models import (
-    _json_safe,
-    classification_metrics,
-    fetch_observed_rows,
-    filter_training_rows,
-    regression_metrics,
-)
+from training.supabase_large_artifact_upload import make_free_plan_upload_and_register
+from training.train_dual_models import _json_safe, classification_metrics, regression_metrics
 from training.train_pooled_models import (
     DIRECT_HORIZONS,
     PooledResult,
@@ -65,8 +51,6 @@ from training.train_pooled_models import (
     upload_and_register,
 )
 
-ARCHIVE_START_DATE = "2022-08-01"
-ALLOWED_SOURCES = {"open-meteo"}
 REQUIRED_PROVINCES = 20
 CLASSIFICATION_DEPLOYMENT_THRESHOLDS = {
     "validation_macro_f1": 0.45,
@@ -82,17 +66,7 @@ CLASSIFICATION_DEPLOYMENT_THRESHOLDS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--artifact-dir",
-        type=Path,
-        default=Path("training/artifacts"),
-    )
-    parser.add_argument(
-        "--archive-cache-dir",
-        type=Path,
-        default=Path("training/.cache/open-meteo-monthly"),
-    )
-    parser.add_argument("--archive-start-date", default=ARCHIVE_START_DATE)
+    parser.add_argument("--artifact-dir", type=Path, default=Path("training/artifacts"))
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -107,11 +81,7 @@ def _classification_deployment_gate(classification, split) -> dict:
     test = classification.test_metrics
     reasons: list[str] = []
     checks = (
-        (
-            "validation_macro_f1",
-            validation["macro_f1"],
-            thresholds["validation_macro_f1"],
-        ),
+        ("validation_macro_f1", validation["macro_f1"], thresholds["validation_macro_f1"]),
         (
             "validation_balanced_accuracy",
             validation["balanced_accuracy"],
@@ -124,23 +94,16 @@ def _classification_deployment_gate(classification, split) -> dict:
             test["balanced_accuracy"],
             thresholds["test_balanced_accuracy"],
         ),
-        (
-            "test_weighted_f1",
-            test["weighted_f1"],
-            thresholds["test_weighted_f1"],
-        ),
+        ("test_weighted_f1", test["weighted_f1"], thresholds["test_weighted_f1"]),
     )
     for name, value, minimum in checks:
         if not np.isfinite(value) or float(value) < minimum:
-            reasons.append(
-                f"{name}:{float(value):.6f}<{minimum:.6f}"
-            )
+            reasons.append(f"{name}:{float(value):.6f}<{minimum:.6f}")
     for class_id in (4, 5):
         evidence = test["per_class"][str(class_id)]
         if int(evidence["support"]) < thresholds["critical_support"]:
             reasons.append(
-                f"class_{class_id}_support:{evidence['support']}<"
-                f"{thresholds['critical_support']}"
+                f"class_{class_id}_support:{evidence['support']}<{thresholds['critical_support']}"
             )
         if float(evidence["recall"]) < thresholds["critical_recall"]:
             reasons.append(
@@ -163,16 +126,13 @@ def _classification_deployment_gate(classification, split) -> dict:
     deployment_eligible = not reasons
     classification.global_eligible = deployment_eligible
     classification.global_reasons = (
-        ["eligible_under_pooled_deployment_policy"]
-        if deployment_eligible
-        else reasons
+        ["eligible_under_pooled_deployment_policy"] if deployment_eligible else reasons
     )
     for metrics in classification.province_metrics.values():
         metrics["training_gate_eligible"] = bool(metrics.get("eligible"))
         metrics["deployment_policy"] = "pooled_range_classification_v1"
         metrics["eligible"] = bool(
-            deployment_eligible
-            and int(metrics.get("test_rows", 0)) >= POOLED_TEST_DAYS
+            deployment_eligible and int(metrics.get("test_rows", 0)) >= POOLED_TEST_DAYS
         )
         metrics["local_eligible"] = metrics["eligible"]
     return {
@@ -182,67 +142,6 @@ def _classification_deployment_gate(classification, split) -> dict:
         "training_gate_eligible": training_gate_eligible,
         "training_gate_reasons": training_gate_reasons,
     }
-
-
-def _prepare_training_data(
-    sb,
-    cache_dir: Path,
-    archive_start_date: str,
-):
-    province_ids = tuple(POOLED_PROVINCE_IDS)
-    metadata = fetch_province_metadata(sb, province_ids)
-    raw_database = fetch_observed_rows(sb, province_ids)
-    database = filter_training_rows(raw_database, ALLOWED_SOURCES).copy()
-    if database.empty:
-        raise RuntimeError("trusted database continuation is empty")
-    database["date"] = pd.to_datetime(database["date"]).dt.normalize()
-    database["data_origin"] = "supabase-training-daily-summary-v2"
-    database_first_date = pd.Timestamp(database["date"].min()).normalize()
-    archive_start = pd.Timestamp(archive_start_date).normalize()
-    archive_end = database_first_date - pd.Timedelta(days=1)
-    archive = pd.DataFrame()
-    if archive_start <= archive_end:
-        archive = fetch_archive_daily(
-            metadata,
-            archive_start,
-            archive_end,
-            cache_directory=cache_dir,
-        )
-    combined = pd.concat(
-        [archive, database],
-        ignore_index=True,
-        sort=False,
-    )
-    observed = rebuild_leakage_safe_daily_features(combined, metadata)
-    counts = observed.groupby("province_id")["date"].nunique().to_dict()
-    missing = [
-        province_id
-        for province_id in province_ids
-        if counts.get(province_id, 0) < POOLED_MINIMUM_ORIGIN_DAYS
-    ]
-    if missing:
-        raise RuntimeError(
-            f"multi-season training history is incomplete: {missing}"
-        )
-    audit = {
-        "archive_start_date": archive_start.date().isoformat(),
-        "archive_end_date": archive_end.date().isoformat(),
-        "database_first_date": database_first_date.date().isoformat(),
-        "database_last_date": pd.Timestamp(database["date"].max())
-        .date()
-        .isoformat(),
-        "database_writes": 0,
-        "database_overlap_policy": (
-            "database rows win from the first trusted database date"
-        ),
-        "archive_air_source": (
-            "Open-Meteo CAMS global model-derived PM2.5"
-        ),
-        "archive_weather_source": "Open-Meteo Historical Weather API",
-        "archive_cache_directory": str(cache_dir),
-        "usable_days_by_province": counts,
-    }
-    return observed, metadata, audit
 
 
 def _regression_baseline(rows: pd.DataFrame) -> tuple[np.ndarray, dict]:
@@ -255,13 +154,9 @@ def _evaluate_active_champion(sb, split) -> dict:
     active = load_active_task_models(sb)
     if set(active) != {"regression", "classification"}:
         raise RuntimeError("active dual-model task set is incomplete")
-    if (
-        len(active["regression"]) != REQUIRED_PROVINCES
-        or len(active["classification"]) != REQUIRED_PROVINCES
-    ):
-        raise RuntimeError(
-            "Production does not have exactly 20 active rows for each task"
-        )
+    if len(active["regression"]) != REQUIRED_PROVINCES or len(active["classification"]) != REQUIRED_PROVINCES:
+        raise RuntimeError("Production does not have exactly 20 active rows for each task")
+
     active_run_ids = {
         str(row.get("run_id"))
         for task_rows in active.values()
@@ -277,13 +172,9 @@ def _evaluate_active_champion(sb, split) -> dict:
         for task_rows in active.values()
         for row in task_rows.values()
     ):
-        raise RuntimeError(
-            "active model feature version differs from the monthly challenger"
-        )
+        raise RuntimeError("active model feature version differs from the monthly challenger")
 
-    d1 = split.test[
-        split.test["forecast_horizon_days"] == 1
-    ].copy()
+    d1 = split.test[split.test["forecast_horizon_days"] == 1].copy()
     runtime_cache: dict[str, dict] = {}
     regression_predictions = np.full(len(d1), np.nan, dtype=float)
     province_metrics: dict[str, dict] = {}
@@ -293,78 +184,46 @@ def _evaluate_active_champion(sb, split) -> dict:
         row = active["regression"][province_id]
         artifact = load_runtime_artifact(sb, row, runtime_cache)
         if artifact is None:
-            raise RuntimeError(
-                f"active regression runtime unavailable for {province_id}"
-            )
+            raise RuntimeError(f"active regression runtime unavailable for {province_id}")
         X = rows.loc[:, POOLED_FEATURE_COLUMNS].to_numpy(dtype=float)
         predictions = np.asarray(
-            [
-                evaluate_lightgbm_regressor(vector, artifact)
-                for vector in X
-            ],
+            [evaluate_lightgbm_regressor(vector, artifact) for vector in X],
             dtype=float,
         )
         regression_predictions[mask] = predictions
-        local = regression_metrics(
-            rows["target_pm25"].to_numpy(dtype=float),
-            predictions,
-        )
+        local = regression_metrics(rows["target_pm25"].to_numpy(dtype=float), predictions)
         _, baseline = _regression_baseline(rows)
-        local["skill_vs_persistence"] = (
-            1.0 - local["mae"] / baseline["mae"]
-        )
+        local["skill_vs_persistence"] = 1.0 - local["mae"] / baseline["mae"]
         province_metrics[province_id] = local
     if not np.all(np.isfinite(regression_predictions)):
-        raise RuntimeError(
-            "active regression evaluation produced incomplete predictions"
-        )
+        raise RuntimeError("active regression evaluation produced incomplete predictions")
+
     regression = regression_metrics(
-        d1["target_pm25"].to_numpy(dtype=float),
-        regression_predictions,
+        d1["target_pm25"].to_numpy(dtype=float), regression_predictions
     )
     _, baseline = _regression_baseline(d1)
-    regression["skill_vs_persistence"] = (
-        1.0 - regression["mae"] / baseline["mae"]
-    )
+    regression["skill_vs_persistence"] = 1.0 - regression["mae"] / baseline["mae"]
 
     classifier_rows = list(active["classification"].values())
     runtime_keys = {
-        (
-            row.get("runtime_artifact_uri"),
-            row.get("runtime_artifact_sha256"),
-        )
+        (row.get("runtime_artifact_uri"), row.get("runtime_artifact_sha256"))
         for row in classifier_rows
     }
     if len(runtime_keys) != 1:
-        raise RuntimeError(
-            "active pooled classifier rows do not reference one runtime"
-        )
-    classifier_artifact = load_runtime_artifact(
-        sb,
-        classifier_rows[0],
-        runtime_cache,
-    )
+        raise RuntimeError("active pooled classifier rows do not reference one runtime")
+    classifier_artifact = load_runtime_artifact(sb, classifier_rows[0], runtime_cache)
     if classifier_artifact is None:
         raise RuntimeError("active classifier runtime unavailable")
     X_classifier = d1.loc[:, POOLED_FEATURE_COLUMNS].to_numpy(dtype=float)
     probability_rows = [
-        evaluate_random_forest_classifier(
-            vector,
-            classifier_artifact,
-            class_ids=CLASS_IDS,
-        )
+        evaluate_random_forest_classifier(vector, classifier_artifact, class_ids=CLASS_IDS)
         for vector in X_classifier
     ]
     probabilities = np.asarray(
-        [
-            [row[str(class_id)] for class_id in CLASS_IDS]
-            for row in probability_rows
-        ],
+        [[row[str(class_id)] for class_id in CLASS_IDS] for row in probability_rows],
         dtype=float,
     )
-    predictions = np.asarray(CLASS_IDS)[
-        np.argmax(probabilities, axis=1)
-    ]
+    predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
     classification = classification_metrics(
         d1["target_air_quality_class"].to_numpy(dtype=int),
         predictions,
@@ -382,23 +241,16 @@ def _candidate_ready(regression, classification) -> bool:
     return bool(
         regression.global_eligible
         and len(regression.province_metrics) == REQUIRED_PROVINCES
-        and all(
-            bool(metrics.get("eligible"))
-            for metrics in regression.province_metrics.values()
-        )
+        and all(bool(metrics.get("eligible")) for metrics in regression.province_metrics.values())
         and classification.global_eligible
         and len(classification.province_metrics) == REQUIRED_PROVINCES
-        and all(
-            bool(metrics.get("eligible"))
-            for metrics in classification.province_metrics.values()
-        )
+        and all(bool(metrics.get("eligible")) for metrics in classification.province_metrics.values())
     )
 
 
 def main() -> int:
     args = parse_args()
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
-    args.archive_cache_dir.mkdir(parents=True, exist_ok=True)
     config = PipelineConfig(
         minimum_rows=POOLED_MINIMUM_ORIGIN_DAYS,
         minimum_validation_rows=POOLED_VALIDATION_DAYS,
@@ -412,20 +264,17 @@ def main() -> int:
     )
     config.validate()
     sb = get_client()
-    observed, metadata, archive_audit = _prepare_training_data(
-        sb,
-        args.archive_cache_dir,
-        args.archive_start_date,
-    )
+    metadata = fetch_province_metadata(sb, tuple(POOLED_PROVINCE_IDS))
+    observed, database_audit = prepare_db_training_data(sb, metadata)
     examples = build_pooled_examples(observed, metadata)
     split = pooled_chronological_split(examples, config)
     print(
         {
-            "monthly_retrain": "fresh",
+            "monthly_retrain": "fresh_db_only",
+            "source_of_truth": database_audit["source_of_truth"],
+            "network_archive_reads": database_audit["network_archive_reads"],
             "train_origin_dates": int(split.train["date"].nunique()),
-            "validation_origin_dates": int(
-                split.validation["date"].nunique()
-            ),
+            "validation_origin_dates": int(split.validation["date"].nunique()),
             "test_origin_dates": int(split.test["date"].nunique()),
             "test_end": str(pd.Timestamp(split.test["date"].max()).date()),
         }
@@ -433,12 +282,8 @@ def main() -> int:
 
     regression = train_regression(split, config)
     classification = train_classification(split, config)
-    classification_policy = _classification_deployment_gate(
-        classification,
-        split,
-    )
+    classification_policy = _classification_deployment_gate(classification, split)
     candidate_ready = _candidate_ready(regression, classification)
-
     champion = _evaluate_active_champion(sb, split)
     decision = decide_promotion(
         candidate_regression=regression.test_metrics,
@@ -446,38 +291,33 @@ def main() -> int:
         candidate_classification=classification.test_metrics,
         champion_classification=champion["classification"],
         candidate_regression_provinces=regression.province_metrics,
-        champion_regression_provinces=champion[
-            "regression_by_province"
-        ],
+        champion_regression_provinces=champion["regression_by_province"],
         candidate_ready=candidate_ready,
         required_provinces=REQUIRED_PROVINCES,
     )
 
     run_id = str(uuid.uuid4())
     audit = {
-        "strategy": "monthly_fresh_champion_challenger",
+        "strategy": "monthly_fresh_champion_challenger_db_only",
         "promotion_policy": POLICY_VERSION,
         "pool_provinces": list(POOLED_PROVINCE_IDS),
         "feature_version": POOLED_FEATURE_VERSION,
         "feature_provenance": POOLED_FEATURE_PROVENANCE,
-        "target_source": (
-            "Open-Meteo archive plus trusted database continuation"
-        ),
+        "target_source": "Supabase training_daily_summary_v3 only",
+        "database_source_of_truth": database_audit,
         "target_horizons": list(DIRECT_HORIZONS),
         "validated_classification_horizons": [1],
         "same_date_same_partition": True,
         "embargo_days": POOLED_EMBARGO_DAYS,
         "dropped_embargo_dates": split.dropped_embargo_dates,
-        "archive": archive_audit,
         "classification_deployment_policy": classification_policy,
         "regression_auto_promotion_requires_strict_20_of_20": True,
         "current_champion_run_id": champion["run_id"],
         "same_holdout_champion_evaluation": True,
         "monthly_challenger_window_used_for_production_selection": True,
         "research_reporting_note": (
-            "Monthly challenger windows are operational promotion evidence "
-            "and do not replace the frozen final-test result reported for "
-            "the capstone model run."
+            "Monthly challenger windows are operational promotion evidence and do not "
+            "replace the frozen final-test result reported for the capstone model run."
         ),
     }
     registry_rows = build_registry_rows(
@@ -502,15 +342,8 @@ def main() -> int:
     activation_status = "not_requested"
     if decision["approved"] and not args.dry_run:
         artifacts = save_artifacts(result, args.artifact_dir, config)
-        free_plan_upload = make_free_plan_upload_and_register(
-            upload_and_register
-        )
-        free_plan_upload(
-            sb,
-            result,
-            artifacts,
-            activate=True,
-        )
+        free_plan_upload = make_free_plan_upload_and_register(upload_and_register)
+        free_plan_upload(sb, result, artifacts, activate=True)
         active_after = (
             sb.table("model_registry")
             .select("province_id,task_type,run_id,is_active")
@@ -555,20 +388,12 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     summary_path = run_dir / "run_summary.json"
     summary_path.write_text(
-        json.dumps(
-            _json_safe(summary),
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(_json_safe(summary), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     promotion_path = args.artifact_dir / "monthly_promotion.json"
     promotion_path.write_text(
-        json.dumps(
-            _json_safe(summary),
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(_json_safe(summary), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     print(json.dumps(_json_safe(summary), ensure_ascii=False))
