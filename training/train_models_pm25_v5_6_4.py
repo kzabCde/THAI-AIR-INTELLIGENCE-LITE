@@ -3,15 +3,16 @@
 
 This entrypoint keeps the reviewed v5.6.4 production contracts while using the
 current Supabase-only source of truth. Every invocation trains a fresh dual
-challenger from ``training_daily_summary_v3`` and installs the reviewed guarded
+challenger from ``training_daily_summary_v3`` and installs the stability-hardened
 v5.6.4 tuning layer before the champion/challenger workflow starts.
 
 The tuning layer is deliberately conservative:
-- LightGBM re-tuning is selected on Validation only and must improve D+1 while
-  preserving D+2..D+7 inside explicit MAE guards.
+- LightGBM re-tuning is selected on Training/Validation only. D+1 must improve,
+  D+2..D+7 remain inside explicit MAE guards, and the D+1 gain must be stable
+  across chronological Validation segments.
 - Random Forest alternatives emphasize Classes 2 and 3 on purged walk-forward
-  CV, but are rejected if Class 4/5 recall or overall validation quality falls
-  outside the reviewed guard.
+  CV, but Class 4/5 recall may not fall below the reviewed CV/Validation
+  baseline during candidate selection.
 - Test remains evaluation-only; it is never used to select a tuning profile.
 
 The active feature schema remains ``daily-pooled-v1``. Fire features
@@ -35,10 +36,13 @@ from training.dual_model_config import (
     POOLED_PROVINCE_IDS,
 )
 from training.monthly_auto_retrain import main as run_fresh_db_only_training
-from training.v5_6_4_tuning import TUNING_REVISION, install_into_monthly_retrainer
+from training.v5_6_4_stability_hotfix import (
+    TUNING_REVISION,
+    install_into_monthly_retrainer,
+)
 
 TRAINER_VERSION = "5.6.4"
-TRAINER_REVISION = "db-only-fresh-guarded-tuning"
+TRAINER_REVISION = "db-only-fresh-guarded-tuning-stability-v2"
 EXPECTED_TRAINING_VIEW = "training_daily_summary_v3"
 EXPECTED_ACTIVE_FEATURE_VERSION = "daily-pooled-v1"
 EXPECTED_NEXT_FIRE_FEATURE_VERSION = "daily-pooled-v2-fire"
@@ -84,8 +88,10 @@ def _preflight() -> dict:
         "fire_features_active": False,
         "fire_features_gated": list(POOLED_FIRE_FEATURE_COLUMNS),
         "provinces": len(POOLED_PROVINCE_IDS),
-        "training_mode": "fresh_champion_challenger_guarded_tuning",
+        "training_mode": "fresh_champion_challenger_guarded_tuning_stability_v2",
         "selection_data": "training_and_validation_only",
+        "validation_stability_gate": "four_chronological_segments",
+        "critical_class_recall_selection_tolerance": 0.0,
         "test_role": "evaluation_and_same_holdout_promotion_only",
         "promotion_mode": "same_holdout_safe_atomic",
     }

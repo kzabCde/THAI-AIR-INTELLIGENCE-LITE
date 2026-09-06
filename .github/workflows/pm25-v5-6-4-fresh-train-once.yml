@@ -3,7 +3,8 @@ name: PM2.5 v5.6.4 Fresh DB-only Train
 on:
   # This path-scoped trigger intentionally creates one post-merge training pass
   # when this reviewed one-shot workflow changes. Unrelated future pushes do
-  # not retrigger it.
+  # not retrigger it. Stability hardening v2 is the final corrective pass for
+  # the provincial regression failures observed in run 34036394978.
   push:
     branches:
       - main
@@ -107,16 +108,16 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## PM2.5 v5.6.4 guarded fresh training"
+            echo "## PM2.5 v5.6.4 guarded fresh training — stability v2"
             echo
             echo "- Source of truth: \`Supabase training_daily_summary_v3\` only."
             echo "- DB reader: bounded province/date windows with timeout retry; no global view sort."
             echo "- Open-Meteo/CAMS network archive reads during retraining: \`0\`."
             echo "- Active feature contract: \`daily-pooled-v1\` (hotspot/FRP remain gated)."
             echo "- Model pair: LightGBM regression + Random Forest classification."
-            echo "- LightGBM selection: Validation D+1 gain with explicit D+2–D+7 preservation guards."
-            echo "- Random Forest selection: Classes 2–3 focus with Class 4–5 recall guards."
-            echo "- Per-province strict regression eligibility is retained as an artifact."
+            echo "- LightGBM selection: D+1 Validation gain + four-segment temporal stability + D+2–D+7 preservation."
+            echo "- Random Forest selection: Classes 2–3 focus; Class 4–5 recall cannot decrease on CV/Validation."
+            echo "- Per-province strict regression eligibility and stability evidence are retained as artifacts."
             echo "- Candidate run: \`${{ steps.result.outputs.run_id }}\`"
             echo "- Previous champion: \`${{ steps.result.outputs.champion_run_id }}\`"
             echo "- Promoted: \`${{ steps.result.outputs.promoted }}\`"
