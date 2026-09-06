@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Persist the v5.6.4 historical Open-Meteo training archive in Supabase.
 
-This is a one-time, idempotent migration utility for 2022-08-01 through
-2025-07-18. It writes daily aggregates to training_daily_archive_v1 and writes
-request-level lineage to training_archive_requests_v1. Monthly retraining must
-not call Open-Meteo after this archive has been populated and verified.
+This one-time utility backfills 2022-08-01 through 2025-07-18 into
+training_daily_archive_v1 and stores request-level lineage in
+training_archive_requests_v1. It is idempotent: once complete verified coverage
+exists, reruns exit without making Open-Meteo requests.
 
 Required environment variables:
   SUPABASE_URL
@@ -49,6 +49,7 @@ WEATHER_VARIABLES = (
     "surface_pressure_mean",
     "precipitation_sum",
 )
+PAGE_SIZE = 1000
 
 
 def parse_args() -> argparse.Namespace:
@@ -156,12 +157,10 @@ def load_provinces(sb) -> list[dict[str, Any]]:
 
 def hourly_air_daily(location: dict[str, Any], province_id: str) -> pd.DataFrame:
     hourly = location.get("hourly") or {}
-    time_values = hourly.get("time") or []
-    pm25_values = hourly.get("pm2_5") or []
     frame = pd.DataFrame(
         {
-            "date": pd.to_datetime(time_values, errors="raise").normalize(),
-            "pm25": pd.to_numeric(pm25_values, errors="coerce"),
+            "date": pd.to_datetime(hourly.get("time") or [], errors="raise").normalize(),
+            "pm25": pd.to_numeric(hourly.get("pm2_5") or [], errors="coerce"),
         }
     )
     frame["province_id"] = province_id
@@ -196,7 +195,11 @@ def weather_daily(location: dict[str, Any], province_id: str) -> pd.DataFrame:
     for source_column, target_column in mapping.items():
         frame[target_column] = pd.to_numeric(daily.get(source_column) or [], errors="coerce")
     frame["province_id"] = province_id
-    return frame[["province_id", "date", *mapping.values()]]
+    required = list(mapping.values())
+    if frame[required].isna().any(axis=None):
+        missing = frame[required].isna().sum().to_dict()
+        raise RuntimeError(f"{province_id}: historical weather contains null required values: {missing}")
+    return frame[["province_id", "date", *required]]
 
 
 def insert_request_lineage(
@@ -211,7 +214,7 @@ def insert_request_lineage(
     params: dict[str, Any],
     payload: object,
     dry_run: bool,
-) -> str:
+) -> tuple[str, str]:
     request_id = str(uuid.uuid4())
     fetched_at = datetime.now(timezone.utc).isoformat()
     row = {
@@ -235,59 +238,104 @@ def insert_request_lineage(
     }
     if not dry_run:
         sb.table("training_archive_requests_v1").insert(row).execute()
-    return request_id
+    return request_id, fetched_at
 
 
 def upsert_archive_rows(sb, rows: list[dict[str, Any]], batch_size: int, dry_run: bool) -> None:
     if dry_run:
         return
     for chunk in batches(rows, batch_size):
-        (
+        sb.table("training_daily_archive_v1").upsert(
+            list(chunk), on_conflict="province_id,date"
+        ).execute()
+
+
+def read_archive_rows(sb, start: date, end: date) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = (
             sb.table("training_daily_archive_v1")
-            .upsert(list(chunk), on_conflict="province_id,date")
+            .select("province_id,date,lineage_version,air_request_id,weather_request_id")
+            .gte("date", start.isoformat())
+            .lte("date", end.isoformat())
+            .order("province_id")
+            .order("date")
+            .range(offset, offset + PAGE_SIZE - 1)
             .execute()
+            .data
+            or []
         )
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+    return rows
 
 
-def verify_coverage(sb, start: date, end: date) -> dict[str, Any]:
+def coverage_status(sb, start: date, end: date, *, raise_on_error: bool) -> dict[str, Any]:
     expected_days = (end - start).days + 1
-    rows = (
-        sb.table("training_daily_archive_v1")
-        .select("province_id,date,lineage_version,air_request_id,weather_request_id")
-        .gte("date", start.isoformat())
-        .lte("date", end.isoformat())
-        .order("province_id")
-        .order("date")
-        .execute()
-        .data
-        or []
-    )
-    frame = pd.DataFrame(rows)
+    expected_rows = expected_days * len(PROVINCE_IDS)
+    frame = pd.DataFrame(read_archive_rows(sb, start, end))
     if frame.empty:
-        raise RuntimeError("training_daily_archive_v1 is empty after backfill")
+        status = {
+            "complete": False,
+            "rows": 0,
+            "expected_rows": expected_rows,
+            "incomplete": {pid: 0 for pid in PROVINCE_IDS},
+            "null_lineage_rows": 0,
+        }
+        if raise_on_error:
+            raise RuntimeError(f"archive verification failed: {status}")
+        return status
     counts = frame.groupby("province_id")["date"].nunique().to_dict()
-    incomplete = {pid: int(counts.get(pid, 0)) for pid in PROVINCE_IDS if counts.get(pid, 0) != expected_days}
-    null_lineage = int(frame[["air_request_id", "weather_request_id", "lineage_version"]].isna().any(axis=1).sum())
-    if incomplete or null_lineage:
-        raise RuntimeError(f"archive verification failed: incomplete={incomplete}, null_lineage_rows={null_lineage}")
-    return {
+    incomplete = {
+        pid: int(counts.get(pid, 0))
+        for pid in PROVINCE_IDS
+        if counts.get(pid, 0) != expected_days
+    }
+    null_lineage = int(
+        frame[["air_request_id", "weather_request_id", "lineage_version"]]
+        .isna()
+        .any(axis=1)
+        .sum()
+    )
+    lineage_mismatch = int((frame["lineage_version"] != LINEAGE_VERSION).sum())
+    complete = (
+        len(frame) == expected_rows
+        and not incomplete
+        and null_lineage == 0
+        and lineage_mismatch == 0
+    )
+    status = {
+        "complete": complete,
         "rows": int(len(frame)),
-        "expected_rows": expected_days * len(PROVINCE_IDS),
+        "expected_rows": expected_rows,
         "days_per_province": expected_days,
         "provinces": int(frame["province_id"].nunique()),
         "min_date": str(frame["date"].min()),
         "max_date": str(frame["date"].max()),
+        "incomplete": incomplete,
+        "null_lineage_rows": null_lineage,
+        "lineage_mismatch_rows": lineage_mismatch,
         "lineage_version": LINEAGE_VERSION,
     }
+    if raise_on_error and not complete:
+        raise RuntimeError(f"archive verification failed: {status}")
+    return status
 
 
 def main() -> int:
     args = parse_args()
     sb = get_client()
+    existing = coverage_status(sb, args.start_date, args.end_date, raise_on_error=False)
+    if existing["complete"]:
+        print(json.dumps({"status": "already_complete", "verification": existing}, ensure_ascii=False, indent=2))
+        return 0
+
     provinces = load_provinces(sb)
     total_rows = 0
     request_count = 0
-
     for chunk_start, chunk_end in date_chunks(args.start_date, args.end_date, args.chunk_days):
         for province_batch in batches(provinces, args.province_batch_size):
             province_ids = [str(row["province_id"]) for row in province_batch]
@@ -300,10 +348,9 @@ def main() -> int:
             }
             air_params = {**common, "hourly": "pm2_5", "domains": AIR_MODEL}
             weather_params = {**common, "daily": ",".join(WEATHER_VARIABLES)}
-
             air_payload = fetch_json(AIR_URL, air_params)
             weather_payload = fetch_json(WEATHER_URL, weather_params)
-            air_request_id = insert_request_lineage(
+            air_request_id, air_fetched_at = insert_request_lineage(
                 sb,
                 source_kind="air_quality",
                 endpoint=AIR_URL,
@@ -315,7 +362,7 @@ def main() -> int:
                 payload=air_payload,
                 dry_run=args.dry_run,
             )
-            weather_request_id = insert_request_lineage(
+            weather_request_id, weather_fetched_at = insert_request_lineage(
                 sb,
                 source_kind="weather",
                 endpoint=WEATHER_URL,
@@ -328,6 +375,7 @@ def main() -> int:
                 dry_run=args.dry_run,
             )
             request_count += 2
+            fetched_at = max(air_fetched_at, weather_fetched_at)
 
             air_locations = locations(air_payload, len(province_batch))
             weather_locations = locations(weather_payload, len(province_batch))
@@ -368,7 +416,7 @@ def main() -> int:
                             "weather_model": WEATHER_MODEL,
                             "timezone": TIMEZONE,
                             "lineage_version": LINEAGE_VERSION,
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
+                            "fetched_at": fetched_at,
                         }
                     )
             upsert_archive_rows(sb, output_rows, args.db_batch_size, args.dry_run)
@@ -396,7 +444,9 @@ def main() -> int:
         "lineage_version": LINEAGE_VERSION,
     }
     if not args.dry_run:
-        summary["verification"] = verify_coverage(sb, args.start_date, args.end_date)
+        summary["verification"] = coverage_status(
+            sb, args.start_date, args.end_date, raise_on_error=True
+        )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
