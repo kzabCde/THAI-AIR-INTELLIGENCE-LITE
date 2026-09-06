@@ -1,8 +1,9 @@
 name: PM2.5 v5.6.4 Fresh DB-only Train
 
 on:
-  # Creation of this workflow triggers exactly one fresh training run when the
-  # batched PR is merged to main. Unrelated future pushes do not retrigger it.
+  # This path-scoped trigger is intentionally used for the corrective training
+  # pass after switching the v3 reader to bounded province/date windows.
+  # Unrelated future pushes do not retrigger this workflow.
   push:
     branches:
       - main
@@ -105,6 +106,7 @@ jobs:
             echo "## PM2.5 v5.6.4 fresh training"
             echo
             echo "- Source of truth: \`Supabase training_daily_summary_v3\` only."
+            echo "- DB reader: bounded province/date windows with timeout retry; no global view sort."
             echo "- Open-Meteo/CAMS network archive reads during retraining: \`0\`."
             echo "- Active feature contract: \`daily-pooled-v1\` (hotspot/FRP remain gated)."
             echo "- Model pair: LightGBM regression + Random Forest classification."
