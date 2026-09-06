@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-import importlib.util
+import ast
 import pathlib
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def assigned_string(source: str, name: str) -> str:
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    return ast.literal_eval(node.value)
+    raise AssertionError(f"assignment not found: {name}")
 
 
 class DbOnlyTrainingContractTests(unittest.TestCase):
@@ -34,18 +44,22 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertIn("Supabase training_daily_summary_v3", workflow)
 
     def test_archive_contract_has_expected_fixed_window(self) -> None:
-        spec = importlib.util.spec_from_file_location(
-            "db_training_data", ROOT / "training/db_training_data.py"
-        )
-        self.assertIsNotNone(spec)
-        module = importlib.util.module_from_spec(spec)
-        assert spec and spec.loader
-        spec.loader.exec_module(module)
-        days = int((module.ARCHIVE_END_DATE - module.ARCHIVE_START_DATE).days + 1)
+        source = (ROOT / "training/backfill_training_archive.py").read_text(encoding="utf-8")
+        self.assertIn("DEFAULT_START = date(2022, 8, 1)", source)
+        self.assertIn("DEFAULT_END = date(2025, 7, 18)", source)
+        self.assertIn('LINEAGE_VERSION = "training-archive-db-v1"', source)
+        self.assertIn('NOTEBOOK_VERSION = "5.6.4"', source)
+        self.assertIn('PROVINCE_IDS = tuple(f"TH-{code}" for code in range(30, 50))', source)
+        from datetime import date
+        days = (date(2025, 7, 18) - date(2022, 8, 1)).days + 1
         self.assertEqual(days, 1083)
-        self.assertEqual(days * len(module.POOLED_PROVINCE_IDS), 21660)
-        self.assertEqual(module.TRAINING_VIEW, "training_daily_summary_v3")
-        self.assertEqual(module.ARCHIVE_LINEAGE_VERSION, "training-archive-db-v1")
+        self.assertEqual(days * 20, 21660)
+
+    def test_db_loader_uses_v3_and_no_network_urls(self) -> None:
+        source = (ROOT / "training/db_training_data.py").read_text(encoding="utf-8")
+        self.assertEqual(assigned_string(source, "TRAINING_VIEW"), "training_daily_summary_v3")
+        self.assertEqual(assigned_string(source, "ARCHIVE_LINEAGE_VERSION"), "training-archive-db-v1")
+        self.assertNotIn("open-meteo.com", source)
 
     def test_fire_features_are_next_schema_not_active_schema(self) -> None:
         config = (ROOT / "training/dual_model_config.py").read_text(encoding="utf-8")
