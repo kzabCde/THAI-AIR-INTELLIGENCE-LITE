@@ -1,9 +1,9 @@
 name: PM2.5 v5.6.4 Fresh DB-only Train
 
 on:
-  # This path-scoped trigger is intentionally used for the corrective training
-  # pass after switching the v3 reader to bounded province/date windows.
-  # Unrelated future pushes do not retrigger this workflow.
+  # This path-scoped trigger intentionally creates one post-merge training pass
+  # when this reviewed one-shot workflow changes. Unrelated future pushes do
+  # not retrigger it.
   push:
     branches:
       - main
@@ -58,7 +58,7 @@ jobs:
             echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1;
           }
 
-      - name: Train v5.6.4 from latest Supabase data
+      - name: Train guarded v5.6.4 from latest Supabase data
         id: train
         shell: bash
         run: |
@@ -93,6 +93,10 @@ jobs:
           name: pm25-v5-6-4-training-${{ github.run_id }}
           path: |
             training/artifacts/monthly_promotion.json
+            training/artifacts/v5_6_4_regression_eligibility.csv
+            training/artifacts/v5_6_4_regression_eligibility.json
+            training/artifacts/v5_6_4_classification_focus.json
+            training/artifacts/v5_6_4_chart_data.json
             training/artifacts/*/run_summary.json
             pm25-v5-6-4-training.log
           if-no-files-found: warn
@@ -103,17 +107,20 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## PM2.5 v5.6.4 fresh training"
+            echo "## PM2.5 v5.6.4 guarded fresh training"
             echo
             echo "- Source of truth: \`Supabase training_daily_summary_v3\` only."
             echo "- DB reader: bounded province/date windows with timeout retry; no global view sort."
             echo "- Open-Meteo/CAMS network archive reads during retraining: \`0\`."
             echo "- Active feature contract: \`daily-pooled-v1\` (hotspot/FRP remain gated)."
             echo "- Model pair: LightGBM regression + Random Forest classification."
+            echo "- LightGBM selection: Validation D+1 gain with explicit D+2–D+7 preservation guards."
+            echo "- Random Forest selection: Classes 2–3 focus with Class 4–5 recall guards."
+            echo "- Per-province strict regression eligibility is retained as an artifact."
             echo "- Candidate run: \`${{ steps.result.outputs.run_id }}\`"
             echo "- Previous champion: \`${{ steps.result.outputs.champion_run_id }}\`"
             echo "- Promoted: \`${{ steps.result.outputs.promoted }}\`"
             echo "- Activation status: \`${{ steps.result.outputs.activation_status }}\`"
             echo "- Promotion uses the existing same-holdout safe atomic policy."
-            echo "- This one-shot workflow does not force an extra forecast deployment; the normal forecast pipeline will consume any promoted active model."
+            echo "- This workflow does not force a forecast deployment; the normal forecast pipeline consumes any promoted active model."
           } >> "$GITHUB_STEP_SUMMARY"
