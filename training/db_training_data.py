@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -14,7 +16,10 @@ ARCHIVE_END_DATE = pd.Timestamp("2025-07-18")
 CONTINUATION_START_DATE = ARCHIVE_END_DATE + pd.Timedelta(days=1)
 ARCHIVE_LINEAGE_VERSION = "training-archive-db-v1"
 ARCHIVE_DATA_ORIGIN = "supabase-open-meteo-cams-historical-weather-archive"
-PAGE_SIZE = 1000
+FETCH_WINDOW_DAYS = 365
+FETCH_MAX_ATTEMPTS = 3
+FETCH_RETRY_BASE_SECONDS = 2.0
+RETRYABLE_DATABASE_ERROR_CODES = ("57014",)
 BASE_COLUMNS = (
     "province_id",
     "date",
@@ -55,7 +60,13 @@ def rebuild_leakage_safe_daily_features(
         .reset_index(drop=True)
     )
     rebuilt["date"] = pd.to_datetime(rebuilt["date"]).dt.normalize()
-    for column in ("pm25_mean", "temp_mean", "humidity_mean", "wind_speed_mean", "precip_total"):
+    for column in (
+        "pm25_mean",
+        "temp_mean",
+        "humidity_mean",
+        "wind_speed_mean",
+        "precip_total",
+    ):
         rebuilt[column] = pd.to_numeric(rebuilt[column], errors="coerce")
     for days in range(1, 8):
         rebuilt[f"_pm25_lag_{days}d"] = _exact_lag(rebuilt, days)
@@ -63,8 +74,12 @@ def rebuild_leakage_safe_daily_features(
     rebuilt["pm25_lag_3d"] = rebuilt["_pm25_lag_3d"]
     rebuilt["pm25_lag_6d"] = rebuilt["_pm25_lag_6d"]
     rebuilt["pm25_lag_7d"] = rebuilt["_pm25_lag_7d"]
-    rebuilt["pm25_roll3"] = rebuilt[["pm25_mean", "_pm25_lag_1d", "_pm25_lag_2d"]].mean(axis=1, skipna=False)
-    rebuilt["pm25_roll7"] = rebuilt[["pm25_mean", *[f"_pm25_lag_{d}d" for d in range(1, 7)]]].mean(axis=1, skipna=False)
+    rebuilt["pm25_roll3"] = rebuilt[
+        ["pm25_mean", "_pm25_lag_1d", "_pm25_lag_2d"]
+    ].mean(axis=1, skipna=False)
+    rebuilt["pm25_roll7"] = rebuilt[
+        ["pm25_mean", *[f"_pm25_lag_{d}d" for d in range(1, 7)]]
+    ].mean(axis=1, skipna=False)
 
     coordinates = province_metadata.set_index("province_id")[["lat", "lon"]]
     neighbor_ids: dict[str, tuple[str, ...]] = {}
@@ -81,7 +96,9 @@ def rebuild_leakage_safe_daily_features(
     rebuilt["regional_pm25_avg"] = rebuilt["date"].map(regional_mean)
     rebuilt["neighbor_pm25_avg"] = [
         neighbor_lookup[province_id].get(date, np.nan)
-        for province_id, date in zip(rebuilt["province_id"], rebuilt["date"], strict=True)
+        for province_id, date in zip(
+            rebuilt["province_id"], rebuilt["date"], strict=True
+        )
     ]
     rebuilt["month"] = rebuilt["date"].dt.month.astype(int)
     rebuilt["day_of_week"] = rebuilt["date"].dt.dayofweek.astype(int)
@@ -93,30 +110,106 @@ def rebuild_leakage_safe_daily_features(
     return rebuilt.drop(columns=[f"_pm25_lag_{days}d" for days in range(1, 8)])
 
 
-def fetch_training_rows(sb, province_ids: tuple[str, ...] = tuple(POOLED_PROVINCE_IDS)) -> pd.DataFrame:
-    rows: list[dict] = []
-    start = 0
-    while True:
-        page = (
-            sb.table(TRAINING_VIEW)
-            .select(",".join(BASE_COLUMNS))
-            .in_("province_id", list(province_ids))
-            .order("province_id")
-            .order("date")
-            .range(start, start + PAGE_SIZE - 1)
-            .execute()
-            .data
-            or []
+def _bangkok_today() -> pd.Timestamp:
+    return pd.Timestamp.now(tz="Asia/Bangkok").tz_localize(None).normalize()
+
+
+def _date_windows(start: pd.Timestamp, end: pd.Timestamp):
+    cursor = pd.Timestamp(start).normalize()
+    final = pd.Timestamp(end).normalize()
+    while cursor <= final:
+        window_end = min(
+            cursor + pd.Timedelta(days=FETCH_WINDOW_DAYS - 1),
+            final,
         )
-        rows.extend(page)
-        if len(page) < PAGE_SIZE:
-            break
-        start += PAGE_SIZE
+        yield cursor, window_end
+        cursor = window_end + pd.Timedelta(days=1)
+
+
+def _fetch_training_window(
+    sb,
+    province_id: str,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> list[dict]:
+    """Read one bounded province/date window with retry on statement timeout.
+
+    The v3 source is a union-style view. A single globally ordered request over
+    all provinces can force PostgreSQL to sort/materialize the full view and hit
+    the hosted statement timeout. Each request here is bounded to at most one
+    province-year and requires no server-side ORDER BY; final ordering is done
+    deterministically in pandas after all windows are fetched.
+    """
+    start_iso = start_date.date().isoformat()
+    end_iso = end_date.date().isoformat()
+    for attempt in range(1, FETCH_MAX_ATTEMPTS + 1):
+        try:
+            return (
+                sb.table(TRAINING_VIEW)
+                .select(",".join(BASE_COLUMNS))
+                .eq("province_id", province_id)
+                .gte("date", start_iso)
+                .lte("date", end_iso)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            retryable = any(code in str(exc) for code in RETRYABLE_DATABASE_ERROR_CODES)
+            if not retryable or attempt >= FETCH_MAX_ATTEMPTS:
+                raise
+            delay = FETCH_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            print(
+                f"[DB] {province_id} {start_iso}..{end_iso} statement timeout; "
+                f"retry {attempt}/{FETCH_MAX_ATTEMPTS} in {delay:.0f}s",
+                flush=True,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable database retry state")
+
+
+def fetch_training_rows(
+    sb,
+    province_ids: tuple[str, ...] = tuple(POOLED_PROVINCE_IDS),
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    fetch_end = _bangkok_today()
+    request_count = 0
+    for province_id in province_ids:
+        for window_start, window_end in _date_windows(ARCHIVE_START_DATE, fetch_end):
+            page = _fetch_training_window(
+                sb,
+                province_id,
+                window_start,
+                window_end,
+            )
+            rows.extend(page)
+            request_count += 1
+        print(
+            f"[DB] loaded {province_id} through {fetch_end.date().isoformat()}",
+            flush=True,
+        )
+
     if not rows:
         raise RuntimeError(f"{TRAINING_VIEW} returned no rows")
     frame = pd.DataFrame(rows)
     frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
     frame["trusted_hours"] = pd.to_numeric(frame["trusted_hours"], errors="coerce")
+    frame = frame.sort_values(["province_id", "date"]).reset_index(drop=True)
+    duplicate_mask = frame.duplicated(["province_id", "date"], keep=False)
+    if duplicate_mask.any():
+        examples = (
+            frame.loc[duplicate_mask, ["province_id", "date"]]
+            .drop_duplicates()
+            .head(10)
+            .to_dict("records")
+        )
+        raise RuntimeError(
+            f"{TRAINING_VIEW} returned duplicate province/date rows: {examples}"
+        )
+    frame.attrs["database_fetch_strategy"] = "province_date_windows"
+    frame.attrs["database_fetch_window_days"] = FETCH_WINDOW_DAYS
+    frame.attrs["database_fetch_requests"] = request_count
     return frame
 
 
@@ -130,12 +223,15 @@ def validate_db_training_contract(frame: pd.DataFrame) -> dict:
     ].copy()
     if len(archive) != expected_archive_rows:
         raise RuntimeError(
-            f"historical archive must contain exactly {expected_archive_rows} source-available rows; found {len(archive)}"
+            f"historical archive must contain exactly {expected_archive_rows} "
+            f"source-available rows; found {len(archive)}"
         )
     expected_dates = set(pd.date_range(ARCHIVE_START_DATE, ARCHIVE_END_DATE, freq="D"))
     incomplete: dict[str, int] = {}
     for province_id in province_ids:
-        province_dates = set(archive.loc[archive["province_id"] == province_id, "date"])
+        province_dates = set(
+            archive.loc[archive["province_id"] == province_id, "date"]
+        )
         if province_dates != expected_dates:
             incomplete[province_id] = len(province_dates)
     if incomplete:
@@ -146,15 +242,22 @@ def validate_db_training_contract(frame: pd.DataFrame) -> dict:
         & (frame["data_origin"] == ARCHIVE_DATA_ORIGIN)
     ]
     if not leading.empty:
-        raise RuntimeError("unexpected fabricated archive rows exist inside the documented leading CAMS source gap")
+        raise RuntimeError(
+            "unexpected fabricated archive rows exist inside the documented leading "
+            "CAMS source gap"
+        )
     if not (archive["data_origin"] == ARCHIVE_DATA_ORIGIN).all():
         raise RuntimeError("historical archive data_origin contract mismatch")
     if not (archive["lineage_version"] == ARCHIVE_LINEAGE_VERSION).all():
         raise RuntimeError("historical archive lineage_version contract mismatch")
-    if archive[["air_request_id", "weather_request_id", "fetched_at"]].isna().any(axis=None):
+    if archive[["air_request_id", "weather_request_id", "fetched_at"]].isna().any(
+        axis=None
+    ):
         raise RuntimeError("historical archive contains rows without request lineage")
     if (archive["trusted_hours"] < 18).any():
-        raise RuntimeError("historical archive contains rows below the 18 trusted-hour minimum")
+        raise RuntimeError(
+            "historical archive contains rows below the 18 trusted-hour minimum"
+        )
 
     continuation = frame[frame["date"] >= CONTINUATION_START_DATE].copy()
     if continuation.empty:
@@ -174,17 +277,30 @@ def validate_db_training_contract(frame: pd.DataFrame) -> dict:
     return {
         "source_of_truth": TRAINING_VIEW,
         "network_archive_reads": 0,
+        "database_fetch_strategy": frame.attrs.get(
+            "database_fetch_strategy", "unknown"
+        ),
+        "database_fetch_window_days": int(
+            frame.attrs.get("database_fetch_window_days", FETCH_WINDOW_DAYS)
+        ),
+        "database_fetch_requests": int(frame.attrs.get("database_fetch_requests", 0)),
         "archive_requested_start_date": ARCHIVE_REQUEST_START_DATE.date().isoformat(),
         "archive_first_usable_source_date": ARCHIVE_START_DATE.date().isoformat(),
-        "archive_documented_leading_source_gap_days": int((ARCHIVE_START_DATE - ARCHIVE_REQUEST_START_DATE).days),
+        "archive_documented_leading_source_gap_days": int(
+            (ARCHIVE_START_DATE - ARCHIVE_REQUEST_START_DATE).days
+        ),
         "archive_end_date": ARCHIVE_END_DATE.date().isoformat(),
         "archive_rows": int(len(archive)),
         "archive_days_per_province": expected_archive_days,
         "archive_lineage_version": ARCHIVE_LINEAGE_VERSION,
         "continuation_start_date": CONTINUATION_START_DATE.date().isoformat(),
-        "continuation_end_date": pd.Timestamp(continuation["date"].max()).date().isoformat(),
+        "continuation_end_date": pd.Timestamp(
+            continuation["date"].max()
+        ).date().isoformat(),
         "continuation_rows": int(len(continuation)),
-        "usable_days_by_province": {str(k): int(v) for k, v in total_counts.items()},
+        "usable_days_by_province": {
+            str(key): int(value) for key, value in total_counts.items()
+        },
     }
 
 
