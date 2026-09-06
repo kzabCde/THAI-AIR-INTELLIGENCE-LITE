@@ -50,9 +50,8 @@ MODEL_FAMILIES = (
     "lightgbm",
 )
 
-# Production v5.6.2 uses province-local residual regression and pooled
-# classification over this shared feature contract. Province identity remains
-# one-hot encoded instead of treating the ISO code as an ordinal number.
+# Active Production feature contract. Province identity remains one-hot encoded
+# instead of treating the ISO code as an ordinal number.
 POOLED_FEATURE_VERSION = "daily-pooled-v1"
 POOLED_REGRESSION_FAMILY = "lightgbm"
 POOLED_CLASSIFICATION_FAMILY = "random_forest"
@@ -87,6 +86,34 @@ POOLED_FEATURE_PROVENANCE = {
     "forecast_horizon": "integer direct horizon from 1 through 7 days",
     "pooling": "all selected provinces share one leakage-safe chronological model",
 }
+
+# Next candidate feature contract. This is deliberately NOT the active
+# POOLED_FEATURE_VERSION yet. It may only be promoted after trusted historical
+# FIRMS coverage is backfilled with provenance for the model training window.
+POOLED_FEATURE_VERSION_NEXT = "daily-pooled-v2-fire"
+POOLED_FIRE_FEATURE_COLUMNS = (
+    "hotspot_count",
+    "total_frp",
+)
+POOLED_FEATURE_COLUMNS_NEXT = (
+    *FEATURE_COLUMNS,
+    *POOLED_FIRE_FEATURE_COLUMNS,
+    "province_latitude",
+    "province_longitude",
+    "forecast_horizon_days",
+    *POOLED_PROVINCE_COLUMNS,
+)
+POOLED_FEATURE_PROVENANCE_NEXT = {
+    **POOLED_FEATURE_PROVENANCE,
+    "hotspot": (
+        "trusted non-synthetic NASA FIRMS/VIIRS hotspot_daily aggregates only; "
+        "missing historical coverage must never be silently interpreted as zero"
+    ),
+    "fire_feature_activation_gate": (
+        "requires lineage-complete historical FIRMS coverage before training or promotion"
+    ),
+}
+
 SERVING_POLICIES = (
     "direct_classifier",
     "regression_threshold",
