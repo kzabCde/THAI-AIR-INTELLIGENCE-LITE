@@ -8,7 +8,8 @@ import pandas as pd
 from training.dual_model_config import POOLED_MINIMUM_ORIGIN_DAYS, POOLED_PROVINCE_IDS
 
 TRAINING_VIEW = "training_daily_summary_v3"
-ARCHIVE_START_DATE = pd.Timestamp("2022-08-01")
+ARCHIVE_REQUEST_START_DATE = pd.Timestamp("2022-08-01")
+ARCHIVE_START_DATE = pd.Timestamp("2022-08-05")
 ARCHIVE_END_DATE = pd.Timestamp("2025-07-18")
 CONTINUATION_START_DATE = ARCHIVE_END_DATE + pd.Timedelta(days=1)
 ARCHIVE_LINEAGE_VERSION = "training-archive-db-v1"
@@ -123,15 +124,29 @@ def validate_db_training_contract(frame: pd.DataFrame) -> dict:
     province_ids = tuple(POOLED_PROVINCE_IDS)
     expected_archive_days = int((ARCHIVE_END_DATE - ARCHIVE_START_DATE).days + 1)
     expected_archive_rows = expected_archive_days * len(province_ids)
-    archive = frame[(frame["date"] >= ARCHIVE_START_DATE) & (frame["date"] <= ARCHIVE_END_DATE)].copy()
+    archive = frame[
+        (frame["date"] >= ARCHIVE_START_DATE)
+        & (frame["date"] <= ARCHIVE_END_DATE)
+    ].copy()
     if len(archive) != expected_archive_rows:
         raise RuntimeError(
-            f"historical archive must contain exactly {expected_archive_rows} rows; found {len(archive)}"
+            f"historical archive must contain exactly {expected_archive_rows} source-available rows; found {len(archive)}"
         )
-    counts = archive.groupby("province_id")["date"].nunique().to_dict()
-    incomplete = {pid: int(counts.get(pid, 0)) for pid in province_ids if counts.get(pid, 0) != expected_archive_days}
+    expected_dates = set(pd.date_range(ARCHIVE_START_DATE, ARCHIVE_END_DATE, freq="D"))
+    incomplete: dict[str, int] = {}
+    for province_id in province_ids:
+        province_dates = set(archive.loc[archive["province_id"] == province_id, "date"])
+        if province_dates != expected_dates:
+            incomplete[province_id] = len(province_dates)
     if incomplete:
         raise RuntimeError(f"historical archive coverage incomplete: {incomplete}")
+    leading = frame[
+        (frame["date"] >= ARCHIVE_REQUEST_START_DATE)
+        & (frame["date"] < ARCHIVE_START_DATE)
+        & (frame["data_origin"] == ARCHIVE_DATA_ORIGIN)
+    ]
+    if not leading.empty:
+        raise RuntimeError("unexpected fabricated archive rows exist inside the documented leading CAMS source gap")
     if not (archive["data_origin"] == ARCHIVE_DATA_ORIGIN).all():
         raise RuntimeError("historical archive data_origin contract mismatch")
     if not (archive["lineage_version"] == ARCHIVE_LINEAGE_VERSION).all():
@@ -159,7 +174,9 @@ def validate_db_training_contract(frame: pd.DataFrame) -> dict:
     return {
         "source_of_truth": TRAINING_VIEW,
         "network_archive_reads": 0,
-        "archive_start_date": ARCHIVE_START_DATE.date().isoformat(),
+        "archive_requested_start_date": ARCHIVE_REQUEST_START_DATE.date().isoformat(),
+        "archive_first_usable_source_date": ARCHIVE_START_DATE.date().isoformat(),
+        "archive_documented_leading_source_gap_days": int((ARCHIVE_START_DATE - ARCHIVE_REQUEST_START_DATE).days),
         "archive_end_date": ARCHIVE_END_DATE.date().isoformat(),
         "archive_rows": int(len(archive)),
         "archive_days_per_province": expected_archive_days,
