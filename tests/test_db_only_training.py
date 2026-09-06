@@ -83,7 +83,10 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertNotIn('.in_("province_id", list(province_ids))', source)
         self.assertNotIn('.order("province_id")', source)
         self.assertIn('RETRYABLE_DATABASE_ERROR_CODES = ("57014",)', source)
-        self.assertIn('"database_fetch_strategy": "province_date_windows"', source)
+        self.assertIn(
+            'frame.attrs["database_fetch_strategy"] = "province_date_windows"',
+            source,
+        )
 
     def test_fire_features_are_next_schema_not_active_schema(self) -> None:
         config = (ROOT / "training/dual_model_config.py").read_text(encoding="utf-8")
