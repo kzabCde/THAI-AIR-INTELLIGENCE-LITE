@@ -34,7 +34,7 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertIn("prepare_db_training_data", source)
         self.assertIn('"network_archive_reads"', source)
 
-    def test_monthly_workflow_has_no_archive_cache(self) -> None:
+    def test_monthly_workflow_uses_canonical_v5_6_4_and_no_archive_cache(self) -> None:
         workflow = (ROOT / ".github/workflows/pm25-monthly-auto-retrain.yml").read_text(
             encoding="utf-8"
         )
@@ -42,6 +42,8 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertNotIn("open-meteo-monthly", workflow)
         self.assertNotIn("archive-cache-dir", workflow)
         self.assertIn("Supabase training_daily_summary_v3", workflow)
+        self.assertIn("training.train_models_pm25_v5_6_4", workflow)
+        self.assertNotIn("python -u -m training.monthly_auto_retrain", workflow)
 
     def test_archive_contract_preserves_requested_window_and_source_gap(self) -> None:
         source = (ROOT / "training/backfill_training_archive.py").read_text(encoding="utf-8")
@@ -93,6 +95,55 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
             "missing historical coverage must never be silently interpreted as zero",
             config,
         )
+
+    def test_v5_6_4_entrypoint_installs_guarded_tuning_before_monthly_main(self) -> None:
+        source = (ROOT / "training/train_models_pm25_v5_6_4.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("install_into_monthly_retrainer", source)
+        self.assertIn("TUNING_REVISION", source)
+        self.assertIn("install_into_monthly_retrainer()", source)
+        self.assertLess(
+            source.index("install_into_monthly_retrainer()"),
+            source.index("return run_fresh_db_only_training()"),
+        )
+        self.assertIn('"selection_data": "training_and_validation_only"', source)
+        self.assertIn(
+            '"test_role": "evaluation_and_same_holdout_promotion_only"', source
+        )
+
+    def test_v5_6_4_tuning_guards_long_horizons_and_critical_classes(self) -> None:
+        source = (ROOT / "training/v5_6_4_tuning.py").read_text(encoding="utf-8")
+        self.assertNotIn("open-meteo.com", source)
+        self.assertIn("REGRESSION_LONG_HORIZON_MEAN_TOLERANCE", source)
+        self.assertIn("REGRESSION_PER_HORIZON_TOLERANCE", source)
+        self.assertIn("for h in range(2, 8)", source)
+        self.assertIn("CLASSIFICATION_MIN_MID_F1_GAIN", source)
+        self.assertIn("for class_id in (4, 5)", source)
+        self.assertIn("v5_6_4_regression_eligibility.csv", source)
+        self.assertIn("v5_6_4_classification_focus.json", source)
+        self.assertIn("v5_6_4_chart_data.json", source)
+
+    def test_colab_builder_is_db_only_and_has_four_result_charts(self) -> None:
+        source = (ROOT / "scripts/build_runtime_notebooks.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("training.train_models_pm25_v5_6_4", source)
+        self.assertIn("training_daily_summary_v3", source)
+        for cell_id in (
+            "regression_skill_chart",
+            "horizon_chart",
+            "class_metrics_chart",
+            "confusion_matrix_chart",
+        ):
+            self.assertIn(cell_id, source)
+        for stale in (
+            "ARCHIVE_CACHE_DIRECTORY",
+            "TRAINING_CHECKPOINT_COMPATIBILITY_SHA",
+            "pm25_v5_6_3",
+            "fetch_archive_daily",
+        ):
+            self.assertNotIn(stale, source)
 
 
 if __name__ == "__main__":
