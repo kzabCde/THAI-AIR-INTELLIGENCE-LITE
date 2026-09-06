@@ -74,13 +74,15 @@ jobs:
           {
             echo "## Historical PM2.5 training archive"
             echo
-            echo "- Period: \`2022-08-01 → 2025-07-18\`"
+            echo "- Requested source period: \`2022-08-01 → 2025-07-18\`"
+            echo "- First usable CAMS PM2.5 date returned by source: \`2022-08-05\`"
+            echo "- Leading source gap: \`4 days\` (preserved; not synthesized/interpolated)"
             echo "- Destination: \`training_daily_archive_v1\`"
             echo "- Request lineage: \`training_archive_requests_v1\`"
             echo "- Air source/model: \`Open-Meteo / CAMS global\`"
             echo "- Weather source: \`Open-Meteo Historical Weather\`"
             echo "- Timezone: \`Asia/Bangkok\`"
-            echo "- Expected archive rows: \`21,660\` (1,083 days × 20 provinces)"
+            echo "- Expected source-available archive rows: \`21,580\` (1,079 days × 20 provinces)"
             echo "- Retraining network dependency after completion: \`none\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
