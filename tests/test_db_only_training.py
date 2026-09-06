@@ -52,6 +52,7 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertIn('NOTEBOOK_VERSION = "5.6.4"', source)
         self.assertIn('PROVINCE_IDS = tuple(f"TH-{code}" for code in range(30, 50))', source)
         from datetime import date
+
         requested_days = (date(2025, 7, 18) - date(2022, 8, 1)).days + 1
         usable_days = (date(2025, 7, 18) - date(2022, 8, 5)).days + 1
         self.assertEqual(requested_days, 1083)
@@ -60,11 +61,27 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
 
     def test_db_loader_uses_v3_and_no_network_urls(self) -> None:
         source = (ROOT / "training/db_training_data.py").read_text(encoding="utf-8")
-        self.assertEqual(assigned_string(source, "TRAINING_VIEW"), "training_daily_summary_v3")
-        self.assertEqual(assigned_string(source, "ARCHIVE_LINEAGE_VERSION"), "training-archive-db-v1")
+        self.assertEqual(
+            assigned_string(source, "TRAINING_VIEW"), "training_daily_summary_v3"
+        )
+        self.assertEqual(
+            assigned_string(source, "ARCHIVE_LINEAGE_VERSION"),
+            "training-archive-db-v1",
+        )
         self.assertNotIn("open-meteo.com", source)
         self.assertIn('ARCHIVE_REQUEST_START_DATE = pd.Timestamp("2022-08-01")', source)
         self.assertIn('ARCHIVE_START_DATE = pd.Timestamp("2022-08-05")', source)
+
+    def test_db_loader_uses_bounded_province_date_windows(self) -> None:
+        source = (ROOT / "training/db_training_data.py").read_text(encoding="utf-8")
+        self.assertIn("FETCH_WINDOW_DAYS = 365", source)
+        self.assertIn('.eq("province_id", province_id)', source)
+        self.assertIn('.gte("date", start_iso)', source)
+        self.assertIn('.lte("date", end_iso)', source)
+        self.assertNotIn('.in_("province_id", list(province_ids))', source)
+        self.assertNotIn('.order("province_id")', source)
+        self.assertIn('RETRYABLE_DATABASE_ERROR_CODES = ("57014",)', source)
+        self.assertIn('"database_fetch_strategy": "province_date_windows"', source)
 
     def test_fire_features_are_next_schema_not_active_schema(self) -> None:
         config = (ROOT / "training/dual_model_config.py").read_text(encoding="utf-8")
@@ -72,7 +89,10 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertIn('POOLED_FEATURE_VERSION_NEXT = "daily-pooled-v2-fire"', config)
         self.assertIn('"hotspot_count"', config)
         self.assertIn('"total_frp"', config)
-        self.assertIn("missing historical coverage must never be silently interpreted as zero", config)
+        self.assertIn(
+            "missing historical coverage must never be silently interpreted as zero",
+            config,
+        )
 
 
 if __name__ == "__main__":
