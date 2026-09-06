@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Persist the v5.6.4 historical Open-Meteo training archive in Supabase.
 
-This one-time utility backfills 2022-08-01 through 2025-07-18 into
-training_daily_archive_v1 and stores request-level lineage in
-training_archive_requests_v1. It is idempotent: once complete verified coverage
-exists, reruns exit without making Open-Meteo requests.
+The requested migration window is 2022-08-01 through 2025-07-18. Open-Meteo
+CAMS returns the first usable PM2.5 day for this contract on 2022-08-05, so the
+four leading unavailable dates are preserved as a documented source gap rather
+than fabricated or interpolated. Request lineage still records the requested
+2022-08-01 boundary.
 
-Required environment variables:
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
+The utility is idempotent: once complete source-available coverage exists,
+reruns exit without making Open-Meteo requests.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ SOURCE = "open-meteo"
 TIMEZONE = "Asia/Bangkok"
 DEFAULT_START = date(2022, 8, 1)
 DEFAULT_END = date(2025, 7, 18)
+FIRST_USABLE_CAMS_DATE = date(2022, 8, 5)
 PROVINCE_IDS = tuple(f"TH-{code}" for code in range(30, 50))
 WEATHER_VARIABLES = (
     "temperature_2m_mean",
@@ -274,7 +275,8 @@ def read_archive_rows(sb, start: date, end: date) -> list[dict[str, Any]]:
 
 
 def coverage_status(sb, start: date, end: date, *, raise_on_error: bool) -> dict[str, Any]:
-    expected_days = (end - start).days + 1
+    usable_start = max(start, FIRST_USABLE_CAMS_DATE)
+    expected_days = (end - usable_start).days + 1
     expected_rows = expected_days * len(PROVINCE_IDS)
     frame = pd.DataFrame(read_archive_rows(sb, start, end))
     if frame.empty:
@@ -282,18 +284,26 @@ def coverage_status(sb, start: date, end: date, *, raise_on_error: bool) -> dict
             "complete": False,
             "rows": 0,
             "expected_rows": expected_rows,
+            "requested_start_date": start.isoformat(),
+            "first_usable_source_date": usable_start.isoformat(),
             "incomplete": {pid: 0 for pid in PROVINCE_IDS},
             "null_lineage_rows": 0,
         }
         if raise_on_error:
             raise RuntimeError(f"archive verification failed: {status}")
         return status
-    counts = frame.groupby("province_id")["date"].nunique().to_dict()
-    incomplete = {
-        pid: int(counts.get(pid, 0))
-        for pid in PROVINCE_IDS
-        if counts.get(pid, 0) != expected_days
-    }
+
+    frame["date"] = pd.to_datetime(frame["date"]).dt.date
+    expected_dates = set(pd.date_range(usable_start, end, freq="D").date)
+    incomplete: dict[str, int] = {}
+    date_gaps: dict[str, list[str]] = {}
+    for province_id in PROVINCE_IDS:
+        province_dates = set(frame.loc[frame["province_id"] == province_id, "date"])
+        if province_dates != expected_dates:
+            incomplete[province_id] = len(province_dates)
+            missing = sorted(expected_dates - province_dates)
+            date_gaps[province_id] = [value.isoformat() for value in missing[:10]]
+
     null_lineage = int(
         frame[["air_request_id", "weather_request_id", "lineage_version"]]
         .isna()
@@ -301,23 +311,31 @@ def coverage_status(sb, start: date, end: date, *, raise_on_error: bool) -> dict
         .sum()
     )
     lineage_mismatch = int((frame["lineage_version"] != LINEAGE_VERSION).sum())
+    leading_unavailable_rows = int((frame["date"] < usable_start).sum())
     complete = (
         len(frame) == expected_rows
         and not incomplete
         and null_lineage == 0
         and lineage_mismatch == 0
+        and leading_unavailable_rows == 0
     )
     status = {
         "complete": complete,
         "rows": int(len(frame)),
         "expected_rows": expected_rows,
+        "requested_start_date": start.isoformat(),
+        "requested_end_date": end.isoformat(),
+        "first_usable_source_date": usable_start.isoformat(),
+        "documented_leading_source_gap_days": max(0, (usable_start - start).days),
         "days_per_province": expected_days,
         "provinces": int(frame["province_id"].nunique()),
-        "min_date": str(frame["date"].min()),
-        "max_date": str(frame["date"].max()),
+        "min_date": frame["date"].min().isoformat(),
+        "max_date": frame["date"].max().isoformat(),
         "incomplete": incomplete,
+        "date_gaps": date_gaps,
         "null_lineage_rows": null_lineage,
         "lineage_mismatch_rows": lineage_mismatch,
+        "unexpected_leading_rows": leading_unavailable_rows,
         "lineage_version": LINEAGE_VERSION,
     }
     if raise_on_error and not complete:
@@ -330,7 +348,13 @@ def main() -> int:
     sb = get_client()
     existing = coverage_status(sb, args.start_date, args.end_date, raise_on_error=False)
     if existing["complete"]:
-        print(json.dumps({"status": "already_complete", "verification": existing}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"status": "already_complete", "verification": existing},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     provinces = load_provinces(sb)
@@ -437,7 +461,7 @@ def main() -> int:
 
     summary: dict[str, Any] = {
         "dry_run": bool(args.dry_run),
-        "start_date": args.start_date.isoformat(),
+        "requested_start_date": args.start_date.isoformat(),
         "end_date": args.end_date.isoformat(),
         "rows_prepared": total_rows,
         "request_records_prepared": request_count,
