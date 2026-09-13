@@ -1,6 +1,6 @@
 # ตรวจสอบคำทำนายเมื่อถึงวันเป้าหมาย
 
-สถานะ: พัฒนาใน PR; migration อยู่ใน `supabase/pending-migrations.json` และยังไม่ใช่ประวัติ Production
+สถานะ: ใช้ migration และประเมินย้อนหลังใหม่บน Production แล้ววันที่ 2026-09-13; API/UI ยังอยู่ใน PR #77 และยังไม่เผยแพร่ในขั้นตอนนี้
 
 ## ลำดับการเปลี่ยนแปลง
 
@@ -59,6 +59,18 @@ RPC `fn_get_forecast_verification` เป็น `SECURITY INVOKER`, จำกั
 - `npm run typecheck`, `npm run lint`, `npm run build`.
 - ตรวจ EXPLAIN ANALYZE เฉพาะคำสั่งอ่านบน Production วันที่ 2026-09-13: การ aggregate ช่วง 7 วัน 3,360 ชั่วโมงใช้ประมาณ 46 ms เมื่อใส่ขอบเขต observed_at ทั้งช่วง. เป็นผล query อ่านหนึ่งครั้ง ไม่ใช่เวลาทั้ง pipeline หรือ SLA.
 - Browser smoke ผ่าน Chromium/Playwright ที่ 1440px และ 390px: กราฟ/ตาราง, ตัวกรอง, empty state, HTTP error และกดโหลดใหม่ฟื้นกลับได้; ไม่มี page errors และมือถือไม่มี page overflow. ใช้ข้อมูลจำลองผ่าน Next API → PostgreSQL ในเครื่อง ไม่มีการเขียนข้อมูลจำลองลง Production. Agent Browser CLI เปิด daemon ในสภาพแวดล้อมนี้ไม่ได้ จึงใช้ Playwright กับ Chromium ที่ดาวน์โหลดแทน; ฟอนต์ไทยเพิ่มเฉพาะใน harness เพื่อทดแทนฟอนต์ระบบของเครื่องทดสอบ.
+
+## ผลนำฐานข้อมูลขึ้นใช้งาน 2026-09-13
+
+- Production migration `20260913134347_forecast_verification_closed_days` ตรงกับไฟล์ที่ตรวจใน PR `20260913085852_forecast_verification_closed_days.sql`; MD5 `07043db4b4674a2940b45287abcc0aa3`. บันทึก alias และนำออกจาก pending inventory แล้ว.
+- ตรวจพบ migration เดิมบน Production `20260908174224_data_remediation_daily_summary_trusted_sources` ซึ่งยังไม่อยู่ใน snapshot วันที่ 6 ก.ย.; เพิ่มเฉพาะรายการประวัติที่ตรวจพบ ไม่รันซ้ำหรือเปลี่ยน SQL นั้น.
+- ประเมินช่วง 15 มิ.ย.–12 ก.ย. 2026 ครบ 90 วัน แบ่ง 13 ชุดไม่เกินชุดละ 7 วัน: อัปเดตเป็น v2 final **7,075 รายการ**, ครอบคลุม 20 จังหวัด วันที่ 28 ก.ค.–12 ก.ย. ทุกผลมีข้อมูล **24/24 ชั่วโมง** และใช้ `open-meteo` เป็น model reference.
+- คงผล legacy 9,152 รายการไว้เพื่อสอบย้อนกลับ. คำทำนาย 30 รายการที่มี run ID แต่วันเป้าหมาย 26–27 ก.ค. ถูกออกหลังเริ่มวันเป้าหมาย จึงไม่เข้าเกณฑ์ v2. จำนวนผลประเมินรวมคงเดิม 16,227 รายการ.
+- ตรวจ RPC ทั้ง 20 จังหวัด × 7 ระยะพยากรณ์: ได้ 5,955 ผล final หลังเลือกคำทำนายล่าสุดต่อวัน/ระยะ และ 700 รายการ pending; ไม่พบวันซ้ำหรือผล final ของวันปัจจุบัน/อนาคต.
+- คะแนนรวมจังหวัดในหน้าต่างนี้ (หลายรุ่นโมเดล, µg/m³): D+1 จำนวน 900 ตัวอย่าง MAE 2.199 / RMSE 2.729; D+7 จำนวน 795 ตัวอย่าง MAE 3.763 / RMSE 4.509. เป็นความสอดคล้องกับ Open-Meteo/CAMS ไม่ใช่ความแม่นยำกับสถานีวัดภาคพื้นดิน.
+- Refresh drift 188 รายการ. รัน wrapper 7 วันล่าสุดซ้ำได้ `evaluated=0`, `invalidated=0`; ไม่เพิ่ม revision เมื่อข้อมูลไม่เปลี่ยน. RPC ทั้งสี่เป็น invoker และเรียกได้เฉพาะ service role จากกลุ่มบทบาทแอปที่ตรวจ.
+- Supabase security advisor ไม่มี finding ที่อ้างถึงวัตถุใหม่; รายการเดิมคือ [extensions ใน public](https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public) และ [RLS ไม่มี policy](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy) ของ cron_log/sync_state. Performance advisor แจ้ง [index ยังไม่ถูกใช้](https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index) รวม index รายงานที่เพิ่งสร้างและยังไม่ได้เปิด frontend.
+- CI ของ commit `5a0e330` ผ่าน lint/typecheck/58 Node tests/build แต่หยุดที่ production dependency audit ของ Next.js/PostCSS/sharp. ยังต้องแก้ dependency gate ก่อนเผยแพร่เว็บ; การอัปเกรด dependency ไม่ได้รวมในการนำฐานข้อมูลขึ้นครั้งนี้.
 
 ## การย้อนกลับ
 
