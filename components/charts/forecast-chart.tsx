@@ -46,7 +46,7 @@ export function ForecastChart({
         <ReferenceLine y={37.5} stroke="#f97316" strokeDasharray="4 4" label={{ value: "เกณฑ์ไทย", fontSize: 10, fill: "#f97316", position: "right" }} />
         {/* Confidence band: invisible base + translucent band stacked on top. */}
         <Area type="monotone" dataKey="base" stackId="c" stroke="none" fill="transparent" connectNulls />
-        <Area type="monotone" dataKey="band" stackId="c" stroke="none" fill={color} fillOpacity={0.14} connectNulls name="ช่วงความเชื่อมั่น" />
+        <Area type="monotone" dataKey="band" stackId="c" stroke="none" fill={color} fillOpacity={0.14} connectNulls name="ช่วงพยากรณ์ P10–P90" />
         <Line type="monotone" dataKey="pm25" stroke={color} strokeWidth={2.5} dot={false} name="PM2.5 พยากรณ์" />
       </ComposedChart>
     </ResponsiveContainer>

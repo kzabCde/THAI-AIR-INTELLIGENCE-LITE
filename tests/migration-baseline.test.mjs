@@ -62,13 +62,27 @@ test("production migration inventory is ordered and reconciled", () => {
     .filter((file) => file.endsWith(".sql"))
     .sort();
 
+  // Pending migrations are reviewed separately; never pretend they were applied
+  // by changing the Production snapshot. Keep its checksums immutable.
+  const pendingPath = path.join(root, 'supabase/pending-migrations.json');
+  const pending = fs.existsSync(pendingPath)
+    ? JSON.parse(fs.readFileSync(pendingPath, 'utf8')) : {};
+  for (const [file, sha256] of Object.entries(pending)) {
+    assert.match(file, /^\d{14}_.+\.sql$/);
+    assert.ok(file.slice(0,14) > baseline.remote_head.version);
+    assert.ok(!expectedRepositoryFiles.includes(file));
+    const sql = fs.readFileSync(path.join(root, 'supabase/migrations', file), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal(crypto.createHash('sha256').update(sql).digest('hex'), sha256,
+      `pending migration checksum changed: ${file}`);
+  }
+
   assert.deepEqual(
     actualRepositoryFiles,
-    expectedRepositoryFiles,
-    "supabase/migrations must exactly match the reviewed repository projection of Production history",
+    [...expectedRepositoryFiles, ...Object.keys(pending)].sort(),
+    "migrations must match Production history plus explicitly inventoried pending changes",
   );
 
-  for (const file of actualRepositoryFiles) {
+  for (const file of expectedRepositoryFiles) {
     const version = file.split("_", 1)[0];
     const expectedMd5 = baseline.repository_statement_md5[version];
     assert.ok(expectedMd5, `missing Production/review checksum for ${file}`);

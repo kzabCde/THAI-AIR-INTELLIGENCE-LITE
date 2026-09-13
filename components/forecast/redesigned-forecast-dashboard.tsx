@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ForecastVerificationPanel } from "./forecast-verification-panel";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -289,7 +290,6 @@ export function RedesignedForecastDashboard({
     : [...overview.snapshots].sort((a, b) => (b.pm25 ?? 0) - (a.pm25 ?? 0)).slice(0, 5);
 
   // ── Derived values ──────────────────────────────────────────────────────────
-  const confidenceVal = Math.round((forecast.daily[0]?.confidence ?? 0.82) * 100);
   const refreshedTimeStr = formatTimeString(lastRefreshedAt);
 
   // ── Weather base values from snapshot for 100% parity across pages ───────────
@@ -903,24 +903,20 @@ export function RedesignedForecastDashboard({
               </div>
             </div>
 
-            {/* Sidebar: AI Model Confidence */}
             <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-              <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-white">ความมั่นใจโมเดล AI</h3>
-              <div className="flex items-end gap-2">
-                <span className="text-3xl font-extrabold text-emerald-600">{confidenceVal}%</span>
-                <span className="mb-1 text-xs text-slate-400">D+1 forecast</span>
-              </div>
-              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all"
-                  style={{ width: `${confidenceVal}%` }}
-                />
-              </div>
+              <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-white">ผลตรวจสอบความแม่นยำ</h3>
+              <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                ดูความคลาดเคลื่อนจากคำทำนายที่เผยแพร่แล้ว เทียบกับข้อมูลที่รับเข้ามาหลังวันเป้าหมายสิ้นสุด
+              </p>
+              <a href="#forecast-verification" className="mt-3 inline-block text-sm font-semibold text-emerald-700 underline underline-offset-4 dark:text-emerald-400">
+                ดูผลทำนายย้อนหลัง
+              </a>
             </div>
 
           </div>{/* end RIGHT SIDEBAR */}
 
         </div>{/* end lg:grid */}
+        <ForecastVerificationPanel provinceId={province.id} />
     </div>
   );
 }

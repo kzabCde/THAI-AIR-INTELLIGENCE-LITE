@@ -90,7 +90,7 @@ export function buildForecast(
       pm25P10: +Math.max(0, mean * 0.72).toFixed(1),
       pm25P50: +mean.toFixed(1),
       pm25P90: +(mean * 1.35).toFixed(1),
-      confidence: +Math.max(0.4, 0.92 - d * 0.07).toFixed(2),
+      confidence: null,
       airQualityClass: classId,
       labelTh: definition.labelTh,
       labelEn: definition.labelEn,
@@ -120,7 +120,7 @@ export function buildForecast(
     hourly.push({
       t: target.toISOString(),
       pm25: +value.toFixed(1),
-      confidence: +Math.max(0.35, 0.9 - (h / FORECAST_HORIZON_HOURS) * 0.55).toFixed(2),
+      confidence: null,
     });
   }
 
@@ -170,7 +170,7 @@ export function buildForecast(
     console.log(`================================================================================`);
     console.log(`  [⚠️] PM2.5 Regression Model   : ${FORECAST_MODEL} (FALLBACK_RECENT_MEAN)`);
     console.log(`  [ℹ️] AQI Classifier Model     : Threshold_Classifier (DERIVED_FROM_PM25)`);
-    console.log(`  [⚠️] D+1 Forecast Reliability : typescript_fallback (Confidence: 85%)`);
+    console.log(`  [⚠️] D+1 Forecast Reliability : typescript_fallback (numeric confidence unavailable)`);
     console.log(`  [⚡] LIVE Data Stream & Time   : ${generatedAt.toISOString()} (Fallback_Calculation)`);
     console.log(`================================================================================\n`);
   }
@@ -262,7 +262,7 @@ async function readStoredForecast(
       pm25P10: r.pm25_p10_forecast ?? undefined,
       pm25P50: r.pm25_p50_forecast ?? undefined,
       pm25P90: r.pm25_p90_forecast ?? undefined,
-      confidence: +Math.max(0.4, 0.92 - (i + 1) * 0.07).toFixed(2),
+      confidence: null,
       airQualityClass: displayedClass,
       labelTh: r.class_label_th ?? definition.labelTh,
       labelEn: r.class_label_en ?? definition.labelEn,
@@ -296,10 +296,7 @@ async function readStoredForecast(
       return {
         t: target.toISOString(),
         pm25: +Math.max(1, d.pm25 * diurnal(target.getUTCHours())).toFixed(1),
-        confidence: +Math.max(
-          0.35,
-          0.9 - (hAhead / FORECAST_HORIZON_HOURS) * 0.55,
-        ).toFixed(2),
+        confidence: null,
       };
     }),
   );
@@ -363,7 +360,6 @@ async function readStoredForecast(
   if (process.env.NODE_ENV === "development") {
     const regStatus = storedForecast.models.regression.eligible ? "[✓] ACTIVE" : "[⚠️] FALLBACK";
     const clsStatus = hasDirectClassification ? "[✓] ACTIVE_5CLASS" : "[ℹ️] DERIVED";
-    const confVal = dPoints[0]?.confidence ? `${(dPoints[0].confidence * 100).toFixed(0)}%` : "85%";
     const relStatus = dPoints[0]?.horizonReliability === "evaluated_d1" ? "[✓] VERIFIED_D1" : "[⚠️] EXPERIMENTAL";
 
     console.log(`\n================================================================================`);
@@ -371,7 +367,7 @@ async function readStoredForecast(
     console.log(`================================================================================`);
     console.log(`  ${regStatus} PM2.5 Regression Model   : ${storedForecast.models.regression.name}`);
     console.log(`  ${clsStatus} AQI Classifier Model     : ${storedForecast.models.classification?.name ?? "Threshold_Classifier"}`);
-    console.log(`  ${relStatus} D+1 Forecast Reliability : ${dPoints[0]?.horizonReliability ?? "legacy_unverified"} (Confidence: ${confVal})`);
+    console.log(`  ${relStatus} D+1 Forecast Reliability : ${dPoints[0]?.horizonReliability ?? "legacy_unverified"}`);
     console.log(`  [⚡] LIVE Data Stream & Time   : ${forecastAt} (${newest?.data_freshness ?? "Live_Stream"})`);
     console.log(`================================================================================\n`);
   }

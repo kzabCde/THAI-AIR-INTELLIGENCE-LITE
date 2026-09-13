@@ -493,6 +493,11 @@ export type Database = {
           forecast_daily_id: number
           id: number
           interval_covered: boolean | null
+          evaluation_version: number
+          evaluation_status: string
+          hours_available: number | null
+          reference_kind: string | null
+          revision: number
           squared_error: number | null
         }
         Insert: {
@@ -506,6 +511,11 @@ export type Database = {
           forecast_daily_id: number
           id?: number
           interval_covered?: boolean | null
+          evaluation_version?: number
+          evaluation_status?: string
+          hours_available?: number | null
+          reference_kind?: string | null
+          revision?: number
           squared_error?: number | null
         }
         Update: {
@@ -519,6 +529,11 @@ export type Database = {
           forecast_daily_id?: number
           id?: number
           interval_covered?: boolean | null
+          evaluation_version?: number
+          evaluation_status?: string
+          hours_available?: number | null
+          reference_kind?: string | null
+          revision?: number
           squared_error?: number | null
         }
         Relationships: [
@@ -1785,6 +1800,12 @@ export type Database = {
         Returns: number
       }
       fn_evaluate_due_forecasts: { Args: never; Returns: Json }
+      fn_evaluate_forecasts_range: {
+        Args: { p_start_date: string; p_end_date: string }; Returns: Json
+      }
+      fn_get_forecast_verification: {
+        Args: { p_province: string; p_days?: number; p_horizon?: number }; Returns: Json
+      }
       fn_generate_forecast: { Args: { p_horizon?: number }; Returns: number }
       fn_record_pipeline_alert: {
         Args: {
