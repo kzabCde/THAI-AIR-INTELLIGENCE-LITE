@@ -65,8 +65,8 @@ export type ForecastPoint = {
   pm25P10?: number;
   pm25P50?: number;
   pm25P90?: number;
-  /** Horizon confidence used by the numeric forecast visualization. */
-  confidence: number;
+  /** Unavailable unless calibrated; never a substitute for measured accuracy. */
+  confidence: number | null;
   airQualityClass?: PM25ClassId;
   labelTh?: string;
   labelEn?: string;

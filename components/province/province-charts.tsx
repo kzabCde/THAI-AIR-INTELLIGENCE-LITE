@@ -21,7 +21,7 @@ import type { DailyPoint } from "@/services/daily-summary.service";
 
 export type DailySeriesPoint = { date: string; pm25: number | null };
 export type HourlySeriesPoint = { t: string; pm25: number };
-export type DailyForecastPoint = { t: string; pm25: number; confidence: number };
+export type DailyForecastPoint = { t: string; pm25: number; pm25P10?: number; pm25P90?: number };
 
 function dayLabel(iso: string) {
   return new Date(iso).toLocaleDateString("th-TH", { day: "numeric", month: "short" });
@@ -326,9 +326,12 @@ export function ForecastCard({
   let data: ForecastChartPoint[];
   if (horizon === "7d") {
     data = daily.map((d) => {
-      const spread = d.pm25 * (1 - d.confidence);
-      const lower = Math.max(0, d.pm25 - spread);
-      return { label: dayLabel(d.t), pm25: d.pm25, base: lower, band: 2 * spread };
+      const hasInterval = d.pm25P10 != null && d.pm25P90 != null && d.pm25P90 >= d.pm25P10;
+      return {
+        label: dayLabel(d.t), pm25: d.pm25,
+        base: hasInterval ? d.pm25P10 : undefined,
+        band: hasInterval ? d.pm25P90! - d.pm25P10! : undefined,
+      };
     });
   } else {
     const hours = Number(horizon);
