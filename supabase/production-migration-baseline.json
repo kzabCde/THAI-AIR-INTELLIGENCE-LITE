@@ -1,21 +1,26 @@
 {
   "project_scope": "northeast-thailand-air-quality",
-  "captured_at": "2026-09-06",
+  "captured_at": "2026-09-13",
   "project_ref": "qtcptorlmteydcslveqm",
-  "remote_migration_count": 81,
+  "remote_migration_count": 83,
   "remote_head": {
-    "version": "20260906104914",
-    "name": "training_archive_db_only"
+    "version": "20260913134347",
+    "name": "forecast_verification_closed_days"
   },
   "repository_history_start": "20260718084717",
   "purpose": "Authoritative inventory of the Supabase Production migration history. supabase/migrations contains the reviewed replayable projection from repository_history_start; connector-applied setup migrations may remain remote-only and repository_migration_aliases records reviewed local filenames whose timestamp differs from the Production migration version.",
   "repository_migration_aliases": {
+    "20260913085852": {
+      "remote_version": "20260913134347",
+      "remote_name": "forecast_verification_closed_days"
+    },
     "20260906170000": {
       "remote_version": "20260906104914",
       "remote_name": "training_archive_db_only"
     }
   },
   "repository_statement_md5": {
+    "20260913085852": "07043db4b4674a2940b45287abcc0aa3",
     "20260718084717": "18f13293445a542de3f012545a8a79a5",
     "20260718085348": "e1365d91d8b0016864542af5e3a4c9c8",
     "20260719101123": "1b9f601150f1240049ff61ae7d88262c",
@@ -115,6 +120,8 @@
     ["20260816132802", "secure_and_index_training_archive_v1"],
     ["20260816140047", "use_historical_forecast_weather_archive_v1"],
     ["20260816140148", "label_historical_forecast_training_archive_v1"],
-    ["20260906104914", "training_archive_db_only"]
+    ["20260906104914", "training_archive_db_only"],
+    ["20260908174224", "data_remediation_daily_summary_trusted_sources"],
+    ["20260913134347", "forecast_verification_closed_days"]
   ]
 }

@@ -145,7 +145,7 @@ test('closed-day evaluation, late corrections, provenance and report selection',
       'withdrawn hours are reflected in the displayed coverage');
     await assert.rejects(() => db.query("select fn_get_forecast_verification('TH-40',365,1)"));
     await assert.rejects(() => db.query("select fn_get_forecast_verification('TH-99',30,1)"));
-    await assert.rejects(() => db.query("select fn_evaluate_forecasts_range(current_date,current_date)"));
+    await assert.rejects(() => db.query("select fn_evaluate_forecasts_range((now() at time zone 'Asia/Bangkok')::date,(now() at time zone 'Asia/Bangkok')::date)"));
     const permissions = (await db.query(`select
       has_function_privilege('anon','fn_get_forecast_verification(text,integer,integer)','execute') as anon,
       has_function_privilege('service_role','fn_get_forecast_verification(text,integer,integer)','execute') as service`)).rows[0];
