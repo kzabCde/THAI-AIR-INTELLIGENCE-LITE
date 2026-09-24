@@ -219,10 +219,13 @@ def test_private_tree_artifact_is_checksum_verified_and_cached():
         "runtime_artifact_uri": "storage://model-artifacts/run/pooled/regression/runtime.json.gz",
         "runtime_artifact_sha256": digest,
     }
+    ml._RUNTIME_ARTIFACT_CACHE.clear()
     cache = {}
     loaded = ml.load_runtime_artifact(SB(), row, cache)
     assert loaded == artifact
     assert ml.load_runtime_artifact(SB(), row, cache) is loaded
+    second_request_cache = {}
+    assert ml.load_runtime_artifact(SB(), row, second_request_cache) is loaded
     assert downloads == ["run/pooled/regression/runtime.json.gz"]
 
 
@@ -541,3 +544,61 @@ def test_stale_source_is_rolled_forward_before_emitting_d1(monkeypatch):
         (today + ml.timedelta(days=2)).isoformat(),
     ]
     assert [row["forecast_horizon_days"] for row in rows] == [1, 2]
+
+
+def test_runtime_artifacts_are_prefetched_concurrently():
+    import threading
+    import time
+
+    artifact = {
+        "artifact_schema": ml.TREE_ARTIFACT_SCHEMA,
+        "task_type": "regression",
+        "model_family": "lightgbm",
+        "feature_version": "concurrency-test",
+        "feature_cols": ["pm25_mean", "forecast_horizon_days"],
+        "trees": [{"leaf_value": 42.0}],
+    }
+    payload = encode_artifact(artifact)
+    digest = ml.hashlib.sha256(payload).hexdigest()
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+    downloads = []
+
+    class Bucket:
+        def download(self, path):
+            nonlocal active, max_active
+            with state_lock:
+                downloads.append(path)
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with state_lock:
+                active -= 1
+            return payload
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "model-artifacts"
+            return Bucket()
+
+    class SB:
+        storage = Storage()
+
+    rows = [
+        {
+            "task_type": "regression",
+            "feature_version": "concurrency-test",
+            "runtime_artifact_uri": f"storage://model-artifacts/run/TH-{30 + index}/runtime.json.gz",
+            "runtime_artifact_sha256": digest,
+        }
+        for index in range(4)
+    ]
+    ml._RUNTIME_ARTIFACT_CACHE.clear()
+    cache = {}
+    ml.prefetch_runtime_artifacts(SB(), rows, cache, max_workers=4)
+
+    assert len(downloads) == 4
+    assert max_active >= 2
+    assert len(cache) == 4
+    assert all(value == artifact for value in cache.values())
