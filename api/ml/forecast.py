@@ -8,11 +8,14 @@ fail closed to the explicit seven-day recent-observation mean baseline.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hmac
 import hashlib
 import json
 import math
 import os
+import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
@@ -66,6 +69,30 @@ SUPPORTED_SERVING_POLICIES = {
     "regression_threshold",
     "classifier_with_regression_fallback",
 }
+
+
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+ARTIFACT_DOWNLOAD_WORKERS = _bounded_env_int(
+    "PM25_ARTIFACT_DOWNLOAD_WORKERS",
+    8,
+    1,
+    12,
+)
+RUNTIME_ARTIFACT_CACHE_MAX_ENTRIES = _bounded_env_int(
+    "PM25_RUNTIME_ARTIFACT_CACHE_MAX_ENTRIES",
+    64,
+    20,
+    256,
+)
+_RUNTIME_ARTIFACT_CACHE: dict[str, dict] = {}
+_RUNTIME_ARTIFACT_CACHE_LOCK = threading.Lock()
 
 FEATURE_COLS = [
     "pm25_mean",
@@ -188,11 +215,7 @@ def _storage_location(uri: str) -> tuple[str, str]:
     return bucket, path
 
 
-def load_runtime_artifact(
-    sb: Client,
-    model_row: dict | None,
-    cache: dict[str, dict],
-) -> dict | None:
+def _runtime_artifact_cache_key(model_row: dict | None) -> str | None:
     if not model_row:
         return None
     params = model_row.get("model_params") or {}
@@ -203,9 +226,46 @@ def load_runtime_artifact(
     )
     if not uri or not expected_sha:
         return None
-    cache_key = f"{uri}#{expected_sha}"
+    return f"{uri}#{expected_sha}"
+
+
+def _module_cached_runtime_artifact(cache_key: str) -> dict | None:
+    with _RUNTIME_ARTIFACT_CACHE_LOCK:
+        return _RUNTIME_ARTIFACT_CACHE.get(cache_key)
+
+
+def _remember_runtime_artifact(cache_key: str, artifact: dict) -> None:
+    with _RUNTIME_ARTIFACT_CACHE_LOCK:
+        if cache_key in _RUNTIME_ARTIFACT_CACHE:
+            _RUNTIME_ARTIFACT_CACHE[cache_key] = artifact
+            return
+        while len(_RUNTIME_ARTIFACT_CACHE) >= RUNTIME_ARTIFACT_CACHE_MAX_ENTRIES:
+            _RUNTIME_ARTIFACT_CACHE.pop(next(iter(_RUNTIME_ARTIFACT_CACHE)))
+        _RUNTIME_ARTIFACT_CACHE[cache_key] = artifact
+
+
+def load_runtime_artifact(
+    sb: Client,
+    model_row: dict | None,
+    cache: dict[str, dict | None],
+) -> dict | None:
+    if not model_row:
+        return None
+    params = model_row.get("model_params") or {}
+    uri = model_row.get("runtime_artifact_uri") or params.get("runtime_artifact_uri")
+    expected_sha = (
+        model_row.get("runtime_artifact_sha256")
+        or params.get("runtime_artifact_sha256")
+    )
+    cache_key = _runtime_artifact_cache_key(model_row)
+    if cache_key is None:
+        return None
     if cache_key in cache:
         return cache[cache_key]
+    warm_artifact = _module_cached_runtime_artifact(cache_key)
+    if warm_artifact is not None:
+        cache[cache_key] = warm_artifact
+        return warm_artifact
     bucket, path = _storage_location(str(uri))
     payload = sb.storage.from_(bucket).download(path)
     expected_size = model_row.get("runtime_artifact_byte_size")
@@ -240,8 +300,77 @@ def load_runtime_artifact(
     ):
         raise ValueError("runtime artifact threshold version mismatch")
     cache[cache_key] = artifact
+    _remember_runtime_artifact(cache_key, artifact)
     return artifact
 
+
+def prefetch_runtime_artifacts(
+    sb: Client,
+    model_rows: list[dict],
+    cache: dict[str, dict | None],
+    *,
+    max_workers: int | None = None,
+) -> dict[str, dict | None]:
+    """Download distinct runtime artifacts concurrently, preserving fail-closed behavior."""
+    unique_rows: dict[str, dict] = {}
+    warm_hits = 0
+    for row in model_rows:
+        cache_key = _runtime_artifact_cache_key(row)
+        if cache_key is None or cache_key in cache or cache_key in unique_rows:
+            continue
+        warm_artifact = _module_cached_runtime_artifact(cache_key)
+        if warm_artifact is not None:
+            cache[cache_key] = warm_artifact
+            warm_hits += 1
+            continue
+        unique_rows[cache_key] = row
+
+    if not unique_rows:
+        return cache
+
+    workers = min(
+        max_workers or ARTIFACT_DOWNLOAD_WORKERS,
+        len(unique_rows),
+    )
+    started = time.perf_counter()
+    failures = 0
+
+    if workers <= 1:
+        for cache_key, row in unique_rows.items():
+            try:
+                artifact = load_runtime_artifact(sb, row, {})
+            except Exception:
+                artifact = None
+                failures += 1
+            cache[cache_key] = artifact
+    else:
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="pm25-artifact",
+        ) as executor:
+            futures = {
+                executor.submit(load_runtime_artifact, sb, row, {}): cache_key
+                for cache_key, row in unique_rows.items()
+            }
+            for future in as_completed(futures):
+                cache_key = futures[future]
+                try:
+                    artifact = future.result()
+                except Exception:
+                    artifact = None
+                    failures += 1
+                cache[cache_key] = artifact
+
+    print(json.dumps({
+        "event": "runtime_artifact_prefetch",
+        "requested": len(unique_rows) + warm_hits,
+        "downloaded": len(unique_rows),
+        "warm_cache_hits": warm_hits,
+        "failures": failures,
+        "workers": workers,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+    }))
+    return cache
 
 def load_active_models(sb: Client) -> dict[str, dict]:
     """Backward-compatible regression-only loader used by existing tests."""
@@ -702,7 +831,12 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
     province_metadata = (
         load_province_metadata(sb) if needs_province_metadata else {}
     )
-    runtime_cache: dict[str, dict] = {}
+    runtime_cache: dict[str, dict | None] = {}
+    prefetch_runtime_artifacts(
+        sb,
+        [*active_models.values(), *active_classifiers.values()],
+        runtime_cache,
+    )
     needs_legacy = any(
         row.get("model_name") in LEGACY_BASE_MODELS | {LEGACY_STACKING_MODEL}
         for row in active_models.values()
