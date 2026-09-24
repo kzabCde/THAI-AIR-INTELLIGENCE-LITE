@@ -1,0 +1,60 @@
+name: Forecast HTTP 200 Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/forecast-http200-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  forecast-http200:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      ML_FORECAST_URL: ${{ secrets.ML_FORECAST_URL }}
+      ML_SECRET: ${{ secrets.ML_SECRET }}
+    steps:
+      - name: Validate production forecast endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ML_FORECAST_URL" || { echo "::error::Missing ML_FORECAST_URL"; exit 1; }
+          test -n "$ML_SECRET" || { echo "::error::Missing ML_SECRET"; exit 1; }
+          response_file="$(mktemp)"
+          started="$(date +%s)"
+          status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 --max-time 180 \
+              --output "$response_file" --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $ML_SECRET" \
+              --header "Content-Type: application/json" \
+              --data '{"horizon":7}' \
+              "$ML_FORECAST_URL/api/ml/forecast"
+          )"
+          elapsed="$(( $(date +%s) - started ))"
+          echo "HTTP_STATUS=$status"
+          echo "ELAPSED_SECONDS=$elapsed"
+          cat "$response_file"
+          echo
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Forecast endpoint returned HTTP $status"
+            exit 1
+          fi
+          python - "$response_file" <<'PY'
+          import json, sys
+          payload = json.load(open(sys.argv[1]))
+          assert payload.get("ok") is True, payload
+          assert payload.get("horizon") == 7, payload
+          assert payload.get("provinces") == 20, payload
+          assert payload.get("upserted") == 140, payload
+          print("SMOKE_OK=true")
+          print("UPSERTED=140")
+          print("PROVINCES=20")
+          print("HORIZON=7")
+          PY
