@@ -1,4 +1,4 @@
-import { CloudSun, History, Home, MapPinned, type LucideIcon } from "lucide-react";
+import { CloudSun, History, Home, Info, MapPinned, type LucideIcon } from "lucide-react";
 
 export type NavItem = { href: string; label: string; icon: LucideIcon };
 
@@ -7,4 +7,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/map", label: "แผนที่", icon: MapPinned },
   { href: "/forecast", label: "พยากรณ์", icon: CloudSun },
   { href: "/trends", label: "ย้อนหลัง", icon: History },
+  { href: "/about", label: "เกี่ยวกับ", icon: Info },
 ];
