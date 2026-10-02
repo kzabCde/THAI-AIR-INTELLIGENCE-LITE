@@ -6,14 +6,15 @@ import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { getProvinceForecast } from "@/services/forecast.service";
 import { getLatestWeather } from "@/services/weather.service";
 import { getRegionOverview } from "@/services/overview.service";
+import { getRegionalForecast } from "@/services/regional-forecast.service";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
-import { RedesignedForecastDashboard } from "@/components/forecast/redesigned-forecast-dashboard";
+import { ForecastTabsShell } from "@/components/forecast/forecast-tabs-shell";
 import { ProvinceRedirect } from "@/components/ui/province-redirect";
 
 /**
- * Forecast Page — Renders real Supabase & ML prediction data with redesigned UI.
- * - ความน่าเชื่อถือของผล: Evaluated D+1 reliability status
- * - วิธีจัดระดับคุณภาพอากาศ: Active 5-class ML classifier vs คำนวณจากค่าพยากรณ์ PM2.5
+ * Forecast Page — Two tabs:
+ * 1. "ทั้งภาคอีสาน" — regional heatmap of all 20 provinces
+ * 2. "รายจังหวัด" — detailed per-province forecast (existing)
  */
 
 export const metadata: Metadata = { title: "พยากรณ์คุณภาพอากาศ" };
@@ -23,25 +24,26 @@ export const revalidate = 0;
 export default async function ForecastPage({
   searchParams,
 }: {
-  searchParams: Promise<{ province?: string }>;
+  searchParams: Promise<{ province?: string; tab?: string }>;
 }) {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
-  const { province: pParam } = await searchParams;
+  const { province: pParam, tab } = await searchParams;
   const province = getProvince(pParam ?? "TH-40") ?? getProvince("TH-40")!;
 
-  let forecast, weather, overview;
+  let forecast, weather, overview, regionalForecast;
   try {
-    [forecast, weather, overview] = await Promise.all([
+    [forecast, weather, overview, regionalForecast] = await Promise.all([
       getProvinceForecast(province.id),
       getLatestWeather(province.id),
       getRegionOverview(),
+      getRegionalForecast(),
     ]);
   } catch (err) {
     if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
     return <ErrorState />;
   }
 
-  // Full detailed 5-section diagnostic log (Dev-Only, Suppressed automatically in Production)
+  // Full detailed diagnostic log (Dev-Only)
   if (process.env.NODE_ENV === "development") {
     console.log(`\n================================================================================`);
     console.log(`  [AI AIR INTELLIGENCE - FULL SYSTEM & FORECAST DIAGNOSTIC]`);
@@ -50,6 +52,7 @@ export default async function ForecastPage({
     console.log(`  [1. PRIMARY FORECAST] PM2.5: ${forecast.daily[0]?.pm25 ?? 0} ug/m3 | Model: ${forecast.models.regression.name}`);
     console.log(`  [2. SYSTEM STATUS] Regression: ${forecast.models.regression.eligible ? "READY" : "FALLBACK"} | Classifier: ${forecast.models.classification?.name ?? "Threshold"}`);
     console.log(`  [3. WEATHER LIVE] Temp: ${weather?.temperature ?? "-"} C | Humidity: ${weather?.humidity ?? "-"} % | Wind: ${weather?.wind_speed ?? "-"} m/s`);
+    console.log(`  [4. REGIONAL] ${regionalForecast.entries.length} provinces loaded | Avg D+1: ${regionalForecast.avgPm25D1} µg/m³`);
     console.log(`================================================================================\n`);
   }
 
@@ -58,11 +61,13 @@ export default async function ForecastPage({
       <Suspense fallback={null}>
         <ProvinceRedirect page="forecast" />
       </Suspense>
-      <RedesignedForecastDashboard
+      <ForecastTabsShell
         province={province}
         forecast={forecast}
         weather={weather}
         overview={overview}
+        regionalForecast={regionalForecast}
+        initialTab={tab === "province" ? "province" : "regional"}
       />
     </>
   );
