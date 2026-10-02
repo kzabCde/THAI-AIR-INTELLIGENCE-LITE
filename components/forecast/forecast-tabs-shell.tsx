@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Globe, MapPin } from "lucide-react";
 import { RedesignedForecastDashboard } from "./redesigned-forecast-dashboard";
 import { RegionalForecastDashboard } from "./regional-forecast-dashboard";
-import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import type { IsanProvince } from "@/lib/isan";
 import type { ProvinceForecast } from "@/services/types";
 import type { WeatherRow } from "@/services/weather.service";
@@ -44,55 +43,23 @@ export function ForecastTabsShell({
     router.replace(`/forecast?${params.toString()}`, { scroll: false });
   };
 
-  const handleProvinceSelect = (id: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("province", id);
-    params.set("tab", "province");
-    setActiveTab("province");
-    router.push(`/forecast?${params.toString()}`);
-  };
-
   return (
     <div className="mx-auto max-w-[1440px] space-y-5">
       {/* ── Tab Bar ─────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center gap-1">
-          {/* Regional Tab */}
-          <button
+      <div className="border-b border-[rgb(var(--border))]">
+        <div className="flex items-center gap-6">
+          <TabButton
+            active={activeTab === "regional"}
+            icon={<Globe size={15} />}
+            label="ทั้งภาคอีสาน"
             onClick={() => handleTabChange("regional")}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all sm:px-5 ${
-              activeTab === "regional"
-                ? "bg-teal-700 text-white shadow-md shadow-teal-900/10 dark:bg-teal-500"
-                : "text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-2))] hover:text-[rgb(var(--fg))]"
-            }`}
-          >
-            <Globe size={14} />
-            ทั้งภาคอีสาน
-          </button>
-
-          {/* Province Tab */}
-          <button
+          />
+          <TabButton
+            active={activeTab === "province"}
+            icon={<MapPin size={15} />}
+            label="รายจังหวัด"
             onClick={() => handleTabChange("province")}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all sm:px-5 ${
-              activeTab === "province"
-                ? "bg-teal-700 text-white shadow-md shadow-teal-900/10 dark:bg-teal-500"
-                : "text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-2))] hover:text-[rgb(var(--fg))]"
-            }`}
-          >
-            <MapPin size={14} />
-            รายจังหวัด
-          </button>
-
-          {/* Province selector — shown when province tab is active */}
-          {activeTab === "province" && (
-            <div className="ml-auto w-40 sm:w-48">
-              <ProvinceSelectModal
-                snapshots={overview.snapshots}
-                selectedId={province.id}
-                onSelect={handleProvinceSelect}
-              />
-            </div>
-          )}
+          />
         </div>
       </div>
 
@@ -108,5 +75,36 @@ export function ForecastTabsShell({
         />
       )}
     </div>
+  );
+}
+
+/* ── Tab Button — underline style, no pill ───────────────── */
+function TabButton({
+  active,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex items-center gap-2 pb-3 pt-1 text-sm font-bold transition-colors ${
+        active
+          ? "text-teal-700 dark:text-teal-400"
+          : "text-[rgb(var(--muted))] hover:text-[rgb(var(--fg))]"
+      }`}
+    >
+      {icon}
+      {label}
+      {/* Active underline indicator */}
+      {active && (
+        <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-teal-600 dark:bg-teal-400" />
+      )}
+    </button>
   );
 }

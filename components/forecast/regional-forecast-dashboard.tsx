@@ -512,7 +512,10 @@ function ForecastRow({ entry, days }: { entry: RegionalForecastEntry; days: Regi
       </td>
       <td className="px-2 py-3 text-center">
         {entry.currentPm25 == null ? <span className="text-slate-300">—</span> : (
-          <span className="inline-flex min-w-12 items-center justify-center rounded-lg border px-2 py-1.5 font-black tabular-nums" style={{ color: currentBand?.color, borderColor: `${currentBand?.color}35`, backgroundColor: `${currentBand?.color}12` }}>{entry.currentPm25.toFixed(1)}</span>
+          <div className="mx-auto flex min-w-14 max-w-16 flex-col items-center rounded-xl border px-2 py-1.5" style={{ color: currentBand?.color, borderColor: `${currentBand?.color}35`, backgroundColor: `${currentBand?.color}12` }}>
+            <span className="font-black tabular-nums">{entry.currentPm25.toFixed(1)}</span>
+            <span className="text-[8px] font-bold opacity-70">AQI {entry.currentAqi ?? "—"}</span>
+          </div>
         )}
       </td>
       {days.map((day) => {
