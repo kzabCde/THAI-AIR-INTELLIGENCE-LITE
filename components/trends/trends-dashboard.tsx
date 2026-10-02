@@ -7,7 +7,6 @@ import {
   Award,
   BarChart3,
   ChevronRight,
-  Clock3,
   Flame,
   Globe,
   Info,
@@ -138,6 +137,13 @@ export function TrendsDashboard({
           viewMode={viewMode}
           province={province}
           rangeDays={rangeDays}
+          updateText={
+            analysis.latestTrustedObservedAt
+              ? `อัปเดต ${formatTrendObservedAt(analysis.latestTrustedObservedAt)}`
+              : undefined
+          }
+          refreshing={refreshing}
+          onRefresh={refresh}
           onSwitchMode={switchViewMode}
           onSelectProvince={(id) => navigate(id, rangeDays)}
           onSelectRange={(r) => navigate(isRegional ? "all" : (province?.id ?? "TH-40"), r)}
@@ -203,29 +209,18 @@ export function TrendsDashboard({
 
   return (
     <div className="mx-auto max-w-5xl space-y-3.5 pb-8">
-      {/* ─── UPDATE INFO BAR (SLEEK & MINIMALIST) ─── */}
-      <div className="flex items-center justify-end gap-1.5 text-[11.5px] font-medium text-zinc-500 dark:text-zinc-400 px-1">
-        <Clock3 size={12} className="shrink-0 text-zinc-400" />
-        <span>
-          {analysis.staleDays > 0
-            ? `ข้อมูลล่าช้า ${analysis.staleDays} วัน`
-            : `อัปเดต ${formatTrendObservedAt(analysis.latestTrustedObservedAt)}`}
-        </span>
-        <button
-          type="button"
-          onClick={refresh}
-          className="rounded-full p-1 transition hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
-          title="โหลดข้อมูลใหม่"
-        >
-          <RefreshCw size={12} className={refreshing ? "animate-spin text-emerald-600" : ""} />
-        </button>
-      </div>
-
       {/* ─── VIEW MODE + CONTROLS BAR ─── */}
       <ViewModeBar
         viewMode={viewMode}
         province={province}
         rangeDays={rangeDays}
+        updateText={
+          analysis.staleDays > 0
+            ? `ข้อมูลล่าช้า ${analysis.staleDays} วัน`
+            : `อัปเดต ${formatTrendObservedAt(analysis.latestTrustedObservedAt)}`
+        }
+        refreshing={refreshing}
+        onRefresh={refresh}
         onSwitchMode={switchViewMode}
         onSelectProvince={(id) => navigate(id, rangeDays)}
         onSelectRange={(r) => navigate(isRegional ? "all" : (province?.id ?? "TH-40"), r)}
@@ -631,6 +626,9 @@ function ViewModeBar({
   viewMode,
   province,
   rangeDays,
+  updateText,
+  refreshing,
+  onRefresh,
   onSwitchMode,
   onSelectProvince,
   onSelectRange,
@@ -638,6 +636,9 @@ function ViewModeBar({
   viewMode: TrendViewMode;
   province: IsanProvince | null;
   rangeDays: number;
+  updateText?: string;
+  refreshing?: boolean;
+  onRefresh?: () => void;
   onSwitchMode: (mode: TrendViewMode) => void;
   onSelectProvince: (id: string) => void;
   onSelectRange: (range: number) => void;
@@ -646,74 +647,73 @@ function ViewModeBar({
 
   return (
     <div className="space-y-3">
-      {/* Row 1: Underline tabs + Province selector */}
-      <div className="flex items-center justify-between border-b border-[rgb(var(--border))]">
+      {/* Row 1: Underline tabs on left + Range presets on right */}
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between border-b border-[rgb(var(--border))]">
         <div className="flex items-center gap-6">
-          <button
-            type="button"
+          <TabButton
+            active={isRegional}
+            icon={<Globe size={15} />}
+            label="ทั้งภาคอีสาน"
             onClick={() => onSwitchMode("regional")}
-            className={`relative flex items-center gap-2 pb-3 pt-1 text-sm font-bold transition-colors ${
-              isRegional
-                ? "text-teal-700 dark:text-teal-400"
-                : "text-[rgb(var(--muted))] hover:text-[rgb(var(--fg))]"
-            }`}
-          >
-            <Globe size={15} />
-            ทั้งภาคอีสาน
-            {isRegional && (
-              <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-teal-600 dark:bg-teal-400" />
-            )}
-          </button>
-          <button
-            type="button"
+          />
+          <TabButton
+            active={!isRegional}
+            icon={<MapPin size={15} />}
+            label="รายจังหวัด"
             onClick={() => onSwitchMode("province")}
-            className={`relative flex items-center gap-2 pb-3 pt-1 text-sm font-bold transition-colors ${
-              !isRegional
-                ? "text-teal-700 dark:text-teal-400"
-                : "text-[rgb(var(--muted))] hover:text-[rgb(var(--fg))]"
-            }`}
-          >
-            <MapPin size={15} />
-            รายจังหวัด
-            {!isRegional && (
-              <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-teal-600 dark:bg-teal-400" />
-            )}
-          </button>
+          />
         </div>
 
-        {/* Province Selector — only in province mode */}
-        {!isRegional && (
-          <div className="w-40 sm:w-52 pb-2">
+        {/* Range presets on top right */}
+        <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-xl bg-zinc-50 p-1 dark:bg-zinc-800/60 pb-2 sm:pb-1">
+          {RANGE_OPTIONS.map((option) => (
+            <button
+              key={option.days}
+              type="button"
+              onClick={() => onSelectRange(option.days)}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all sm:text-xs ${
+                rangeDays === option.days
+                  ? "bg-white text-emerald-700 shadow-xs ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
+                  : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Row 2: Location selector (or regional label) on left + Update info on right */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {!isRegional ? (
             <ProvinceSelectModal
               selectedId={province?.id ?? "TH-40"}
               onSelect={onSelectProvince}
             />
+          ) : (
+            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400 py-1">
+              <Globe size={14} className="text-teal-600 dark:text-teal-400" />
+              <span>ภาพรวม 20 จังหวัดภาคอีสาน</span>
+            </div>
+          )}
+        </div>
+
+        {updateText && (
+          <div className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            <span>{updateText}</span>
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+                title="รีเฟรช"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-emerald-600" : ""}`} />
+              </button>
+            )}
           </div>
         )}
-        {isRegional && (
-          <span className="flex items-center gap-1.5 pb-2 text-[11px] font-semibold text-teal-600 dark:text-teal-400">
-            <Globe size={12} />
-            20 จังหวัด
-          </span>
-        )}
-      </div>
-
-      {/* Row 2: Range presets */}
-      <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-xl bg-zinc-50 p-1 dark:bg-zinc-800/60">
-        {RANGE_OPTIONS.map((option) => (
-          <button
-            key={option.days}
-            type="button"
-            onClick={() => onSelectRange(option.days)}
-            className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all sm:text-xs ${
-              rangeDays === option.days
-                ? "bg-white text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
-                : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
       </div>
     </div>
   );

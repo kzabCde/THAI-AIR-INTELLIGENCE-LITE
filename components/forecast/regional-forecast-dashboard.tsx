@@ -2,6 +2,16 @@
 
 import { useMemo, useState } from "react";
 import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   Activity,
   ArrowDownUp,
   ArrowUpRight,
@@ -347,8 +357,7 @@ function KpiCard({
   color: string;
 }) {
   return (
-    <article className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 sm:p-5">
-      <div className="absolute right-0 top-0 h-20 w-20 translate-x-6 -translate-y-6 rounded-full opacity-10" style={{ backgroundColor: color }} />
+    <article className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 sm:p-5">
       <div className="relative flex items-center gap-2 text-slate-500 dark:text-slate-400">
         <span style={{ color }}>{icon}</span>
         <span className="text-[10px] font-bold uppercase tracking-wider">{eyebrow}</span>
@@ -363,7 +372,21 @@ function KpiCard({
 }
 
 function RegionalTrendPanel({ days }: { days: RegionalForecastDay[] }) {
-  const max = Math.max(...days.map((day) => day.maxPm25), 1);
+  const chartData = days.map((day) => {
+    const band = bandForPm25(day.avgPm25);
+    return {
+      name: `D+${day.horizonDays}`,
+      dateStr: formatDate(day.date),
+      fullLabel: `D+${day.horizonDays} · ${formatDate(day.date)}`,
+      avgPm25: +day.avgPm25.toFixed(1),
+      maxPm25: +day.maxPm25.toFixed(1),
+      avgAqi: day.avgAqi,
+      bandLabel: band.labelTh,
+      bandColor: band.color,
+      horizonDays: day.horizonDays,
+    };
+  });
+
   return (
     <article className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:col-span-5">
       <div className="flex items-start justify-between gap-3">
@@ -372,27 +395,119 @@ function RegionalTrendPanel({ days }: { days: RegionalForecastDay[] }) {
             <Activity className="h-4 w-4 text-teal-600 dark:text-teal-400" />
             แนวโน้มเฉลี่ยทั้งภาค 7 วัน
           </h2>
-          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">แท่งทึบคือค่าเฉลี่ย · เส้นบางคือค่าสูงสุดของวัน</p>
+          <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="h-2 w-2 rounded-full bg-teal-600" />
+              ค่าเฉลี่ยทั้งภาค
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              ค่าสูงสุดรายวัน
+            </span>
+          </div>
         </div>
-        <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[10px] font-bold text-teal-700 dark:bg-teal-950/50 dark:text-teal-300">µg/m³</span>
+        <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[10px] font-bold text-teal-700 dark:bg-teal-950/50 dark:text-teal-300">
+          µg/m³
+        </span>
       </div>
-      <div className="mt-6 grid h-44 grid-cols-7 items-end gap-2 sm:gap-3">
-        {days.map((day) => {
-          const band = bandForPm25(day.avgPm25);
-          const avgHeight = Math.max(12, (day.avgPm25 / max) * 112);
-          const maxHeight = Math.max(avgHeight, (day.maxPm25 / max) * 112);
-          return (
-            <div key={day.horizonDays} className="flex h-full min-w-0 flex-col items-center justify-end gap-1.5">
-              <span className="text-[10px] font-black tabular-nums text-slate-700 dark:text-slate-200">{day.avgPm25.toFixed(1)}</span>
-              <div className="relative flex h-28 w-full max-w-10 items-end justify-center rounded-lg bg-slate-100 dark:bg-slate-800">
-                <div className="absolute bottom-0 w-px border-l border-dashed border-slate-400/70" style={{ height: maxHeight }} />
-                <div className="relative w-full rounded-lg" style={{ height: avgHeight, backgroundColor: band.color }} />
-              </div>
-              <span className="text-[10px] font-black text-slate-800 dark:text-slate-200">D+{day.horizonDays}</span>
-              <span className="truncate text-[9px] text-slate-400">{formatDate(day.date)}</span>
-            </div>
-          );
-        })}
+
+      <div className="mt-4 h-48 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 12, right: 10, left: -24, bottom: 0 }}>
+            <defs>
+              <linearGradient id="regionalTrendGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#0d9488" stopOpacity={0.35} />
+                <stop offset="95%" stopColor="#0d9488" stopOpacity={0.0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-200/60 dark:text-slate-800/60" vertical={false} />
+            <XAxis
+              dataKey="name"
+              tickLine={false}
+              axisLine={false}
+              tick={({ x, y, payload }) => {
+                const item = chartData.find((d) => d.name === payload.value);
+                return (
+                  <g transform={`translate(${x},${y})`}>
+                    <text x={0} y={12} textAnchor="middle" className="fill-slate-800 text-[10px] font-bold dark:fill-slate-200">
+                      {payload.value}
+                    </text>
+                    <text x={0} y={23} textAnchor="middle" className="fill-slate-400 text-[8.5px] font-medium">
+                      {item?.dateStr ?? ""}
+                    </text>
+                  </g>
+                );
+              }}
+            />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 10, fill: "#94a3b8" }}
+              domain={[0, (dataMax: number) => Math.max(Math.ceil(dataMax * 1.25), 15)]}
+            />
+            <Tooltip
+              content={({ active, payload }) => {
+                if (!active || !payload || !payload.length) return null;
+                const d = payload[0].payload;
+                const band = bandForPm25(d.avgPm25);
+                return (
+                  <div className="rounded-2xl border border-slate-200/80 bg-white/95 p-3 text-xs shadow-lg backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-1.5 dark:border-slate-800">
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {d.fullLabel}
+                      </span>
+                      <span
+                        className="rounded-full px-2 py-0.5 text-[10px] font-black text-white"
+                        style={{ backgroundColor: band.color }}
+                      >
+                        AQI {d.avgAqi} · {band.labelTh}
+                      </span>
+                    </div>
+                    <div className="mt-2 space-y-1.5 text-[11px]">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="flex items-center gap-1.5 font-medium text-slate-500 dark:text-slate-400">
+                          <span className="h-2 w-2 rounded-full bg-teal-600" />
+                          ค่าเฉลี่ยทั้งภาค
+                        </span>
+                        <strong className="font-black tabular-nums text-teal-700 dark:text-teal-300">
+                          {d.avgPm25} µg/m³
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="flex items-center gap-1.5 font-medium text-slate-500 dark:text-slate-400">
+                          <span className="h-2 w-2 rounded-full bg-amber-500" />
+                          ค่าสูงสุดของวัน
+                        </span>
+                        <strong className="font-black tabular-nums text-amber-600 dark:text-amber-400">
+                          {d.maxPm25} µg/m³
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="avgPm25"
+              stroke="#0d9488"
+              strokeWidth={2.5}
+              fill="url(#regionalTrendGradient)"
+              dot={{ r: 3.5, fill: "#0d9488", strokeWidth: 2, stroke: "#ffffff" }}
+              activeDot={{ r: 5, fill: "#0f766e", strokeWidth: 2, stroke: "#ffffff" }}
+              name="ค่าเฉลี่ยทั้งภาค"
+            />
+            <Line
+              type="monotone"
+              dataKey="maxPm25"
+              stroke="#f59e0b"
+              strokeWidth={1.75}
+              strokeDasharray="4 4"
+              dot={{ r: 2.5, fill: "#f59e0b" }}
+              name="ค่าสูงสุดของวัน"
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
     </article>
   );
