@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Globe, MapPin } from "lucide-react";
 import { RedesignedForecastDashboard } from "./redesigned-forecast-dashboard";
@@ -33,6 +33,10 @@ export function ForecastTabsShell({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  useEffect(() => {
+    setActiveTab(searchParams.get("tab") === "province" ? "province" : "regional");
+  }, [searchParams]);
+
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
     const params = new URLSearchParams(searchParams.toString());
@@ -49,16 +53,16 @@ export function ForecastTabsShell({
   };
 
   return (
-    <div className="space-y-4 max-w-5xl mx-auto">
+    <div className="mx-auto max-w-[1440px] space-y-5">
       {/* ── Tab Bar ─────────────────────────────────────────── */}
-      <div className="card overflow-hidden">
-        <div className="flex items-center gap-0 p-1.5">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-1">
           {/* Regional Tab */}
           <button
             onClick={() => handleTabChange("regional")}
-            className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
+            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all sm:px-5 ${
               activeTab === "regional"
-                ? "bg-teal-600 text-white shadow-md dark:bg-teal-500"
+                ? "bg-teal-700 text-white shadow-md shadow-teal-900/10 dark:bg-teal-500"
                 : "text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-2))] hover:text-[rgb(var(--fg))]"
             }`}
           >
@@ -69,9 +73,9 @@ export function ForecastTabsShell({
           {/* Province Tab */}
           <button
             onClick={() => handleTabChange("province")}
-            className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
+            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all sm:px-5 ${
               activeTab === "province"
-                ? "bg-teal-600 text-white shadow-md dark:bg-teal-500"
+                ? "bg-teal-700 text-white shadow-md shadow-teal-900/10 dark:bg-teal-500"
                 : "text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-2))] hover:text-[rgb(var(--fg))]"
             }`}
           >

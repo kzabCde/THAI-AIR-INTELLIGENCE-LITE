@@ -17,7 +17,11 @@ import { ProvinceRedirect } from "@/components/ui/province-redirect";
  * 2. "รายจังหวัด" — detailed per-province forecast (existing)
  */
 
-export const metadata: Metadata = { title: "พยากรณ์คุณภาพอากาศ" };
+export const metadata: Metadata = {
+  title: "พยากรณ์คุณภาพอากาศ",
+  description:
+    "พยากรณ์ PM2.5 พร้อมความน่าเชื่อถือของผล วิธีจัดระดับคุณภาพอากาศ และระดับที่คำนวณจากค่าพยากรณ์ PM2.5",
+};
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
