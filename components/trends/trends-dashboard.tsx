@@ -64,14 +64,17 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[11px] font-black transition sm:text-xs ${
+      className={`relative inline-flex items-center gap-2 pb-3 pt-1 text-sm font-bold transition-colors ${
         active
-          ? "bg-emerald-600 text-white shadow-sm"
-          : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+          ? "text-teal-700 dark:text-teal-400"
+          : "text-[rgb(var(--muted))] hover:text-[rgb(var(--fg))]"
       }`}
     >
       {icon}
       {label}
+      {active && (
+        <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-teal-600 dark:bg-teal-400" />
+      )}
     </button>
   );
 }
@@ -642,42 +645,45 @@ function ViewModeBar({
   const isRegional = viewMode === "regional";
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-zinc-100 bg-white/80 p-3 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/80 sm:flex-row sm:items-center sm:justify-between">
-      {/* Left: View mode toggle + Province selector */}
-      <div className="flex items-center gap-2.5">
-        {/* Segmented Control */}
-        <div className="no-scrollbar flex gap-1 rounded-xl bg-zinc-50 p-1 dark:bg-zinc-800/60">
+    <div className="space-y-3">
+      {/* Row 1: Underline tabs + Province selector */}
+      <div className="flex items-center justify-between border-b border-[rgb(var(--border))]">
+        <div className="flex items-center gap-6">
           <button
             type="button"
             onClick={() => onSwitchMode("regional")}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold transition-all sm:text-xs ${
+            className={`relative flex items-center gap-2 pb-3 pt-1 text-sm font-bold transition-colors ${
               isRegional
-                ? "bg-white text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
-                : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+                ? "text-teal-700 dark:text-teal-400"
+                : "text-[rgb(var(--muted))] hover:text-[rgb(var(--fg))]"
             }`}
           >
-            <Globe size={13} />
-            <span className="hidden sm:inline">ทั้งภาคอีสาน</span>
-            <span className="sm:hidden">ทั้งภาค</span>
+            <Globe size={15} />
+            ทั้งภาคอีสาน
+            {isRegional && (
+              <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-teal-600 dark:bg-teal-400" />
+            )}
           </button>
           <button
             type="button"
             onClick={() => onSwitchMode("province")}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold transition-all sm:text-xs ${
+            className={`relative flex items-center gap-2 pb-3 pt-1 text-sm font-bold transition-colors ${
               !isRegional
-                ? "bg-white text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-700 dark:text-emerald-300 dark:ring-zinc-600"
-                : "text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+                ? "text-teal-700 dark:text-teal-400"
+                : "text-[rgb(var(--muted))] hover:text-[rgb(var(--fg))]"
             }`}
           >
-            <MapPin size={13} />
-            <span className="hidden sm:inline">รายจังหวัด</span>
-            <span className="sm:hidden">รายจังหวัด</span>
+            <MapPin size={15} />
+            รายจังหวัด
+            {!isRegional && (
+              <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-teal-600 dark:bg-teal-400" />
+            )}
           </button>
         </div>
 
-        {/* Province Selector — only active in province mode */}
+        {/* Province Selector — only in province mode */}
         {!isRegional && (
-          <div className="w-40 sm:w-52">
+          <div className="w-40 sm:w-52 pb-2">
             <ProvinceSelectModal
               selectedId={province?.id ?? "TH-40"}
               onSelect={onSelectProvince}
@@ -685,14 +691,14 @@ function ViewModeBar({
           </div>
         )}
         {isRegional && (
-          <span className="flex items-center gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-600 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-400">
+          <span className="flex items-center gap-1.5 pb-2 text-[11px] font-semibold text-teal-600 dark:text-teal-400">
             <Globe size={12} />
             20 จังหวัด
           </span>
         )}
       </div>
 
-      {/* Right: Range presets */}
+      {/* Row 2: Range presets */}
       <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-xl bg-zinc-50 p-1 dark:bg-zinc-800/60">
         {RANGE_OPTIONS.map((option) => (
           <button
