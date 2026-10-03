@@ -1,8 +1,10 @@
 import "server-only";
 
+import { cache } from "react";
 import { ISAN_PROVINCES } from "@/lib/isan";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
+  cachedQuery,
   dateDaysAgo,
   getServiceSupabase,
   isServiceSupabaseConfigured,
@@ -106,22 +108,88 @@ export async function getTrendHistory(
   if (!isServiceSupabaseConfigured) return [];
 
   const days = Math.min(730, Math.max(1, Math.trunc(calendarDays)));
-  const client = getServiceSupabase();
-  const fromDate = shiftDateKey(throughDate, -(days - 1));
-  const { data, error } = await client
-    .from("trusted_daily_metrics_v1")
-    .select(DAILY_POINT_COLUMNS)
-    .eq("province_id", provinceId)
-    .gte("date", fromDate)
-    .lte("date", throughDate)
-    .order("date", { ascending: true });
+  return cachedQuery(
+    ["trend-history", provinceId, String(days), throughDate],
+    async () => {
+      const fromDate = shiftDateKey(throughDate, -(days - 1));
+      const { data, error } = await getServiceSupabase()
+        .from("trusted_daily_metrics_v1")
+        .select(DAILY_POINT_COLUMNS)
+        .eq("province_id", provinceId)
+        .gte("date", fromDate)
+        .lte("date", throughDate)
+        .order("date", { ascending: true });
 
-  if (error) throw error;
-  return (data ?? []).map(toPoint);
+      if (error) throw error;
+      return (data ?? []).map(toPoint);
+    },
+  )();
 }
 
-const PAGE_SIZE = 1_000;
-const MAX_ROWS = 20_000;
+/**
+ * PostgREST caps a response at 1,000 rows. One province over the longest
+ * supported window (730 days, one row per date) stays below that cap, so a
+ * per-province query is always complete without pagination.
+ */
+const POSTGREST_MAX_ROWS = 1_000;
+const MAX_TREND_DAYS = 730;
+
+type ProvinceDailyRow = Partial<DailyRow> & { date: string; province_id: string };
+
+/**
+ * Every province's trusted daily rows for [fromDate, throughDate], sorted by
+ * (date, province_id) - the exact order the previous view-wide paginated query
+ * returned, so downstream aggregation is unchanged row-for-row.
+ *
+ * Why per province instead of one ordered query: `trusted_daily_metrics_v1`
+ * aggregates hourly tables on every read. Ordering across all provinces forced
+ * a full aggregate + sort per 1,000-row page (~7s each, ~23s total). Filtering
+ * by province lets Postgres aggregate only that province's rows (~3x faster
+ * overall, verified identical output).
+ *
+ * Wrapped in React `cache` so regional history and rankings rendered in the
+ * same request share one load instead of querying the view twice.
+ */
+const loadAllProvinceDailyRows = cache(
+  async (fromDate: string, throughDate: string): Promise<ProvinceDailyRow[]> => {
+    const client = getServiceSupabase();
+    const perProvince = await Promise.all(
+      ISAN_PROVINCES.map(async (province) => {
+        const { data, error } = await client
+          .from("trusted_daily_metrics_v1")
+          .select(`province_id, ${DAILY_POINT_COLUMNS}`)
+          .eq("province_id", province.id)
+          .gte("date", fromDate)
+          .lte("date", throughDate)
+          .order("date", { ascending: true });
+        if (error) throw error;
+        const rows = (data ?? []) as ProvinceDailyRow[];
+        // Fail loudly rather than silently aggregate a truncated result.
+        if (rows.length >= POSTGREST_MAX_ROWS) {
+          throw new Error(
+            `trusted_daily_metrics_v1 returned ${rows.length} rows for ${province.id}; result may be truncated`,
+          );
+        }
+        return rows;
+      }),
+    );
+    return perProvince.flat().sort((a, b) =>
+      a.date < b.date ? -1
+        : a.date > b.date ? 1
+          : a.province_id < b.province_id ? -1
+            : a.province_id > b.province_id ? 1
+              : 0,
+    );
+  },
+);
+
+/** Shared superset load (longest window) so history and rankings reuse it. */
+function loadTrendWindowRows(throughDate: string): Promise<ProvinceDailyRow[]> {
+  return loadAllProvinceDailyRows(
+    shiftDateKey(throughDate, -(MAX_TREND_DAYS - 1)),
+    throughDate,
+  );
+}
 
 /**
  * Regional (all-Isan) trend history: fetches every province for the given
@@ -135,26 +203,22 @@ export async function getRegionalTrendHistory(
 ): Promise<DailyPoint[]> {
   if (!isServiceSupabaseConfigured) return [];
 
-  const days = Math.min(730, Math.max(1, Math.trunc(calendarDays)));
-  const client = getServiceSupabase();
-  const fromDate = shiftDateKey(throughDate, -(days - 1));
+  const days = Math.min(MAX_TREND_DAYS, Math.max(1, Math.trunc(calendarDays)));
+  return cachedQuery(
+    ["trend-regional-history", String(days), throughDate],
+    async () => {
+      const fromDate = shiftDateKey(throughDate, -(days - 1));
+      const rows = (await loadTrendWindowRows(throughDate)).filter(
+        (r) => r.date >= fromDate,
+      );
+      return aggregateRegionalRows(rows);
+    },
+  )();
+}
 
-  // Paginate to avoid PostgREST 1000-row default limit
-  const rows: Array<Partial<DailyRow> & { date: string }> = [];
-  for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
-    const { data, error } = await client
-      .from("trusted_daily_metrics_v1")
-      .select(DAILY_POINT_COLUMNS)
-      .gte("date", fromDate)
-      .lte("date", throughDate)
-      .order("date", { ascending: true })
-      .order("province_id", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) throw error;
-    rows.push(...(data ?? []));
-    if ((data?.length ?? 0) < PAGE_SIZE) break;
-  }
-
+function aggregateRegionalRows(
+  rows: Array<Partial<DailyRow> & { date: string }>,
+): DailyPoint[] {
   // Aggregate by date → cross-province averages
   type Bucket = {
     pm25Sum: number; pm25N: number;
@@ -344,47 +408,50 @@ export async function getRegionalProvinceRankings(
   throughDate = getLatestCompletedBangkokDate(),
 ): Promise<ProvinceTrendSummary[]> {
   if (!isServiceSupabaseConfigured) return [];
-  const client = getServiceSupabase();
-  const fromDate = shiftDateKey(throughDate, -(days - 1));
+  const windowDays = Math.min(MAX_TREND_DAYS, Math.max(1, Math.trunc(days)));
 
-  // Query daily metrics for all provinces in the requested range
-  const { data, error } = await client
-    .from("trusted_daily_metrics_v1")
-    .select("province_id, pm25_mean, pm25_max")
-    .gte("date", fromDate)
-    .lte("date", throughDate);
+  return cachedQuery(
+    ["trend-province-rankings", String(windowDays), throughDate],
+    async () => {
+      const fromDate = shiftDateKey(throughDate, -(windowDays - 1));
+      // Complete rows for every province. The previous single query was capped
+      // at 1,000 rows by PostgREST, so 90+ day windows silently dropped
+      // provinces (e.g. 365 days ranked only 3 of 20).
+      const rows = (await loadTrendWindowRows(throughDate)).filter(
+        (r) => r.date >= fromDate,
+      );
 
-  if (error) throw error;
+      const map = new Map<string, { sum: number; count: number; max: number; exceed: number; clean: number }>();
+      for (const r of rows) {
+        if (!r.province_id || r.pm25_mean == null) continue;
+        const cur = map.get(r.province_id) ?? { sum: 0, count: 0, max: 0, exceed: 0, clean: 0 };
+        cur.sum += r.pm25_mean;
+        cur.count += 1;
+        if (r.pm25_mean > cur.max) cur.max = r.pm25_mean;
+        if (r.pm25_mean > 37.5) cur.exceed += 1;
+        if (r.pm25_mean <= 15.0) cur.clean += 1;
+        map.set(r.province_id, cur);
+      }
 
-  const map = new Map<string, { sum: number; count: number; max: number; exceed: number; clean: number }>();
-  for (const r of data ?? []) {
-    if (!r.province_id || r.pm25_mean == null) continue;
-    const cur = map.get(r.province_id) ?? { sum: 0, count: 0, max: 0, exceed: 0, clean: 0 };
-    cur.sum += r.pm25_mean;
-    cur.count += 1;
-    if (r.pm25_mean > cur.max) cur.max = r.pm25_mean;
-    if (r.pm25_mean > 37.5) cur.exceed += 1;
-    if (r.pm25_mean <= 15.0) cur.clean += 1;
-    map.set(r.province_id, cur);
-  }
+      const result: ProvinceTrendSummary[] = [];
+      for (const p of ISAN_PROVINCES) {
+        const stat = map.get(p.id);
+        if (!stat || stat.count === 0) continue;
+        result.push({
+          provinceId: p.id,
+          nameTh: p.nameTh,
+          nameEn: p.nameEn,
+          avgPm25: +(stat.sum / stat.count).toFixed(1),
+          maxPm25: +stat.max.toFixed(1),
+          exceedanceDays: stat.exceed,
+          cleanDays: stat.clean,
+          observedDays: stat.count,
+        });
+      }
 
-  const result: ProvinceTrendSummary[] = [];
-  for (const p of ISAN_PROVINCES) {
-    const stat = map.get(p.id);
-    if (!stat || stat.count === 0) continue;
-    result.push({
-      provinceId: p.id,
-      nameTh: p.nameTh,
-      nameEn: p.nameEn,
-      avgPm25: +(stat.sum / stat.count).toFixed(1),
-      maxPm25: +stat.max.toFixed(1),
-      exceedanceDays: stat.exceed,
-      cleanDays: stat.clean,
-      observedDays: stat.count,
-    });
-  }
-
-  // Sort ascending by avgPm25 (cleanest to highest)
-  result.sort((a, b) => a.avgPm25 - b.avgPm25);
-  return result;
+      // Sort ascending by avgPm25 (cleanest to highest)
+      result.sort((a, b) => a.avgPm25 - b.avgPm25);
+      return result;
+    },
+  )();
 }
