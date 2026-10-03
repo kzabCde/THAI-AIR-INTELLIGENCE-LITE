@@ -42,6 +42,135 @@ function haversine(la1: number, lo1: number, la2: number, lo2: number): number {
   return 2 * radiusKm * Math.asin(Math.sqrt(a));
 }
 
+const BANGKOK_DATE = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Bangkok",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function bangkokDate(value: Date): string {
+  const parts = Object.fromEntries(
+    BANGKOK_DATE.formatToParts(value)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function addDays(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00+07:00`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return bangkokDate(date);
+}
+
+function finiteValues(values: unknown[]): number[] {
+  return values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+}
+
+function mean(values: unknown[]): number | null {
+  const numbers = finiteValues(values);
+  return numbers.length
+    ? numbers.reduce((total, value) => total + value, 0) / numbers.length
+    : null;
+}
+
+function sum(values: unknown[]): number | null {
+  const numbers = finiteValues(values);
+  return numbers.length
+    ? numbers.reduce((total, value) => total + value, 0)
+    : null;
+}
+
+function forecastCovariateRows(
+  provinceId: string,
+  forecastOrigin: string,
+  weatherJson: { hourly?: Record<string, unknown[]> },
+  airJson: { hourly?: Record<string, unknown[]> },
+): Record<string, unknown>[] {
+  const originDate = bangkokDate(new Date(forecastOrigin));
+  const weather = weatherJson?.hourly ?? {};
+  const air = airJson?.hourly ?? {};
+  const weatherByDate = new Map<string, number[]>();
+  const airByDate = new Map<string, number[]>();
+  (weather.time ?? []).forEach((rawTime: unknown, index: number) => {
+    const time = String(rawTime);
+    const date = String(time).slice(0, 10);
+    const indexes = weatherByDate.get(date) ?? [];
+    indexes.push(index);
+    weatherByDate.set(date, indexes);
+  });
+  (air.time ?? []).forEach((rawTime: unknown, index: number) => {
+    const time = String(rawTime);
+    const date = String(time).slice(0, 10);
+    const indexes = airByDate.get(date) ?? [];
+    indexes.push(index);
+    airByDate.set(date, indexes);
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  for (let horizon = 1; horizon <= 7; horizon += 1) {
+    const targetDate = addDays(originDate, horizon);
+    const weatherIndexes = weatherByDate.get(targetDate) ?? [];
+    const airIndexes = airByDate.get(targetDate) ?? [];
+    const weatherValues = (name: string) =>
+      weatherIndexes.map((index) => weather[name]?.[index]);
+    const airValues = (name: string) =>
+      airIndexes.map((index) => air[name]?.[index]);
+    const windSpeeds = weatherValues("wind_speed_10m");
+    const windDirections = weatherValues("wind_direction_10m");
+    const windU: number[] = [];
+    const windV: number[] = [];
+    for (let index = 0; index < weatherIndexes.length; index += 1) {
+      const speed = Number(windSpeeds[index]);
+      const direction = Number(windDirections[index]);
+      if (!Number.isFinite(speed) || !Number.isFinite(direction)) continue;
+      const radians = (direction * Math.PI) / 180;
+      windU.push(-speed * Math.sin(radians));
+      windV.push(-speed * Math.cos(radians));
+    }
+    const row = {
+      province_id: provinceId,
+      forecast_origin: forecastOrigin,
+      origin_date: originDate,
+      target_date: targetDate,
+      forecast_horizon_days: horizon,
+      forecast_temp_mean: mean(weatherValues("temperature_2m")),
+      forecast_humidity_mean: mean(weatherValues("relative_humidity_2m")),
+      forecast_wind_speed_mean: mean(windSpeeds),
+      forecast_wind_u_mean: mean(windU),
+      forecast_wind_v_mean: mean(windV),
+      forecast_precip_total: sum(weatherValues("precipitation")),
+      forecast_pblh_mean: mean(weatherValues("boundary_layer_height")),
+      cams_pm25_mean: mean(airValues("pm2_5")),
+      cams_aod_mean: mean(airValues("aerosol_optical_depth")),
+      cams_dust_mean: mean(airValues("dust")),
+      weather_hours: weatherIndexes.length,
+      air_quality_hours: airIndexes.length,
+      source: "open-meteo-best-match+cams-global",
+      missingness: {
+        weather: weatherIndexes.length < 18,
+        pblh: finiteValues(weatherValues("boundary_layer_height")).length < 18,
+        cams: airIndexes.length < 18,
+        aod: finiteValues(airValues("aerosol_optical_depth")).length < 18,
+      },
+      provenance: {
+        weather_endpoint: "api.open-meteo.com/v1/forecast",
+        air_quality_endpoint: "air-quality-api.open-meteo.com/v1/air-quality",
+        weather_model: "best_match",
+        air_quality_model: "cams_global",
+        timezone: "Asia/Bangkok",
+        aggregation: "daily_from_hourly_forecast_v1",
+      },
+      updated_at: new Date().toISOString(),
+    };
+    rows.push(row);
+  }
+  return rows;
+}
+
 async function fetchWithRetry(
   url: string,
   attempts = 3,
@@ -133,8 +262,10 @@ Deno.serve(async () => {
 
     let airRows = 0;
     let weatherRows = 0;
+    let forecastCovariateCount = 0;
     const errors: string[] = [];
     const airStartedMs = Date.now();
+    const forecastOrigin = new Date().toISOString();
 
     for (const province of provinces) {
       try {
@@ -216,6 +347,45 @@ Deno.serve(async () => {
         }
       } catch (error) {
         errors.push(`wx ${province.province_id}: ${String(error)}`);
+      }
+      try {
+        const weatherForecastUrl =
+          "https://api.open-meteo.com/v1/forecast" +
+          `?latitude=${province.lat}&longitude=${province.lon}` +
+          "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m," +
+          "wind_direction_10m,precipitation,boundary_layer_height" +
+          "&wind_speed_unit=ms&forecast_days=8&timezone=Asia%2FBangkok";
+        const airForecastUrl =
+          "https://air-quality-api.open-meteo.com/v1/air-quality" +
+          `?latitude=${province.lat}&longitude=${province.lon}` +
+          "&hourly=pm2_5,aerosol_optical_depth,dust" +
+          "&domains=cams_global&forecast_days=7&timezone=Asia%2FBangkok";
+        const [weatherForecastResponse, airForecastResponse] = await Promise.all([
+          fetchWithRetry(weatherForecastUrl),
+          fetchWithRetry(airForecastUrl),
+        ]);
+        const [weatherForecastJson, airForecastJson] = await Promise.all([
+          weatherForecastResponse.json(),
+          airForecastResponse.json(),
+        ]);
+        const covariates = forecastCovariateRows(
+          province.province_id,
+          forecastOrigin,
+          weatherForecastJson,
+          airForecastJson,
+        );
+        const { error } = await supabase
+          .from("forecast_covariates_daily")
+          .upsert(covariates, {
+            onConflict: "province_id,origin_date,target_date,source",
+          });
+        if (error) {
+          errors.push(`covariates ${province.province_id}: ${error.message}`);
+        } else {
+          forecastCovariateCount += covariates.length;
+        }
+      } catch (error) {
+        errors.push(`covariates ${province.province_id}: ${String(error)}`);
       }
     }
 
@@ -378,6 +548,7 @@ Deno.serve(async () => {
       air_rows: airRows,
       weather_rows: weatherRows,
       hotspot_rows: hotspotRows,
+      forecast_covariate_rows: forecastCovariateCount,
       pipeline,
     };
     await updatePipelineAlert(supabase, errors, alertDetails);
@@ -387,7 +558,7 @@ Deno.serve(async () => {
       finished_at: new Date().toISOString(),
       status: errors.length ? "partial" : "success",
       duration_ms: Date.now() - startedMs,
-      records_in: airRows + weatherRows + hotspotRows,
+      records_in: airRows + weatherRows + hotspotRows + forecastCovariateCount,
       records_out:
         (pipeline?.daily_rows_built ?? 0) + (pipeline?.forecast_rows ?? 0),
       error_msg: errors.length ? errors.slice(0, 5).join(" | ") : null,
@@ -399,6 +570,7 @@ Deno.serve(async () => {
       air_rows: airRows,
       weather_rows: weatherRows,
       hotspot_rows: hotspotRows,
+      forecast_covariate_rows: forecastCovariateCount,
       pipeline,
       errors: errors.slice(0, 10),
     });

@@ -55,7 +55,8 @@ STACKING_MODEL = "stacking-v2"
 SURROGATE_MODEL = "surrogate-v2"
 ENSEMBLE6_MODEL = "ensemble6-pm25-v3"
 LEGACY_POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-pooled-v1"
-POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-residual-v2"
+LEGACY_RESIDUAL_LIGHTGBM_MODEL = "lightgbm-pm25-residual-v2"
+POOLED_LIGHTGBM_MODEL = "lightgbm-pm25-residual-v3"
 POOLED_RF_CLASSIFIER = "random-forest-aqi-classifier-pooled-v1"
 LEGACY_PERSIST_MODEL = "persist-revert-v2"
 LEGACY_STACKING_MODEL = "stacking-v1"
@@ -404,6 +405,41 @@ def load_recent_features(sb: Client) -> dict[str, list[dict]]:
     return grouped
 
 
+def load_forecast_covariates(
+    sb: Client,
+    start_date: date,
+    end_date: date,
+) -> dict[tuple[str, str], dict]:
+    """Load the newest compact forecast vintage for each province/target day."""
+    try:
+        response = (
+            sb.table("forecast_covariates_daily")
+            .select(
+                "province_id,target_date,forecast_origin,forecast_horizon_days,"
+                "forecast_temp_mean,forecast_humidity_mean,"
+                "forecast_wind_speed_mean,forecast_wind_u_mean,"
+                "forecast_wind_v_mean,forecast_precip_total,forecast_pblh_mean,"
+                "cams_pm25_mean,cams_aod_mean,cams_dust_mean,"
+                "weather_hours,air_quality_hours,missingness,source"
+            )
+            .in_("province_id", PROVINCE_IDS)
+            .gte("target_date", start_date.isoformat())
+            .lte("target_date", end_date.isoformat())
+            .order("forecast_origin", desc=True)
+            .limit(len(PROVINCE_IDS) * 7 * 2)
+            .execute()
+        )
+    except Exception:
+        # Backward-compatible deployment order: the current feature contract
+        # can continue serving while the new migration is applied.
+        return {}
+    result: dict[tuple[str, str], dict] = {}
+    for row in response.data or []:
+        key = (str(row["province_id"]), str(row["target_date"]))
+        result.setdefault(key, row)
+    return result
+
+
 def load_legacy_base_models(sb: Client) -> dict[tuple[str, str], dict]:
     """Load the newest v1 base artifact while existing candidates are migrated."""
     resp = (
@@ -445,8 +481,16 @@ def build_feature_vector(
     province_id: str = "",
     province_metadata: dict[str, dict[str, float]] | None = None,
     forecast_horizon_days: int = 1,
+    forecast_covariates: dict | None = None,
 ) -> np.ndarray:
     current = rolling[-1]
+    future = forecast_covariates or {}
+    weather_missing = float(
+        bool((future.get("missingness") or {}).get("weather", not future))
+    )
+    cams_missing = float(
+        bool((future.get("missingness") or {}).get("cams", not future))
+    )
     values = {
         "pm25_mean": current,
         "pm25_lag_1d": _at(rolling, 1),
@@ -482,6 +526,34 @@ def build_feature_vector(
             "lon",
         ),
         "forecast_horizon_days": float(forecast_horizon_days),
+        "forecast_temp_mean": _fval(
+            future,
+            "forecast_temp_mean",
+            _fval(last_row, "temp_mean", 28.0),
+        ),
+        "forecast_humidity_mean": _fval(
+            future,
+            "forecast_humidity_mean",
+            _fval(last_row, "humidity_mean", 70.0),
+        ),
+        "forecast_wind_speed_mean": _fval(
+            future,
+            "forecast_wind_speed_mean",
+            _fval(last_row, "wind_speed_mean", 2.0),
+        ),
+        "forecast_wind_u_mean": _fval(future, "forecast_wind_u_mean", 0.0),
+        "forecast_wind_v_mean": _fval(future, "forecast_wind_v_mean", 0.0),
+        "forecast_precip_total": _fval(
+            future,
+            "forecast_precip_total",
+            _fval(last_row, "precip_total", 0.0),
+        ),
+        "forecast_pblh_mean": _fval(future, "forecast_pblh_mean", 0.0),
+        "cams_pm25_mean": _fval(future, "cams_pm25_mean", current),
+        "cams_aod_mean": _fval(future, "cams_aod_mean", 0.0),
+        "cams_dust_mean": _fval(future, "cams_dust_mean", 0.0),
+        "future_weather_missing": weather_missing,
+        "cams_missing": cams_missing,
     }
     for known_province_id in PROVINCE_IDS:
         values[f"province_{known_province_id.replace('-', '_')}"] = (
@@ -823,6 +895,12 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
     active_models = active_tasks["regression"]
     active_classifiers = active_tasks["classification"]
     recent = load_recent_features(sb)
+    bangkok_today = datetime.now(BANGKOK).date()
+    forecast_covariates = load_forecast_covariates(
+        sb,
+        bangkok_today + timedelta(days=1),
+        bangkok_today + timedelta(days=horizon),
+    )
     needs_province_metadata = any(
         (row.get("model_params") or {}).get("runtime_kind")
         == TREE_ARTIFACT_SCHEMA
@@ -843,7 +921,6 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
     )
     legacy_base_models = load_legacy_base_models(sb) if needs_legacy else {}
     forecast_at = datetime.now(timezone.utc).isoformat()
-    bangkok_today = datetime.now(BANGKOK).date()
     rows_out: list[dict] = []
 
     for province_id in PROVINCE_IDS:
@@ -916,7 +993,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
         source_gap_days = max(0, (bangkok_today - as_of).days)
         direct_horizon = bool(
             regression_tree
-            and params.get("target_strategy") == "direct_observed_horizon"
+            and params.get("target_strategy") in {
+                "direct_observed_horizon",
+                "direct_residual_from_persistence",
+            }
             and horizon <= max(params.get("trained_horizons") or [1])
         )
 
@@ -933,6 +1013,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     province_id=province_id,
                     province_metadata=province_metadata,
                     forecast_horizon_days=1,
+                    forecast_covariates=forecast_covariates.get((
+                        province_id,
+                        (bridge_origin + timedelta(days=1)).isoformat(),
+                    )),
                 )
                 bridge_prediction = float(np.clip(_predict_model(
                     model_name,
@@ -959,6 +1043,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     province_id=province_id,
                     province_metadata=province_metadata,
                     forecast_horizon_days=forecast_horizon,
+                    forecast_covariates=forecast_covariates.get((
+                        province_id,
+                        (origin_date + timedelta(days=forecast_horizon)).isoformat(),
+                    )),
                 )
                 prediction = float(np.clip(_predict_model(
                     model_name,
@@ -991,6 +1079,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     province_id=province_id,
                     province_metadata=province_metadata,
                     forecast_horizon_days=1,
+                    forecast_covariates=forecast_covariates.get((
+                        province_id,
+                        target_date.isoformat(),
+                    )),
                 )
                 prediction = float(np.clip(_predict_model(
                     model_name,
@@ -1043,6 +1135,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                         province_id=province_id,
                         province_metadata=province_metadata,
                         forecast_horizon_days=forecast_horizon,
+                        forecast_covariates=forecast_covariates.get((
+                            province_id,
+                            target_date.isoformat(),
+                        )),
                     )
                     probabilities = (
                         evaluate_random_forest_classifier(
@@ -1266,6 +1362,7 @@ class handler(BaseHTTPRequestHandler):
                 ENSEMBLE6_MODEL,
                 STACKING_MODEL,
                 LEGACY_POOLED_LIGHTGBM_MODEL,
+                LEGACY_RESIDUAL_LIGHTGBM_MODEL,
                 POOLED_LIGHTGBM_MODEL,
                 POOLED_RF_CLASSIFIER,
             ],

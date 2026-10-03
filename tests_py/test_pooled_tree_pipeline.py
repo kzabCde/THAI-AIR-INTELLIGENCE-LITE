@@ -258,6 +258,41 @@ def test_residual_lightgbm_portable_tree_applies_persistence_transform():
     assert portable == pytest.approx(expected, abs=1e-10, rel=1e-10)
 
 
+def test_residual_lightgbm_uses_horizon_specific_correction_weights():
+    rng = np.random.default_rng(321)
+    X = rng.normal(size=(250, 3))
+    X[:, 0] = rng.uniform(5.0, 80.0, size=len(X))
+    X[:, 2] = rng.integers(1, 8, size=len(X))
+    residual = 0.5 * X[:, 1]
+    model = lgb.LGBMRegressor(
+        n_estimators=30,
+        max_depth=3,
+        random_state=42,
+        verbose=-1,
+    ).fit(X, residual)
+    weights = {str(horizon): horizon / 10 for horizon in range(1, 8)}
+    artifact = export_lightgbm_regressor(
+        model,
+        ["pm25_mean", "signal", "forecast_horizon_days"],
+        feature_version="test-v3",
+        prediction_transform={
+            "kind": "persistence_residual_blend_by_horizon",
+            "persistence_feature": "pm25_mean",
+            "horizon_feature": "forecast_horizon_days",
+            "correction_weights": weights,
+        },
+    )
+    native = model.predict(X[:50])
+    expected = np.asarray([
+        row[0] + weights[str(int(row[2]))] * prediction
+        for row, prediction in zip(X[:50], native, strict=True)
+    ])
+    portable = np.asarray([
+        evaluate_lightgbm_regressor(row, artifact) for row in X[:50]
+    ])
+    assert portable == pytest.approx(expected, abs=1e-10, rel=1e-10)
+
+
 def test_random_forest_portable_tree_matches_native_probabilities():
     rng = np.random.default_rng(7)
     X = rng.normal(size=(250, 4))

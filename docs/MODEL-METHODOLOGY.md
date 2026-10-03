@@ -3,16 +3,18 @@
 The staged upgrade trains numeric regression and five-class classification
 independently. See [DUAL-MODEL-UPGRADE.md](./DUAL-MODEL-UPGRADE.md).
 
-Production runtime v5.6.2 uses exactly two machine-learning families with one
-fixed role each: one province-local residual `LightGBMRegressor` per province
-for numeric PM2.5 and one pooled `RandomForestClassifier` for the five public
-air-quality classes. The tasks use the same observed source rows but independent
+Production trainer v6 uses two machine-learning families: residual
+`LightGBMRegressor` models for numeric PM2.5 and one pooled
+`RandomForestClassifier` for the five public air-quality classes. For every
+province, validation data chooses between its local regressor and a regional
+pooled regressor. The tasks use the same observed source rows but independent
 targets and promotion gates.
 
-The residual regressor learns a correction to the current-day persistence value
-inside each province. Its correction weight is selected on D+1 validation data,
-then multiplied by a fixed 0.90 conservative shrinkage before the untouched test
-is evaluated. Classification is trained once across all 20 provinces with
+The residual regressor learns a correction to the current-day persistence value.
+Its correction weight is selected separately for D+1 through D+7 on validation
+data, then multiplied by a fixed 0.90 conservative shrinkage before the untouched
+test is evaluated. The local/regional choice uses a weighted seven-horizon
+validation objective with explicit per-horizon regression guards. Classification is trained once across all 20 provinces with
 province one-hot identity, coordinates and direct forecast horizon D+1 through
 D+7. Runtime downloads checksum-verified gzip JSON artifacts from the private
 `model-artifacts` bucket and evaluates the original tree splits/leaves plus the
@@ -21,18 +23,18 @@ readable only as rollback/legacy paths; they are not candidates in this workflow
 
 ## Production guardrails
 
-- Read training and runtime features from `training_daily_summary_v2`, which requires at least 18 trusted non-synthetic hourly PM2.5 values per Bangkok business date.
+- Read training and runtime features from `training_daily_summary_v3`, which combines the trusted daily archive with current daily summaries and preserves source lineage.
 - Use feature contract `daily-observed-v4`. Synthetic/mock/demo hotspot and FRP values are explicitly excluded until real FIRMS coverage has been backfilled and audited.
 - Exclude `synthetic`, `mock`, and `demo` sources from production accuracy metrics.
 - Keep all provinces from the same origin date in the same partition and purge seven dates between train/validation/test so a D+7 training target cannot overlap the next partition.
 - Select hyperparameters only on a fixed 365-origin-date chronological Validation window and reserve the latest 365 origin dates as untouched Test evidence, with a seven-day embargo on both boundaries. This requires at least 834 unique origin dates: 90 Train + 365 Validation + 365 Test + 14 purged dates.
-- Report D+1 activation metrics separately from the experimental direct D+2-D+7 metrics and from persistence/seasonal-naive baselines.
+- Report D+1 metrics and per-horizon D+1–D+7 metrics separately from persistence/seasonal-naive baselines.
 - Calculate five-class macro metrics with the fixed label set `[1,2,3,4,5]`. Missing Class 4 or 5 evidence is a hard `insufficient_evidence` state, not a warning.
 - Require classifiers to beat persistence on fixed-five-class macro F1, balanced accuracy and weighted F1; also store per-class recall confidence intervals, PR-AUC, Brier score and expected calibration error.
 - Register candidates as inactive. Regression requires at least 4.5% skill versus current-day persistence globally and in every province; classification additionally requires at least five final-test samples in both Classes 4 and 5.
 - Promote all 40 task/province rows with one `fn_activate_pooled_dual_model_run` transaction so a regression or classification preflight failure rolls back both task promotions.
-- Determine promotion from the exact portable tree artifact's final-holdout metrics, checked against native library output before upload.
-- Treat only D+1 as production-evaluated. D+2-D+7 are direct-horizon experiments and are labelled `experimental_direct` until enough retrospective evidence accumulates.
+- Determine promotion from the exact portable tree artifact's final-holdout metrics, checked against native library output before upload. The challenger must remain within the configured tolerance of the champion at every horizon D+1–D+7.
+- Collect target-day temperature, humidity, wind vector, rain, PBLH and CAMS PM2.5/AOD/dust as compact forecast vintages. These fields are not activated for training until origin-dated coverage passes chronological validation, preventing observation leakage.
 
 ## Baselines to keep reproducible
 

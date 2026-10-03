@@ -248,6 +248,33 @@ def test_pooled_feature_vector_contains_identity_coordinates_and_horizon():
     assert vector.tolist() == pytest.approx([14.9, 102.1, 7.0, 1.0, 0.0])
 
 
+def test_feature_vector_uses_target_day_forecast_covariates():
+    columns = [
+        "forecast_temp_mean",
+        "forecast_precip_total",
+        "forecast_pblh_mean",
+        "cams_pm25_mean",
+        "cams_aod_mean",
+        "future_weather_missing",
+        "cams_missing",
+    ]
+    vector = ml.build_feature_vector(
+        {"pm25_mean": 30, "temp_mean": 28, "precip_total": 0},
+        [20.0, 25.0, 30.0],
+        date(2026, 10, 4),
+        columns,
+        forecast_covariates={
+            "forecast_temp_mean": 24.5,
+            "forecast_precip_total": 12.0,
+            "forecast_pblh_mean": 850.0,
+            "cams_pm25_mean": 41.0,
+            "cams_aod_mean": 0.72,
+            "missingness": {"weather": False, "cams": False},
+        },
+    )
+    assert vector.tolist() == pytest.approx([24.5, 12.0, 850.0, 41.0, 0.72, 0.0, 0.0])
+
+
 def _forecast_sb(include_classifier=True, include_regression=True):
     size = len(ml.FEATURE_COLS)
     active = []

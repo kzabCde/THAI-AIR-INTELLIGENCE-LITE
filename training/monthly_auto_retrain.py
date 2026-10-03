@@ -174,13 +174,14 @@ def _evaluate_active_champion(sb, split) -> dict:
     ):
         raise RuntimeError("active model feature version differs from the monthly challenger")
 
-    d1 = split.test[split.test["forecast_horizon_days"] == 1].copy()
+    test_rows = split.test.copy()
+    d1 = test_rows[test_rows["forecast_horizon_days"] == 1].copy()
     runtime_cache: dict[str, dict] = {}
-    regression_predictions = np.full(len(d1), np.nan, dtype=float)
+    regression_predictions = np.full(len(test_rows), np.nan, dtype=float)
     province_metrics: dict[str, dict] = {}
     for province_id in POOLED_PROVINCE_IDS:
-        mask = d1["province_id"].to_numpy() == province_id
-        rows = d1.loc[mask]
+        mask = test_rows["province_id"].to_numpy() == province_id
+        rows = test_rows.loc[mask]
         row = active["regression"][province_id]
         artifact = load_runtime_artifact(sb, row, runtime_cache)
         if artifact is None:
@@ -191,18 +192,53 @@ def _evaluate_active_champion(sb, split) -> dict:
             dtype=float,
         )
         regression_predictions[mask] = predictions
-        local = regression_metrics(rows["target_pm25"].to_numpy(dtype=float), predictions)
-        _, baseline = _regression_baseline(rows)
+        local_d1 = rows[rows["forecast_horizon_days"] == 1]
+        local_d1_predictions = predictions[
+            rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+        ]
+        local = regression_metrics(
+            local_d1["target_pm25"].to_numpy(dtype=float),
+            local_d1_predictions,
+        )
+        _, baseline = _regression_baseline(local_d1)
         local["skill_vs_persistence"] = 1.0 - local["mae"] / baseline["mae"]
         province_metrics[province_id] = local
     if not np.all(np.isfinite(regression_predictions)):
         raise RuntimeError("active regression evaluation produced incomplete predictions")
 
+    horizons = test_rows["forecast_horizon_days"].to_numpy(dtype=int)
+    d1_mask = horizons == 1
     regression = regression_metrics(
-        d1["target_pm25"].to_numpy(dtype=float), regression_predictions
+        d1["target_pm25"].to_numpy(dtype=float), regression_predictions[d1_mask]
     )
     _, baseline = _regression_baseline(d1)
     regression["skill_vs_persistence"] = 1.0 - regression["mae"] / baseline["mae"]
+    regression_all = regression_metrics(
+        test_rows["target_pm25"].to_numpy(dtype=float),
+        regression_predictions,
+    )
+    _, baseline_all = _regression_baseline(test_rows)
+    regression_all["skill_vs_persistence"] = (
+        1.0 - regression_all["mae"] / baseline_all["mae"]
+        if baseline_all["mae"] > 0
+        else 0.0
+    )
+    regression["all_horizons"] = regression_all
+    regression["by_horizon"] = {}
+    for horizon in DIRECT_HORIZONS:
+        mask = horizons == horizon
+        metrics = regression_metrics(
+            test_rows.loc[mask, "target_pm25"].to_numpy(dtype=float),
+            regression_predictions[mask],
+        )
+        _, horizon_baseline = _regression_baseline(test_rows.loc[mask])
+        metrics["baseline_mae"] = horizon_baseline["mae"]
+        metrics["skill_vs_persistence"] = (
+            1.0 - metrics["mae"] / horizon_baseline["mae"]
+            if horizon_baseline["mae"] > 0
+            else 0.0
+        )
+        regression["by_horizon"][str(horizon)] = metrics
 
     classifier_rows = list(active["classification"].values())
     runtime_keys = {

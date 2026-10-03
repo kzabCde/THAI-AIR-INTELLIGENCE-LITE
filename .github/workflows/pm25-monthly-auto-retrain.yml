@@ -52,7 +52,7 @@ jobs:
             echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1;
           }
 
-      - name: Fresh DB-only v5.6.4 tune, evaluate, safe promote
+      - name: Fresh DB-only v6 D+1-D+7 train, evaluate, safe promote
         id: monthly
         shell: bash
         run: |
@@ -61,7 +61,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
             args+=(--dry-run)
           fi
-          python -u -m training.train_models_pm25_v5_6_4 "${args[@]}" | tee monthly-retrain.log
+          python -u -m training.train_models_pm25_v6 "${args[@]}" | tee monthly-retrain.log
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           from pathlib import Path
@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## PM2.5 monthly champion/challenger — v5.6.4"
+            echo "## PM2.5 monthly champion/challenger — v6"
             echo
             echo "- Candidate run: \`${{ steps.monthly.outputs.run_id }}\`"
             echo "- Previous champion: \`${{ steps.monthly.outputs.champion_run_id }}\`"
@@ -96,11 +96,12 @@ jobs:
             echo "- Activation status: \`${{ steps.monthly.outputs.activation_status }}\`"
             echo "- Training source of truth: \`Supabase training_daily_summary_v3\` only."
             echo "- Open-Meteo archive requests during retraining: \`0\`."
-            echo "- LightGBM tuning selection uses Training/Validation only and guards D+2–D+7."
+            echo "- LightGBM correction strength is selected independently for D+1 through D+7."
+            echo "- Province-local and regional pooled regressors compete on Validation only."
             echo "- Random Forest tuning emphasizes Classes 2–3 while guarding Classes 4–5."
             echo "- Regression auto-promotion requires strict 20/20 eligibility."
             echo "- Classification must pass the reviewed absolute deployment thresholds."
-            echo "- Champion and challenger are compared on the same latest 365-day D+1 holdout."
+            echo "- Champion and challenger are compared on the same latest 365-day D+1–D+7 holdout."
             echo "- Activation is atomic; a rejected challenger makes no Registry/Storage write."
           } >> "$GITHUB_STEP_SUMMARY"
 

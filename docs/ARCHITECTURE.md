@@ -30,6 +30,7 @@ FK → `isan_provinces`).
 | `weather_hourly` | hourly | temperature, humidity, wind, precip… |
 | `hotspot_daily` | daily | FIRMS fire hotspot counts/FRP |
 | `daily_summary` | daily | aggregated + feature-engineered daily stats |
+| `forecast_covariates_daily` | province/origin/target day | compact weather, PBLH and CAMS forecast vintages for leakage-safe D+1–D+7 features |
 | `forecast_hourly` | hourly | PM2.5 forecast (≤168h horizon) |
 | `forecast_daily` | daily | D+1 assessed forecast plus experimental D+2–D+7 rows |
 | `sync_state` | — | pipeline job status / cursors |
@@ -71,13 +72,16 @@ queries.
 
 The Python ML endpoint evaluates the active exact portable tree artifact from
 `model_registry` and writes one auditable daily batch linked to
-`forecast_runs`. Runtime v5.6.2 trains province-local residual LightGBM
-regression and pooled Random Forest classification; legacy pooled LightGBM and
+`forecast_runs`. Runtime v6 trains province-local residual LightGBM regressors,
+compares them with a regional pooled LightGBM candidate for each province, and
+uses pooled Random Forest classification. Regression correction strength is
+selected independently for every direct horizon D+1 through D+7. Legacy pooled LightGBM and
 Ridge/Logistic artifacts remain rollback-compatible. The endpoint evaluates due rows,
 refreshes rolling drift metrics, snapshots the exact feature vector/provenance,
 and emits D+1 from the next Asia/Bangkok business date even when its latest
-feature row is stale. D+1 has retrospective evaluation evidence; recursive
-D+2–D+7 rows remain experimental. Each row records model/run provenance and
+feature row is stale. Compact origin-dated forecast weather, PBLH and CAMS
+covariates are collected daily; they remain behind a training-coverage gate
+until enough historical forecast vintages exist. Each row records model/run provenance and
 P10/P50/P90 uncertainty with a recent-variability floor.
 
 The dashboard serves only forecasts linked to a completed (`success` or

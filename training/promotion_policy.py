@@ -4,7 +4,8 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 
-POLICY_VERSION = "monthly-champion-challenger-v1"
+POLICY_VERSION = "monthly-champion-challenger-v2-multihorizon"
+DIRECT_HORIZONS = tuple(range(1, 8))
 
 
 def _number(metrics: Mapping[str, object], key: str) -> float:
@@ -28,6 +29,11 @@ def _critical_recall(metrics: Mapping[str, object], class_id: int) -> float:
     if not math.isfinite(recall):
         raise ValueError(f"classification class {class_id} recall must be finite")
     return recall
+
+
+def _horizon_metrics(metrics: Mapping[str, object]) -> Mapping[str, object] | None:
+    value = metrics.get("by_horizon")
+    return value if isinstance(value, Mapping) else None
 
 
 def decide_promotion(
@@ -78,6 +84,30 @@ def decide_promotion(
         for name, passed in regression_checks.items():
             if not passed:
                 reasons.append(f"regression_{name}_failed")
+
+        candidate_horizons = _horizon_metrics(candidate_regression)
+        champion_horizons = _horizon_metrics(champion_regression)
+        horizon_checks: dict[str, bool] = {}
+        if candidate_horizons is not None or champion_horizons is not None:
+            if candidate_horizons is None or champion_horizons is None:
+                reasons.append("regression_horizon_evidence_incomplete")
+            else:
+                for horizon in DIRECT_HORIZONS:
+                    key = str(horizon)
+                    candidate_evidence = candidate_horizons.get(key)
+                    champion_evidence = champion_horizons.get(key)
+                    if not isinstance(candidate_evidence, Mapping) or not isinstance(
+                        champion_evidence, Mapping
+                    ):
+                        reasons.append(f"regression_horizon_{key}_missing")
+                        continue
+                    candidate_mae = _number(candidate_evidence, "mae")
+                    champion_mae = _number(champion_evidence, "mae")
+                    tolerance = 1.01 if horizon == 1 else 1.02
+                    passed = candidate_mae <= champion_mae * tolerance
+                    horizon_checks[key] = passed
+                    if not passed:
+                        reasons.append(f"regression_horizon_{key}_mae_regressed")
 
         province_failures: list[str] = []
         if candidate_provinces == champion_provinces:
@@ -150,6 +180,7 @@ def decide_promotion(
         regression_material_gain = False
         classification_material_gain = False
         province_failures = []
+        horizon_checks = {}
 
     material_gain = bool(regression_material_gain or classification_material_gain)
     if not material_gain:
@@ -162,9 +193,10 @@ def decide_promotion(
         "decision": "promote" if approved else "keep_champion",
         "reasons": reasons or ["challenger_better_and_noninferior"],
         "regression_checks": regression_checks,
+        "regression_horizon_checks": horizon_checks,
         "classification_checks": classification_checks,
         "regression_material_gain": regression_material_gain,
         "classification_material_gain": classification_material_gain,
         "province_mae_failures": province_failures,
-        "comparison_basis": "same_latest_365_day_d1_holdout",
+        "comparison_basis": "same_latest_365_day_direct_d1_d7_holdout",
     }
