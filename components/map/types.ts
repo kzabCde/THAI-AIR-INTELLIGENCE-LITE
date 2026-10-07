@@ -31,5 +31,6 @@ export type MapLayerOptions = {
   showWindVectors: boolean;
   showWeatherBadges: boolean;
   showAtmosphereOverlay: boolean;
+  showRainRadar: boolean;
   basemap: MapBasemap;
 };

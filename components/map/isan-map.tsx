@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import {
   Plus,
@@ -15,11 +15,14 @@ import {
   ChevronRight,
   SlidersHorizontal,
   X,
+  CloudRain,
 } from "lucide-react";
 import { ISAN_CENTER } from "@/lib/isan";
 import { fmtPm25, fmtTimeTh } from "@/lib/format";
 import { pm25ToAqi } from "@/lib/aqi";
 import type { MapProvince, MapFilterMode, MapBasemap, MapLayerOptions } from "./types";
+import { MapThermalLayer } from "./map-thermal-layer";
+import { MapRadarLayer } from "./map-radar-layer";
 
 // Ensure default Leaflet marker assets load safely
 L.Icon.Default.mergeOptions({
@@ -398,12 +401,16 @@ export default function IsanMap({
     showWindVectors: false,
     showWeatherBadges: false,
     showAtmosphereOverlay: true,
+    showRainRadar: false,
     basemap: "satellite",
   });
 
   // Sync activeMode from top bar whenever it changes
   useEffect(() => {
-    setLayers((prev) => ({ ...prev, primaryMetric: activeMode }));
+    setLayers((prev) => ({
+      ...prev,
+      primaryMetric: activeMode,
+    }));
   }, [activeMode]);
 
   const [isLayerMenuOpen, setIsLayerMenuOpen] = useState(false);
@@ -442,23 +449,15 @@ export default function IsanMap({
           maxZoom={BASEMAP_TILES[layers.basemap].maxZoom}
         />
 
-        {/* Atmospheric Dispersion Tint Overlay (Soft Color Radii) */}
-        {layers.showAtmosphereOverlay &&
-          provinces.map((p) => {
-            const style = getSoftMetricStyle(p, layers.primaryMetric);
-            return (
-              <Circle
-                key={`atmo-${p.id}`}
-                center={[p.lat, p.lon]}
-                radius={32000}
-                pathOptions={{
-                  fillColor: style.bg,
-                  fillOpacity: 0.18,
-                  stroke: false,
-                }}
-              />
-            );
-          })}
+        {/* Real-time Precipitation & Storm Clouds Radar Layer */}
+        <MapRadarLayer enabled={layers.showRainRadar} />
+
+        {/* Continuous Thermal & Atmospheric Gradient Field Canvas Layer */}
+        <MapThermalLayer
+          provinces={provinces}
+          metric={layers.primaryMetric}
+          enabled={layers.showAtmosphereOverlay}
+        />
 
         {/* 20 Province Markers with detailed compact popup */}
         {provinces.map((p) => {
@@ -562,7 +561,7 @@ export default function IsanMap({
       {!isMiniPreview && (
         <div className="absolute right-3 top-3 z-[1000] pointer-events-auto">
           {isLayerMenuOpen ? (
-            <div className="w-60 rounded-2xl border border-zinc-200/90 dark:border-zinc-700/90 bg-white/95 dark:bg-zinc-900/95 p-3 text-zinc-800 dark:text-zinc-100 shadow-2xl backdrop-blur-md space-y-3 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-64 rounded-2xl border border-zinc-200/90 dark:border-zinc-700/90 bg-white/95 dark:bg-zinc-900/95 p-3 text-zinc-800 dark:text-zinc-100 shadow-2xl backdrop-blur-md space-y-3 animate-in fade-in zoom-in-95 duration-150">
               {/* Header */}
               <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2">
                 <div className="flex items-center gap-1.5">
@@ -582,7 +581,46 @@ export default function IsanMap({
               {/* Group: Environmental Overlays & Badges */}
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
-                  ข้อมูลสิ่งแวดล้อม
+                  ภาพเคลื่อนไหว & มวลอากาศ
+                </span>
+
+                {/* Atmosphere / Thermal Gradient Toggle */}
+                <label className="flex items-center justify-between p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 cursor-pointer transition">
+                  <div className="flex items-center gap-2 text-xs font-medium">
+                    <Layers size={14} className="text-indigo-400" />
+                    <span>เฉดสีมวลอากาศ / อุณหภูมิ</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={layers.showAtmosphereOverlay}
+                    onChange={(e) =>
+                      setLayers((prev) => ({ ...prev, showAtmosphereOverlay: e.target.checked }))
+                    }
+                    className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-0 cursor-pointer"
+                  />
+                </label>
+
+                {/* Rain / Storm Radar Toggle */}
+                <label className="flex items-center justify-between p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 cursor-pointer transition">
+                  <div className="flex items-center gap-2 text-xs font-medium">
+                    <CloudRain size={14} className="text-blue-500" />
+                    <span>เรดาร์กลุ่มฝน & พายุ</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={layers.showRainRadar}
+                    onChange={(e) =>
+                      setLayers((prev) => ({ ...prev, showRainRadar: e.target.checked }))
+                    }
+                    className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-0 cursor-pointer"
+                  />
+                </label>
+              </div>
+
+              {/* Group: Marker Badges */}
+              <div className="space-y-1.5 border-t border-zinc-100 dark:border-zinc-800 pt-2">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                  ป้ายข้อมูลบนหมุดจังหวัด
                 </span>
 
                 {/* Hotspot Toggle */}
@@ -628,22 +666,6 @@ export default function IsanMap({
                     checked={layers.showWeatherBadges}
                     onChange={(e) =>
                       setLayers((prev) => ({ ...prev, showWeatherBadges: e.target.checked }))
-                    }
-                    className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-0 cursor-pointer"
-                  />
-                </label>
-
-                {/* Atmosphere Overlay Toggle */}
-                <label className="flex items-center justify-between p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 cursor-pointer transition">
-                  <div className="flex items-center gap-2 text-xs font-medium">
-                    <Layers size={14} className="text-indigo-400" />
-                    <span>ชั้นมวลอากาศไล่เฉด</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={layers.showAtmosphereOverlay}
-                    onChange={(e) =>
-                      setLayers((prev) => ({ ...prev, showAtmosphereOverlay: e.target.checked }))
                     }
                     className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-0 cursor-pointer"
                   />
@@ -697,9 +719,32 @@ export default function IsanMap({
         <div className="absolute left-3 bottom-3 z-[1000] pointer-events-auto hidden sm:block">
           <div className="rounded-2xl border border-zinc-200/90 dark:border-zinc-700/80 bg-white/95 dark:bg-slate-900/90 px-3 py-1.5 text-zinc-800 dark:text-white backdrop-blur-md shadow-xl flex items-center gap-3">
             <span className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">
-              เกณฑ์ {layers.primaryMetric.toUpperCase()}
+              เกณฑ์ {layers.primaryMetric === "weather" ? "อุณหภูมิ (°C)" : layers.primaryMetric.toUpperCase()}
             </span>
-            {layers.primaryMetric === "hotspot" ? (
+            {layers.primaryMetric === "weather" ? (
+              <div className="flex items-center gap-1.5 text-[9px] font-medium text-zinc-700 dark:text-zinc-200">
+                <div className="flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-blue-400" />
+                  <span>เย็น (&le;22°)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                  <span>สบาย (23–26°)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-yellow-400" />
+                  <span>อุ่น (27–30°)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-orange-400" />
+                  <span>ร้อน (31–34°)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+                  <span>ร้อนจัด (&gt;34°)</span>
+                </div>
+              </div>
+            ) : layers.primaryMetric === "hotspot" ? (
               <div className="flex items-center gap-3 text-[9px] font-medium text-zinc-700 dark:text-zinc-200">
                 <div className="flex items-center gap-1">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: SOFT_PALETTE.hotspotZero.bg }} />

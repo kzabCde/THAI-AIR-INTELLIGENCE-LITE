@@ -25,7 +25,6 @@ export function Header() {
             alt="Isan Air Intelligence"
             width={48}
             height={48}
-            unoptimized
             className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 object-contain transition-transform duration-200 group-hover:scale-105"
             priority
           />
