@@ -6,7 +6,7 @@ import { Globe, MapPin } from "lucide-react";
 import { RedesignedForecastDashboard } from "./redesigned-forecast-dashboard";
 import { RegionalForecastDashboard } from "./regional-forecast-dashboard";
 import type { IsanProvince } from "@/lib/isan";
-import type { ProvinceForecast } from "@/services/types";
+import type { HourlyWeatherForecast, ProvinceForecast } from "@/services/types";
 import type { WeatherRow } from "@/services/weather.service";
 import type { RegionOverview } from "@/services/types";
 import type { RegionalForecastSummary } from "@/services/regional-forecast.service";
@@ -19,6 +19,7 @@ export function ForecastTabsShell({
   weather,
   overview,
   regionalForecast,
+  weatherForecast,
   initialTab = "regional",
 }: {
   province: IsanProvince;
@@ -26,6 +27,7 @@ export function ForecastTabsShell({
   weather: WeatherRow | null;
   overview: RegionOverview;
   regionalForecast: RegionalForecastSummary;
+  weatherForecast?: HourlyWeatherForecast | null;
   initialTab?: Tab;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
@@ -72,6 +74,7 @@ export function ForecastTabsShell({
           forecast={forecast}
           weather={weather}
           overview={overview}
+          weatherForecast={weatherForecast}
         />
       )}
     </div>

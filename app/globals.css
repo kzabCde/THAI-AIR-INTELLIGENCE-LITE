@@ -88,15 +88,25 @@ body {
   margin: 0 !important;
   line-height: 1.4 !important;
 }
-.leaflet-popup-tip-container {
-  margin-top: -1px;
-}
 .leaflet-popup-tip {
-  background: #0f172a !important;
+  background: #ffffff !important;
   box-shadow: none !important;
 }
 .dark .leaflet-popup-tip {
   background: #0f172a !important;
+}
+.leaflet-popup-close-button {
+  color: #64748b !important;
+  padding: 8px 10px 0 0 !important;
+}
+.dark .leaflet-popup-close-button {
+  color: #94a3b8 !important;
+}
+.leaflet-popup-close-button:hover {
+  color: #0f172a !important;
+}
+.dark .leaflet-popup-close-button:hover {
+  color: #ffffff !important;
 }
 .leaflet-tooltip.province-tip {
   background: rgb(var(--surface));

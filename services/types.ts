@@ -58,6 +58,30 @@ export type TimePoint = {
   hotspots?: number | null;
 };
 
+/** One hour of numerical-weather-model forecast (Open-Meteo `/v1/forecast`). */
+export type HourlyWeatherPoint = {
+  /** Start of the hour, ISO-8601 UTC. */
+  t: string;
+  temperature: number | null;
+  humidity: number | null;
+  /** Probability of ≥0.1 mm precipitation within this hour, 0–100 %. */
+  precipitationProbability: number | null;
+  /** Forecast precipitation amount for this hour (mm). */
+  precipitation: number | null;
+  /** km/h — same unit as `weather_hourly.wind_speed`. */
+  windSpeed: number | null;
+  /** Meteorological degrees (direction the wind blows from). */
+  windDirection: number | null;
+};
+
+export type HourlyWeatherForecast = {
+  provinceId: string;
+  source: "open-meteo";
+  /** When the upstream model data was fetched (ISO). Null when unavailable. */
+  fetchedAt: string | null;
+  points: HourlyWeatherPoint[];
+};
+
 export type ForecastPoint = {
   t: string;
   pm25: number;

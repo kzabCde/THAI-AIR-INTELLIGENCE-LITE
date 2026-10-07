@@ -47,10 +47,12 @@ export const get24hPrecipitationByProvince = cachedMapQuery(
     const latest = await getLatestObservedAt();
     if (!latest) return result;
     const since = new Date(new Date(latest).getTime() - 24 * 3600_000).toISOString();
+    // (latest − 24 h, latest] → exactly 24 hourly readings ending at the latest hour.
     const { data, error } = await getSupabase()
       .from("weather_hourly")
       .select("province_id, precipitation")
-      .gte("observed_at", since)
+      .gt("observed_at", since)
+      .lte("observed_at", latest)
       .not("precipitation", "is", null);
     if (error) throw error;
     for (const row of data ?? []) {

@@ -151,39 +151,41 @@ export function RegionalForecastDashboard({ summary }: { summary: RegionalForeca
 
   return (
     <div className="space-y-5">
-      <section className="relative overflow-hidden rounded-3xl border border-teal-200/70 bg-gradient-to-br from-teal-950 via-teal-900 to-slate-900 p-5 text-white shadow-xl shadow-teal-950/10 sm:p-7">
-        <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
+      <section className="relative overflow-hidden rounded-2xl border border-teal-200/70 bg-gradient-to-br from-teal-950 via-teal-900 to-slate-900 p-4 text-white shadow-lg shadow-teal-950/10 sm:rounded-3xl sm:p-7 sm:shadow-xl">
+        <div className="absolute -right-16 -top-20 h-40 w-40 rounded-full bg-emerald-400/15 blur-3xl sm:h-56 sm:w-56" />
         <div className="absolute -bottom-24 left-1/3 h-52 w-52 rounded-full bg-cyan-300/10 blur-3xl" />
-        <div className="relative grid gap-5 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div className="relative grid gap-3 sm:gap-5 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-teal-50 backdrop-blur">
-              <Globe2 className="h-3.5 w-3.5" />
+            <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-0.5 text-[11px] font-semibold text-teal-50 backdrop-blur sm:mb-3 sm:gap-2 sm:px-3 sm:py-1 sm:text-xs">
+              <Globe2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               ภาพรวม 20 จังหวัดภาคอีสาน
             </div>
-            <h1 className="text-2xl font-black tracking-tight sm:text-3xl">พยากรณ์ PM2.5 ระดับภูมิภาค</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-teal-50/80">
+            <h1 className="text-lg font-extrabold leading-snug tracking-tight sm:text-3xl sm:font-black">พยากรณ์ PM2.5 ระดับภูมิภาค</h1>
+            <p className="mt-2 hidden max-w-2xl text-sm leading-6 text-teal-50/80 sm:block">
               เปรียบเทียบค่าพยากรณ์รายจังหวัด เห็นพื้นที่ที่ควรจับตา และตรวจสถานะข้อมูลก่อนตัดสินใจ
             </p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5">
-                <CalendarDays className="h-3.5 w-3.5 text-teal-300" />
+            <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px] sm:mt-4 sm:gap-2 sm:text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
+                <CalendarDays className="h-3 w-3 text-teal-300 sm:h-3.5 sm:w-3.5" />
                 D+1 เป้าหมาย {formatDate(d1Date, true)}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5">
-                <Database className="h-3.5 w-3.5 text-teal-300" />
-                ข้อมูลต้นทางถึง {formatDateTime(summary.sourceAsOf)} น.
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
+                <Database className="h-3 w-3 text-teal-300 sm:h-3.5 sm:w-3.5" />
+                ข้อมูล<span className="hidden sm:inline">ต้นทาง</span>ถึง {formatDateTime(summary.sourceAsOf)} น.
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-300/15 px-3 py-1.5 text-amber-100">
-                <FlaskConical className="h-3.5 w-3.5" />
-                D+2–D+7 เป็นพยากรณ์เชิงทดลอง
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-300/15 px-2.5 py-1 text-amber-100 sm:gap-1.5 sm:px-3 sm:py-1.5">
+                <FlaskConical className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                D+2–D+7 <span className="hidden sm:inline">เป็นพยากรณ์</span>เชิงทดลอง
               </span>
             </div>
           </div>
-          <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-teal-100/70">รอบคำนวณล่าสุด</p>
-            <p className="mt-1 text-sm font-bold">{formatDateTime(summary.generatedAt)} น.</p>
-            <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-200">
-              <CheckCircle2 className="h-3.5 w-3.5" />
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 backdrop-blur-sm sm:block sm:rounded-2xl sm:px-4 sm:py-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-100/70 sm:text-[11px]">รอบคำนวณล่าสุด</p>
+              <p className="text-xs font-bold sm:mt-1 sm:text-sm">{formatDateTime(summary.generatedAt)} น.</p>
+            </div>
+            <div className="flex items-center gap-1 text-[11px] text-emerald-200 sm:mt-2 sm:gap-1.5 sm:text-xs">
+              <CheckCircle2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               {summary.runStatus === "success" ? "ประมวลผลสำเร็จ" : "ประมวลผลบางส่วน"}
             </div>
           </div>

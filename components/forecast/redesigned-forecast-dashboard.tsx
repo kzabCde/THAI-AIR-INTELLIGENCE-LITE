@@ -34,12 +34,23 @@ import {
 
 import type { IsanProvince } from "@/lib/isan";
 import { pm25ToAqi, bandForPm25, bandForAqi } from "@/lib/aqi";
-import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
+import {
+  bangkokDateKey,
+  computeHourlyForecastStrip,
+  degreesToCompass,
+  indexWeatherByHour,
+  isRainyHour,
+  rain24hCategory,
+  shouldShowRainChance,
+  summarizeDayWeather,
+  weatherAtHour,
+} from "@/lib/forecast-weather";
 import { fmtPm25 } from "@/lib/format";
 import { ProvinceSelectModal } from "@/components/ui/province-select-modal";
 import { AqiFaceIcon } from "@/components/ui/aqi-face-icon";
 import { useUiStore } from "@/stores/ui-store";
-import type { ProvinceForecast, ForecastPoint } from "@/services/types";
+import { useHourlyWeatherForecast } from "@/hooks/use-weather";
+import type { ProvinceForecast, ForecastPoint, HourlyWeatherForecast } from "@/services/types";
 import type { WeatherRow } from "@/services/weather.service";
 import type { RegionOverview } from "@/services/types";
 
@@ -142,6 +153,8 @@ interface RedesignedForecastDashboardProps {
   forecast: ProvinceForecast;
   weather: WeatherRow | null;
   overview: RegionOverview;
+  /** Server-fetched real hourly weather forecast (Open-Meteo). */
+  weatherForecast?: HourlyWeatherForecast | null;
 }
 
 export function RedesignedForecastDashboard({
@@ -149,6 +162,7 @@ export function RedesignedForecastDashboard({
   forecast,
   weather,
   overview,
+  weatherForecast: initialWeatherForecast,
 }: RedesignedForecastDashboardProps) {
   const router = useRouter();
   const setPageProvince = useUiStore((s) => s.setPageProvince);
@@ -156,6 +170,9 @@ export function RedesignedForecastDashboard({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
   const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set([0]));
+  const { data: weatherForecastData } = useHourlyWeatherForecast(province.id, initialWeatherForecast);
+  const modelWeather = weatherForecastData?.points ?? [];
+  const modelWeatherIndex = indexWeatherByHour(modelWeather);
 
   const toggleDay = (dayIndex: number) => {
     setExpandedDays((prev) => {
@@ -240,21 +257,29 @@ export function RedesignedForecastDashboard({
 
   // ── AI Insight: derive from real weather data ────────────────────────────────
   const currentSnapshot = overview.snapshots.find((s) => s.province.id === province.id);
-  const precipitation = currentSnapshot?.precipitation ?? currentSnapshot?.precipitation24h ?? weather?.precipitation ?? null;
+  // Two different rain quantities — never mix them:
+  //  • currentHourPrecip: observed rain in the latest hour (mm) → "is it raining now"
+  //  • rain24h: observed accumulation over the last 24 h (mm) → wash-out factor
+  const currentHourPrecip = currentSnapshot?.precipitation ?? weather?.precipitation ?? null;
+  const rain24h = currentSnapshot?.precipitation24h ?? null;
   const windSpeed = currentSnapshot?.windSpeed ?? weather?.wind_speed ?? null;
   const humidity = currentSnapshot?.humidity ?? weather?.humidity ?? null;
   const totalHotspots = overview.totalHotspots;
 
   // Dynamic factor statuses based on actual thresholds
   const windStatus = windSpeed == null
-    ? { label: "ปกติ", color: "bg-emerald-500" }
+    ? { label: "ไม่มีข้อมูล", color: "bg-slate-400" }
     : windSpeed < 2
     ? { label: "ระบายไม่ดี", color: "bg-amber-500" }
     : { label: "ระบายได้ดี", color: "bg-emerald-500" };
 
-  const rainStatus = precipitation == null || precipitation <= 0.1
-    ? { label: "ไม่มีฝน", color: "bg-emerald-500" }
-    : { label: "มีฝนชะล้าง", color: "bg-emerald-500" };
+  // TMD 24-hour rainfall categories (ไม่มีฝน / เล็กน้อย / ปานกลาง / หนัก / หนักมาก)
+  const rainCategory = rain24hCategory(rain24h);
+  const rainStatus = rainCategory == null
+    ? { label: "ไม่มีข้อมูล", color: "bg-slate-400" }
+    : rainCategory.level === 0
+    ? { label: rainCategory.label, color: "bg-slate-400" }
+    : { label: rainCategory.label, color: "bg-sky-500" };
 
   const hotspotStatus = totalHotspots > 50
     ? { label: "สูงมาก", color: "bg-orange-500" }
@@ -263,7 +288,7 @@ export function RedesignedForecastDashboard({
     : { label: "ปลอดภัย", color: "bg-emerald-500" };
 
   const humidStatus = humidity == null
-    ? { label: "ปกติ", color: "bg-emerald-500" }
+    ? { label: "ไม่มีข้อมูล", color: "bg-slate-400" }
     : humidity > 75
     ? { label: "ความชื้นสูง", color: "bg-amber-500" }
     : humidity < 40
@@ -273,8 +298,8 @@ export function RedesignedForecastDashboard({
   // Threshold-based insight labels from real data
   const windLabel = windSpeed == null ? null : windSpeed < 2 ? "ลมอ่อนมาก" : windSpeed < 4 ? "ลมอ่อน" : windSpeed < 8 ? "ลมปานกลาง" : "ลมแรง";
   const windDesc = windSpeed == null ? null : windSpeed < 2 ? "การระบายอากาศไม่ดี" : windSpeed < 4 ? "ระบายอากาศได้บ้าง" : "ระบายอากาศดี";
-  const rainLabel = precipitation == null ? null : precipitation > 1 ? "มีฝน (24 ชม.)" : "ไม่มีฝน (24 ชม.)";
-  const rainDesc = precipitation == null ? null : precipitation > 1 ? `ฝนช่วยชะล้างฝุ่น ${precipitation.toFixed(1)} mm` : "ไม่มีฝนชะล้างฝุ่นใน 24 ชม.";
+  const rainLabel = rainCategory == null ? null : `${rainCategory.label} (24 ชม.)`;
+  const rainDesc = rain24h == null ? null : rain24h >= 0.1 ? `ฝนสะสม ${rain24h.toFixed(1)} mm ช่วยชะล้างฝุ่น` : "ไม่มีฝนชะล้างฝุ่นใน 24 ชม.";
   const humidLabel = humidity == null ? null : humidity > 75 ? "ความชื้นสูง" : humidity < 40 ? "ความชื้นต่ำ" : "ความชื้นปานกลาง";
   const humidDesc = humidity == null ? null : humidity > 75 ? "ฝุ่นจับตัวง่ายในอากาศ" : humidity < 40 ? "อากาศแห้ง ฝุ่นฟุ้งง่าย" : "ความชื้นอยู่ในเกณฑ์ปกติ";
   const hotspotLabel = `จุดความร้อน ${totalHotspots} จุด`;
@@ -297,6 +322,7 @@ export function RedesignedForecastDashboard({
   const baseHumidity = humidity ?? 70;
   const baseWind = windSpeed ?? 5;
   const baseWindDir = currentSnapshot?.windDirection ?? weather?.wind_direction ?? 180;
+  const baseWindDirKnown = (currentSnapshot?.windDirection ?? weather?.wind_direction) != null;
 
   // ── Helper: render N/A when no data ─────────────────────────────────────────
   function pmRange(min: number | null, max: number | null) {
@@ -424,7 +450,8 @@ export function RedesignedForecastDashboard({
                   baseHumidity: baseHumidity,
                   baseWind: baseWind,
                   baseWindDir: baseWindDir,
-                  precipitation: precipitation,
+                  precipitation: currentHourPrecip,
+                  weatherForecast: modelWeather,
                 });
 
                 return (
@@ -471,15 +498,18 @@ export function RedesignedForecastDashboard({
                               {item.aqi}
                             </span>
                             <div className="flex flex-col items-center">
-                              {item.rainChance > 40 ? (
+                              {item.rainy ? (
                                 <CloudRain className="h-4 w-4 text-blue-500" />
                               ) : item.hour >= 6 && item.hour <= 18 ? (
                                 <Sun className="h-4 w-4 text-amber-400" />
                               ) : (
                                 <Moon className="h-4 w-4 text-indigo-400" />
                               )}
-                              {item.rainChance > 0 && (
-                                <span className="text-[8px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                              {shouldShowRainChance(item.rainChance) && (
+                                <span
+                                  className="text-[8px] font-bold text-sky-600 dark:text-sky-400 mt-0.5"
+                                  title="โอกาสเกิดฝนในชั่วโมงนี้ (แบบจำลองอากาศ Open-Meteo)"
+                                >
                                   {item.rainChance}%
                                 </span>
                               )}
@@ -511,6 +541,9 @@ export function RedesignedForecastDashboard({
               {horizon !== "24h" && (() => {
                 const dayCount = horizon === "3d" ? 3 : 7;
                 const days = forecast.daily.slice(0, dayCount);
+                const nowMs = Date.now();
+                const todayKey = bangkokDateKey(nowMs);
+                const tomorrowKey = bangkokDateKey(nowMs + 86400_000);
 
                 return (
                   <>
@@ -522,19 +555,22 @@ export function RedesignedForecastDashboard({
                     <div className="space-y-2">
                       {days.map((day, dayIdx) => {
                         const dateObj = new Date(day.t);
-                        const dayName = dayIdx === 0 ? "วันนี้" : dayIdx === 1 ? "พรุ่งนี้" : THAI_FULL_DAYS[dateObj.getDay()] ?? "-";
+                        // forecast.daily starts at D+1, so label by the real target date, not the index.
+                        const dayName = day.t === todayKey ? "วันนี้" : day.t === tomorrowKey ? "พรุ่งนี้" : THAI_FULL_DAYS[dateObj.getDay()] ?? "-";
                         const dateStr = `${dateObj.getDate()} ${THAI_SHORT_MONTHS[dateObj.getMonth()]}`;
                         const dayAqi = pm25ToAqi(day.pm25);
                         const dayBand = bandForAqi(dayAqi);
                         const isOpen = expandedDays.has(dayIdx);
 
-                        // Compute day's temp range from hourly approximation
+                        // Real model weather for this calendar day; diurnal estimate only if unavailable.
+                        const dayModel = summarizeDayWeather(modelWeather, day.t);
                         const temps = Array.from({ length: 24 }, (_, hr) => getHourlyTemp(baseTemp, hr));
-                        const tempMax = Math.max(...temps);
-                        const tempMin = Math.min(...temps);
-                        const avgHumid = Math.round(Array.from({ length: 24 }, (_, hr) => getHourlyHumidity(baseHumidity, hr)).reduce((a, b) => a + b, 0) / 24);
-                        const avgWind = +(Array.from({ length: 24 }, (_, hr) => getHourlyWind(baseWind, hr)).reduce((a, b) => a + b, 0) / 24).toFixed(1);
-                        const rainChance = avgHumid > 80 ? Math.min(95, 40 + Math.round((avgHumid - 80) * 2)) : avgHumid > 70 ? 20 : 0;
+                        const tempMax = dayModel?.tempMax ?? Math.max(...temps);
+                        const tempMin = dayModel?.tempMin ?? Math.min(...temps);
+                        const avgHumid = dayModel?.humidityMean ?? Math.round(Array.from({ length: 24 }, (_, hr) => getHourlyHumidity(baseHumidity, hr)).reduce((a, b) => a + b, 0) / 24);
+                        const avgWind = dayModel?.windMean ?? +(Array.from({ length: 24 }, (_, hr) => getHourlyWind(baseWind, hr)).reduce((a, b) => a + b, 0) / 24).toFixed(1);
+                        const dayRainChance = dayModel?.rainChanceMax ?? null;
+                        const dayRainy = dayModel?.rainy ?? false;
 
                         // This day's hourly data from forecast.hourly
                         const dayHourly = forecast.hourly.slice(dayIdx * 24, (dayIdx + 1) * 24);
@@ -560,8 +596,11 @@ export function RedesignedForecastDashboard({
                                   {dayAqi}
                                 </span>
                                 {/* Weather icon */}
-                                <div className="shrink-0">
-                                  {rainChance > 40 ? <CloudRain className="h-4 w-4 sm:h-5 sm:w-5 text-blue-500" /> : <CloudSun className="h-4 w-4 sm:h-5 sm:w-5 text-amber-400" />}
+                                <div className="shrink-0 flex flex-col items-center">
+                                  {dayRainy ? <CloudRain className="h-4 w-4 sm:h-5 sm:w-5 text-blue-500" /> : <CloudSun className="h-4 w-4 sm:h-5 sm:w-5 text-amber-400" />}
+                                  {shouldShowRainChance(dayRainChance) && (
+                                    <span className="text-[8px] font-bold text-sky-600 dark:text-sky-400 leading-none mt-0.5">{dayRainChance}%</span>
+                                  )}
                                 </div>
                                 {/* Temp */}
                                 <div className="shrink-0 tabular-nums">
@@ -593,18 +632,19 @@ export function RedesignedForecastDashboard({
                                       const hour = d.getHours();
                                       const aqi = pm25ToAqi(h.pm25);
                                       const band = bandForAqi(aqi);
-                                      const temp = getHourlyTemp(baseTemp, hour);
-                                      const humid = getHourlyHumidity(baseHumidity, hour);
-                                      const wind = getHourlyWind(baseWind, hour);
-                                      const windDir = (baseWindDir + ((hour * 7) % 30) - 15 + 360) % 360;
-                                      const hRainChance = humid > 80 ? Math.min(95, 40 + Math.round((humid - 80) * 2)) : humid > 70 ? 20 : 0;
+                                      const hm = weatherAtHour(modelWeatherIndex, d);
+                                      const temp = hm?.temperature != null ? Math.round(hm.temperature) : getHourlyTemp(baseTemp, hour);
+                                      const humid = hm?.humidity != null ? Math.round(hm.humidity) : getHourlyHumidity(baseHumidity, hour);
+                                      const windDir = hm?.windDirection != null ? Math.round(hm.windDirection) : (baseWindDir + ((hour * 7) % 30) - 15 + 360) % 360;
+                                      const hRainChance = hm?.precipitationProbability != null ? Math.round(hm.precipitationProbability) : null;
+                                      const hRainy = isRainyHour(hRainChance, hm?.precipitation ?? null);
                                       return (
                                         <div key={i} className="flex flex-col items-center gap-1 px-2 sm:px-2.5 py-2 min-w-[50px] sm:min-w-[56px] rounded-lg hover:bg-white dark:hover:bg-slate-800/60 transition">
                                           <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400">{String(hour).padStart(2, "0")}:00</span>
                                           <span className="rounded-full px-1.5 py-0.5 text-[9px] font-black text-white shadow-2xs tabular-nums" style={{ backgroundColor: band.color }}>{aqi}</span>
                                           <div className="flex flex-col items-center">
-                                            {hRainChance > 40 ? <CloudRain className="h-3.5 w-3.5 text-blue-500" /> : hour >= 6 && hour <= 18 ? <Sun className="h-3.5 w-3.5 text-amber-400" /> : <Moon className="h-3.5 w-3.5 text-indigo-400" />}
-                                            {hRainChance > 0 && <span className="text-[7px] font-bold text-sky-600 dark:text-sky-400">{hRainChance}%</span>}
+                                            {hRainy ? <CloudRain className="h-3.5 w-3.5 text-blue-500" /> : hour >= 6 && hour <= 18 ? <Sun className="h-3.5 w-3.5 text-amber-400" /> : <Moon className="h-3.5 w-3.5 text-indigo-400" />}
+                                            {shouldShowRainChance(hRainChance) && <span className="text-[7px] font-bold text-sky-600 dark:text-sky-400">{hRainChance}%</span>}
                                           </div>
                                           <span className="text-[10px] font-black text-slate-900 dark:text-white tabular-nums">{temp}°</span>
                                           <Navigation className="h-2.5 w-2.5 text-slate-400" style={{ transform: `rotate(${windDir}deg)` }} />
@@ -657,7 +697,9 @@ export function RedesignedForecastDashboard({
                     <span className="truncate">ลม</span>
                   </div>
                   <p className="text-xs sm:text-sm font-black text-slate-900 dark:text-white my-1 tracking-tight whitespace-nowrap">
-                    {windSpeed != null ? `SW ${windSpeed.toFixed(0)} km/h` : "SW 6 km/h"}
+                    {windSpeed != null
+                      ? `${baseWindDirKnown ? `${degreesToCompass(baseWindDir)} ` : ""}${windSpeed.toFixed(0)} km/h`
+                      : "-"}
                   </p>
                   <div className="flex items-center justify-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
                     <span className={`h-1.5 w-1.5 rounded-full ${windStatus.color} shrink-0`} />
@@ -669,10 +711,13 @@ export function RedesignedForecastDashboard({
                 <div className="rounded-xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800/60 p-2 sm:p-2.5 flex flex-col items-center justify-between text-center min-w-0">
                   <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-400 w-full">
                     <CloudRain className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                    <span className="truncate">ฝน</span>
+                    <span className="truncate">ฝน 24 ชม.</span>
                   </div>
-                  <p className="text-xs sm:text-sm font-black text-slate-900 dark:text-white my-1 tracking-tight whitespace-nowrap">
-                    {precipitation != null ? `${Math.round(precipitation * 10)}%` : "10%"}
+                  <p
+                    className="text-xs sm:text-sm font-black text-slate-900 dark:text-white my-1 tracking-tight whitespace-nowrap"
+                    title="ปริมาณฝนสะสมที่ตรวจวัดใน 24 ชั่วโมงที่ผ่านมา"
+                  >
+                    {rain24h != null ? `${rain24h.toFixed(1)} mm` : "-"}
                   </p>
                   <div className="flex items-center justify-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
                     <span className={`h-1.5 w-1.5 rounded-full ${rainStatus.color} shrink-0`} />
@@ -702,7 +747,7 @@ export function RedesignedForecastDashboard({
                     <span className="truncate">ความชื้น</span>
                   </div>
                   <p className="text-xs sm:text-sm font-black text-slate-900 dark:text-white my-1 tracking-tight whitespace-nowrap">
-                    {humidity != null ? `${Math.round(humidity)}%` : "62%"}
+                    {humidity != null ? `${Math.round(humidity)}%` : "-"}
                   </p>
                   <div className="flex items-center justify-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
                     <span className={`h-1.5 w-1.5 rounded-full ${humidStatus.color} shrink-0`} />
@@ -837,7 +882,7 @@ export function RedesignedForecastDashboard({
                 {windSpeed != null && (
                   <div className="flex items-center justify-between">
                     <span className="text-slate-500">ลม</span>
-                    <strong className="font-semibold text-slate-800 dark:text-slate-200">{windSpeed.toFixed(1)} m/s</strong>
+                    <strong className="font-semibold text-slate-800 dark:text-slate-200">{windSpeed.toFixed(1)} km/h</strong>
                   </div>
                 )}
                 <div className="mt-2 border-t border-slate-100 pt-2 text-center text-[11px] text-slate-400 dark:border-slate-800">

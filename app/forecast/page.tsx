@@ -7,6 +7,7 @@ import { getProvinceForecast } from "@/services/forecast.service";
 import { getLatestWeather } from "@/services/weather.service";
 import { getRegionOverview } from "@/services/overview.service";
 import { getRegionalForecast } from "@/services/regional-forecast.service";
+import { getHourlyWeatherForecast } from "@/services/weather-forecast.service";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState } from "@/components/ui/states";
 import { ForecastTabsShell } from "@/components/forecast/forecast-tabs-shell";
 import { ProvinceRedirect } from "@/components/ui/province-redirect";
@@ -34,13 +35,15 @@ export default async function ForecastPage({
   const { province: pParam, tab } = await searchParams;
   const province = getProvince(pParam ?? "TH-40") ?? getProvince("TH-40")!;
 
-  let forecast, weather, overview, regionalForecast;
+  let forecast, weather, overview, regionalForecast, weatherForecast;
   try {
-    [forecast, weather, overview, regionalForecast] = await Promise.all([
+    [forecast, weather, overview, regionalForecast, weatherForecast] = await Promise.all([
       getProvinceForecast(province.id),
       getLatestWeather(province.id),
       getRegionOverview(),
       getRegionalForecast(),
+      // Cached 30 min; resolves to an empty list (never throws) if Open-Meteo is down.
+      getHourlyWeatherForecast(province.id),
     ]);
   } catch (err) {
     if (isNetworkRestrictedError(err)) return <NetworkRestrictedState />;
@@ -71,6 +74,7 @@ export default async function ForecastPage({
         weather={weather}
         overview={overview}
         regionalForecast={regionalForecast}
+        weatherForecast={weatherForecast}
         initialTab={tab === "province" ? "province" : "regional"}
       />
     </>
