@@ -102,7 +102,7 @@ export function MapPageDashboard({
       <IsanMapCard
         key={refreshKey}
         provinces={mapProvinces}
-        height="h-[560px]"
+        height="h-[490px] sm:h-[510px]"
         activeMode={activeMode}
         selectedProvinceId={selectedProvinceId}
         avgPm25={avgPm25}

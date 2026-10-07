@@ -34,6 +34,7 @@ export default async function MapPage() {
     lat: s.province.lat,
     lon: s.province.lon,
     pm25: s.pm25,
+    pm10: s.pm10,
     aqi: s.aqi,
     color: aqiToGradientColor(s.aqi ?? pm25ToAqi(s.pm25 ?? 0)),
     labelTh: s.band.labelTh,
@@ -41,7 +42,10 @@ export default async function MapPage() {
     humidity: s.humidity,
     windSpeed: s.windSpeed,
     windDirection: s.windDirection,
+    precipitation: s.precipitation,
+    precipitation24h: s.precipitation24h,
     hotspots: s.hotspotCount,
+    pm25Delta: s.pm25Delta,
     observedAt: s.observedAt,
   }));
 

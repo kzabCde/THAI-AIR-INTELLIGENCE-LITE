@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/query/fetcher";
 import { queryKeys } from "@/lib/query/keys";
 import type { Tables } from "@/lib/supabase/database.types";
-import type { TimePoint } from "@/services/types";
+import type { HourlyWeatherForecast, TimePoint } from "@/services/types";
 
 export type WeatherRow = Tables<"weather_hourly">;
 
@@ -37,3 +37,26 @@ export function useWeatherHistory(provinceId: string, hours = 48, enabled = true
 
 /** Alias — fetches the latest weather reading for a province. */
 export const useWeather = useProvinceWeather;
+
+/**
+ * Real hourly weather forecast (Open-Meteo) for the next 7 days — the only
+ * source of rain probability in the UI. `initialData` lets server-rendered
+ * pages hydrate without a second request.
+ */
+export function useHourlyWeatherForecast(
+  provinceId: string,
+  initialData?: HourlyWeatherForecast | null,
+) {
+  return useQuery({
+    queryKey: ["weather-forecast", provinceId] as const,
+    queryFn: ({ signal }) =>
+      fetchJson<HourlyWeatherForecast>(`/api/weather/forecast?province=${provinceId}`, signal),
+    enabled: Boolean(provinceId),
+    initialData: initialData && initialData.provinceId === provinceId && initialData.points.length
+      ? initialData
+      : undefined,
+    staleTime: 15 * 60_000,
+    gcTime: 60 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}

@@ -40,6 +40,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="th" suppressHydrationWarning>
       <head>
+        <link rel="preconnect" href="https://mt0.google.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://mt1.google.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://mt2.google.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://mt3.google.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://tilecache.rainviewer.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://api.rainviewer.com" />
+        <link rel="dns-prefetch" href="https://tilecache.rainviewer.com" />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-screen pb-24 md:pb-0">

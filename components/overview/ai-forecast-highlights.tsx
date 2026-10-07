@@ -13,7 +13,13 @@ import {
   Sun,
 } from "lucide-react";
 import { bandForAqi, pm25ToAqi } from "@/lib/aqi";
-import { computeHourlyForecastStrip } from "@/lib/forecast-weather";
+import {
+  bangkokDateKey,
+  computeHourlyForecastStrip,
+  shouldShowRainChance,
+  summarizeDayWeather,
+} from "@/lib/forecast-weather";
+import { useHourlyWeatherForecast } from "@/hooks/use-weather";
 import type { ProvinceForecast, ForecastPoint } from "@/services/types";
 
 const THAI_FULL_DAYS = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัส", "ศุกร์", "เสาร์"];
@@ -69,14 +75,20 @@ export function AiForecastHighlights({
     };
   }, [provinceId, refreshKey]);
 
+  // ── Real hourly weather forecast (Open-Meteo) — sole source of rain chance ──
+  const { data: weatherForecast, isFetching: weatherLoading } = useHourlyWeatherForecast(provinceId);
+  const modelWeather = weatherForecast?.points ?? [];
+
   // ── Base weather values from REAL DB data ──────────────────────────────
   const baseTemp = currentWeather?.temperature ?? 28;
   const baseHumidity = currentWeather?.humidity ?? 70;
   const baseWind = currentWeather?.windSpeed ?? 5.0;
   const baseWindDir = currentWeather?.windDirection ?? 180;
-  const basePrecip = currentWeather?.precipitation ?? currentWeather?.precipitation24h ?? 0;
+  // Latest observed hour only. The 24 h total is a past accumulation and must not
+  // be used as "rain now" (that previously flagged every future hour as rainy).
+  const currentHourPrecip = currentWeather?.precipitation ?? null;
 
-  // ── Generate ALL hourly data for 7 days (168 hours) starting from CURRENT HOUR ──
+  // ── Generate hourly data from the CURRENT HOUR through the end of day 7 ──
   const now = new Date();
   const currentHourTimestamp = new Date(
     now.getFullYear(),
@@ -84,6 +96,8 @@ export function AiForecastHighlights({
     now.getDate(),
     now.getHours(),
   ).getTime();
+  const todayKey = bangkokDateKey(currentHourTimestamp);
+  const dayKeys = Array.from({ length: 7 }, (_, dayIdx) => bangkokDateKey(currentHourTimestamp + dayIdx * 86400_000));
 
   const allHourlyData = computeHourlyForecastStrip({
     currentHourTimestamp,
@@ -94,64 +108,62 @@ export function AiForecastHighlights({
     baseHumidity,
     baseWind,
     baseWindDir,
-    precipitation: basePrecip,
-  }).map((item, idx) => ({
-    ...item,
-    dayIndex: Math.min(6, Math.floor(idx / 24)),
-    humidity: item.humid,
-    windSpeed: item.wind,
-    windDirection: item.windDir,
-    dateObj: new Date(currentHourTimestamp + idx * 3600_000),
-  }));
+    precipitation: currentHourPrecip,
+    weatherForecast: modelWeather,
+  }).map((item, idx) => {
+    const dateObj = new Date(currentHourTimestamp + idx * 3600_000);
+    return {
+      ...item,
+      dateKey: bangkokDateKey(dateObj),
+      humidity: item.humid,
+      windSpeed: item.wind,
+      windDirection: item.windDir,
+      dateObj,
+    };
+  });
 
   // First 24 hours for the hourly card
   const hourlyData = allHourlyData.slice(0, 24);
 
-  // ── Derive daily data for 7 days (Today + next 6 days) ──
-  const dailyData = Array.from({ length: 7 }, (_, dayIdx) => {
+  // ── Derive daily data for 7 calendar days (Today + next 6 days) ──
+  const dailyRaw: ForecastPoint[] = forecast?.daily ?? [];
+  const dailyData = dayKeys.map((dateKey, dayIdx) => {
     const dayDate = new Date(currentHourTimestamp + dayIdx * 86400_000);
-    const dayHours = allHourlyData.filter((h) => h.dayIndex === dayIdx);
+    const dayHours = allHourlyData.filter((h) => h.dateKey === dateKey);
 
-    // AQI: use daily forecast point if available, else average from hourly
-    const dailyRaw: ForecastPoint[] = forecast?.daily?.slice(0, 7) ?? [];
-    const rawPoint = dailyRaw[dayIdx];
-    const aqiVal = dayIdx === 0 && avgAqi != null
+    // AQI: today = live reading; other days = the ML forecast for that exact
+    // target date (forecast.daily starts at D+1, so index-matching was off by one).
+    const rawPoint = dailyRaw.find((p) => p.t === dateKey);
+    const aqiVal = dateKey === todayKey && avgAqi != null
       ? avgAqi
       : (rawPoint ? pm25ToAqi(rawPoint.pm25) : Math.round(dayHours.reduce((s, h) => s + h.aqi, 0) / (dayHours.length || 1)));
     const band = bandForAqi(aqiVal);
 
     const dayName = formatThaiDayName(dayDate, dayIdx === 0);
 
-    // Temperature: derive max/min from hourly temps of this day
+    // Weather: real model summary for the day (today = remaining hours).
+    const model = summarizeDayWeather(modelWeather, dateKey, dayIdx === 0 ? currentHourTimestamp : undefined);
+
+    // Fallback (no model data): derive from the strip's estimates.
     const temps = dayHours.map((h) => h.temp);
-    const tempMax = temps.length ? Math.max(...temps) : Math.round(baseTemp + 3);
-    const tempMin = temps.length ? Math.min(...temps) : Math.round(baseTemp - 3);
-
-    // Wind: average speed from hourly
-    const avgWindSpeed = dayHours.length
-      ? +(dayHours.reduce((s, h) => s + h.windSpeed, 0) / dayHours.length).toFixed(1)
-      : +(baseWind).toFixed(1);
-
-    // Wind direction: circular mean from hourly
     let sinSum = 0, cosSum = 0;
     for (const h of dayHours) {
       const rad = (h.windDir * Math.PI) / 180;
       sinSum += Math.sin(rad);
       cosSum += Math.cos(rad);
     }
-    const windDir = dayHours.length
+
+    const tempMax = model?.tempMax ?? (temps.length ? Math.max(...temps) : Math.round(baseTemp + 3));
+    const tempMin = model?.tempMin ?? (temps.length ? Math.min(...temps) : Math.round(baseTemp - 3));
+    const windSpeed = model?.windMean ?? (dayHours.length
+      ? +(dayHours.reduce((s, h) => s + h.windSpeed, 0) / dayHours.length).toFixed(1)
+      : +(baseWind).toFixed(1));
+    const windDir = model?.windDir ?? (dayHours.length
       ? Math.round(((Math.atan2(sinSum, cosSum) * 180) / Math.PI + 360) % 360)
-      : Math.round(baseWindDir);
-
-    // Humidity: average from hourly
-    const humidity = dayHours.length
+      : Math.round(baseWindDir));
+    const humidity = model?.humidityMean ?? (dayHours.length
       ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length)
-      : baseHumidity;
-
-    // Rain: max chance from hourly hours of this day
-    const rainChance = dayHours.length
-      ? Math.max(...dayHours.map((h) => h.rainChance))
-      : (basePrecip > 0 ? 80 : 20);
+      : baseHumidity);
 
     return {
       dayName,
@@ -159,10 +171,12 @@ export function AiForecastHighlights({
       band,
       tempMax,
       tempMin,
-      windSpeed: avgWindSpeed,
+      windSpeed,
       windDir,
       humidity,
-      rainChance,
+      // Highest hourly rain probability of the day; null when no model data.
+      rainChance: model?.rainChanceMax ?? null,
+      rainy: model?.rainy ?? false,
     };
   });
 
@@ -178,7 +192,7 @@ export function AiForecastHighlights({
             <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">
               การพยากรณ์อากาศรายชั่วโมง
             </h3>
-            {loading && <Loader2 size={13} className="animate-spin text-emerald-600" />}
+            {(loading || weatherLoading) && <Loader2 size={13} className="animate-spin text-emerald-600" />}
           </div>
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline text-[11px] font-semibold text-zinc-400 dark:text-zinc-500">
@@ -237,15 +251,18 @@ export function AiForecastHighlights({
 
               {/* 3. Weather Icon & Rain % */}
               <div className="flex flex-col items-center justify-center min-h-[36px]">
-                {item.rainChance > 40 ? (
+                {item.rainy ? (
                   <CloudRain className="h-5 w-5 text-blue-500" />
                 ) : item.hour >= 6 && item.hour <= 18 ? (
                   <Sun className="h-5 w-5 text-amber-500" />
                 ) : (
                   <Moon className="h-5 w-5 text-indigo-400" />
                 )}
-                {item.rainChance > 0 && (
-                  <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                {shouldShowRainChance(item.rainChance) && (
+                  <span
+                    className="text-[10px] font-bold text-sky-600 dark:text-sky-400 mt-0.5"
+                    title="โอกาสเกิดฝนในชั่วโมงนี้ (แบบจำลองอากาศ Open-Meteo)"
+                  >
                     {item.rainChance}%
                   </span>
                 )}
@@ -325,12 +342,12 @@ export function AiForecastHighlights({
 
                 {/* 3. Weather Icon & Rain % */}
                 <div className="w-14 shrink-0 flex flex-col items-center justify-center text-center">
-                  {row.rainChance > 40 ? (
+                  {row.rainy ? (
                     <CloudRain className="h-4 w-4 sm:h-5 sm:w-5 text-blue-500" />
                   ) : (
                     <Cloud className="h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />
                   )}
-                  {row.rainChance > 0 && (
+                  {shouldShowRainChance(row.rainChance) && (
                     <span className="text-[9px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
                       {row.rainChance}%
                     </span>

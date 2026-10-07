@@ -87,6 +87,46 @@ POOLED_FEATURE_PROVENANCE = {
     "pooling": "all selected provinces share one leakage-safe chronological model",
 }
 
+# Forecast-vintage feature contract collected now for a later leakage-safe
+# model upgrade. It is intentionally not appended to POOLED_FEATURE_COLUMNS
+# until enough origin-dated history exists across all seven horizons.
+FORECAST_COVARIATE_FEATURE_COLUMNS = (
+    "forecast_temp_mean",
+    "forecast_humidity_mean",
+    "forecast_wind_speed_mean",
+    "forecast_wind_u_mean",
+    "forecast_wind_v_mean",
+    "forecast_precip_total",
+    "forecast_pblh_mean",
+    "cams_pm25_mean",
+    "cams_aod_mean",
+    "cams_dust_mean",
+    "future_weather_missing",
+    "cams_missing",
+)
+POOLED_FEATURE_VERSION_FORECAST = "daily-pooled-v3-forecast-vintage"
+POOLED_FEATURE_COLUMNS_FORECAST = (
+    *FEATURE_COLUMNS,
+    *FORECAST_COVARIATE_FEATURE_COLUMNS,
+    "province_latitude",
+    "province_longitude",
+    "forecast_horizon_days",
+    *POOLED_PROVINCE_COLUMNS,
+)
+POOLED_FEATURE_PROVENANCE_FORECAST = {
+    **POOLED_FEATURE_PROVENANCE,
+    "forecast_weather": (
+        "origin-dated Open-Meteo forecast values matched to the target day"
+    ),
+    "forecast_air_quality": (
+        "origin-dated CAMS global PM2.5/AOD/dust matched to the target day"
+    ),
+    "activation_gate": (
+        "requires complete forecast-origin lineage and chronological validation; "
+        "missing history must never be reconstructed from observations"
+    ),
+}
+
 # Next candidate feature contract. This is deliberately NOT the active
 # POOLED_FEATURE_VERSION yet. It may only be promoted after trusted historical
 # FIRMS coverage is backfilled with provenance for the model training window.

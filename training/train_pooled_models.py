@@ -73,14 +73,23 @@ from training.train_dual_models import (
 )
 
 DIRECT_HORIZONS = tuple(range(1, 8))
-MODEL_VERSION = "residual-dual-pm25-v2"
-REGRESSION_MODEL_NAME = "lightgbm-pm25-residual-v2"
+MODEL_VERSION = "residual-dual-pm25-v3"
+REGRESSION_MODEL_NAME = "lightgbm-pm25-residual-v3"
 CLASSIFICATION_MODEL_NAME = "random-forest-aqi-classifier-pooled-v1"
 CLASSIFICATION_FIXED_PARAMETERS = {
     "n_estimators": 400,
     "max_depth": 14,
     "min_samples_leaf": 2,
     "max_features": "sqrt",
+}
+HORIZON_SELECTION_WEIGHTS = {
+    1: 0.25,
+    2: 0.18,
+    3: 0.16,
+    4: 0.13,
+    5: 0.11,
+    6: 0.09,
+    7: 0.08,
 }
 CLASSIFICATION_TEMPERATURES = (0.75, 1.0, 1.25, 1.5)
 SUPABASE_POSTGREST_TIMEOUT_SECONDS = 120
@@ -350,6 +359,197 @@ def _d1(rows: pd.DataFrame) -> pd.DataFrame:
     return rows[rows["forecast_horizon_days"] == 1]
 
 
+def _select_horizon_correction_weights(
+    rows: pd.DataFrame,
+    truth: np.ndarray,
+    baseline: np.ndarray,
+    raw_residual_predictions: np.ndarray,
+    *,
+    shrinkage: float = 0.90,
+) -> tuple[dict[str, float], dict[str, float], np.ndarray]:
+    """Tune residual strength independently for every direct horizon.
+
+    Selection uses validation data only.  The conservative shrinkage is kept
+    from the previous production contract, while avoiding the old behaviour
+    where a D+1-only weight was applied unchanged to D+2 through D+7.
+    """
+    horizons = rows["forecast_horizon_days"].to_numpy(dtype=int)
+    candidate_weights = np.linspace(0.0, 1.5, 31)
+    selected: dict[str, float] = {}
+    deployed: dict[str, float] = {}
+    predictions = np.asarray(baseline, dtype=float).copy()
+    for horizon in DIRECT_HORIZONS:
+        mask = horizons == horizon
+        if not np.any(mask):
+            raise ValueError(f"validation rows are missing D+{horizon}")
+        errors = np.abs(
+            truth[mask][None, :]
+            - baseline[mask][None, :]
+            - candidate_weights[:, None] * raw_residual_predictions[mask][None, :]
+        )
+        selected_weight = float(candidate_weights[np.argmin(errors.mean(axis=1))])
+        correction_weight = selected_weight * float(shrinkage)
+        selected[str(horizon)] = selected_weight
+        deployed[str(horizon)] = correction_weight
+        predictions[mask] = (
+            baseline[mask] + correction_weight * raw_residual_predictions[mask]
+        )
+    return selected, deployed, predictions
+
+
+def _apply_horizon_correction_weights(
+    rows: pd.DataFrame,
+    baseline: np.ndarray,
+    raw_residual_predictions: np.ndarray,
+    correction_weights: Mapping[str, float],
+) -> np.ndarray:
+    horizons = rows["forecast_horizon_days"].to_numpy(dtype=int)
+    weights = np.asarray(
+        [float(correction_weights[str(horizon)]) for horizon in horizons],
+        dtype=float,
+    )
+    return np.asarray(baseline, dtype=float) + weights * np.asarray(
+        raw_residual_predictions, dtype=float
+    )
+
+
+def _weighted_horizon_mae(rows: pd.DataFrame, predictions: np.ndarray) -> float:
+    truth = rows["target_pm25"].to_numpy(dtype=float)
+    horizons = rows["forecast_horizon_days"].to_numpy(dtype=int)
+    score = 0.0
+    for horizon, weight in HORIZON_SELECTION_WEIGHTS.items():
+        mask = horizons == horizon
+        if not np.any(mask):
+            raise ValueError(f"selection rows are missing D+{horizon}")
+        score += float(weight) * float(np.mean(np.abs(truth[mask] - predictions[mask])))
+    return score
+
+
+def _global_candidate_beats_local(
+    rows: pd.DataFrame,
+    local_predictions: np.ndarray,
+    global_predictions: np.ndarray,
+) -> bool:
+    """Select pooling only when it improves the weighted validation objective.
+
+    A small per-horizon guard prevents a strong long-horizon average from
+    hiding a material regression at D+1 or any other published horizon.
+    """
+    local_score = _weighted_horizon_mae(rows, local_predictions)
+    global_score = _weighted_horizon_mae(rows, global_predictions)
+    if global_score > local_score * 0.995:
+        return False
+    truth = rows["target_pm25"].to_numpy(dtype=float)
+    horizons = rows["forecast_horizon_days"].to_numpy(dtype=int)
+    for horizon in DIRECT_HORIZONS:
+        mask = horizons == horizon
+        local_mae = float(np.mean(np.abs(truth[mask] - local_predictions[mask])))
+        global_mae = float(np.mean(np.abs(truth[mask] - global_predictions[mask])))
+        tolerance = 1.01 if horizon == 1 else 1.03
+        if global_mae > local_mae * tolerance:
+            return False
+    return True
+
+
+def _train_global_regression_candidate(
+    split: PooledSplit,
+    config: PipelineConfig,
+) -> dict:
+    """Train one regional direct-horizon residual model across all provinces."""
+    fixed_parameters = {
+        "objective": "regression_l1",
+        "num_leaves": 47,
+        "max_depth": 8,
+        "min_child_samples": 60,
+        "subsample": 0.9,
+        "colsample_bytree": 0.85,
+        "reg_lambda": 3.0,
+        "learning_rate": 0.025,
+    }
+    X_train, y_train_raw = _xy(split.train, "target_pm25")
+    X_validation, y_validation_raw = _xy(split.validation, "target_pm25")
+    X_test, _ = _xy(split.test, "target_pm25")
+    baseline_train = split.train["pm25_mean"].to_numpy(dtype=float)
+    baseline_validation = split.validation["pm25_mean"].to_numpy(dtype=float)
+    baseline_test = split.test["pm25_mean"].to_numpy(dtype=float)
+    validation_model = lgb.LGBMRegressor(
+        n_estimators=1400,
+        random_state=config.random_seed,
+        n_jobs=-1,
+        verbose=-1,
+        **fixed_parameters,
+    )
+    validation_model.fit(
+        X_train,
+        y_train_raw - baseline_train,
+        eval_set=[(X_validation, y_validation_raw - baseline_validation)],
+        callbacks=[lgb.early_stopping(100, verbose=False)],
+    )
+    raw_validation = np.asarray(
+        validation_model.predict(X_validation), dtype=float
+    )
+    selected_weights, correction_weights, validation_predictions = (
+        _select_horizon_correction_weights(
+            split.validation,
+            y_validation_raw,
+            baseline_validation,
+            raw_validation,
+        )
+    )
+    fit_rows = pd.concat([split.train, split.validation], ignore_index=True)
+    X_fit, y_fit_raw = _xy(fit_rows, "target_pm25")
+    baseline_fit = fit_rows["pm25_mean"].to_numpy(dtype=float)
+    n_estimators = int(validation_model.best_iteration_ or 1400)
+    model = lgb.LGBMRegressor(
+        n_estimators=n_estimators,
+        random_state=config.random_seed,
+        n_jobs=-1,
+        verbose=-1,
+        **fixed_parameters,
+    ).fit(X_fit, y_fit_raw - baseline_fit)
+    raw_test = np.asarray(model.predict(X_test), dtype=float)
+    test_predictions = _apply_horizon_correction_weights(
+        split.test,
+        baseline_test,
+        raw_test,
+        correction_weights,
+    )
+    artifact = export_lightgbm_regressor(
+        model,
+        POOLED_FEATURE_COLUMNS,
+        feature_version=POOLED_FEATURE_VERSION,
+        prediction_transform={
+            "kind": "persistence_residual_blend_by_horizon",
+            "persistence_feature": "pm25_mean",
+            "horizon_feature": "forecast_horizon_days",
+            "correction_weights": correction_weights,
+        },
+    )
+    portable = np.asarray(
+        [evaluate_lightgbm_regressor(row, artifact) for row in X_test[:100]],
+        dtype=float,
+    )
+    if not np.allclose(portable, test_predictions[:100], atol=1e-10, rtol=1e-10):
+        raise RuntimeError("global portable LightGBM differs from native predictions")
+    return {
+        "model": model,
+        "artifact": artifact,
+        "validation_predictions": validation_predictions,
+        "test_predictions": test_predictions,
+        "parameters": {
+            **fixed_parameters,
+            "n_estimators": n_estimators,
+            "validation_selected_correction_weights": selected_weights,
+            "correction_weights_by_horizon": correction_weights,
+            "correction_weight": correction_weights["1"],
+            "selection_shrinkage": 0.90,
+            "target": "target_pm25_minus_pm25_mean",
+            "selection": "regional_pool_validation_mae_by_direct_horizon",
+            "model_scope": "regional_pool",
+        },
+    }
+
+
 def _metrics_by_horizon(rows: pd.DataFrame, predictions: np.ndarray, *, task: str) -> dict:
     result: dict[str, dict] = {}
     for horizon in DIRECT_HORIZONS:
@@ -357,11 +557,43 @@ def _metrics_by_horizon(rows: pd.DataFrame, predictions: np.ndarray, *, task: st
         if not np.any(mask):
             continue
         if task == "regression":
-            result[str(horizon)] = regression_metrics(
+            metrics = regression_metrics(
                 rows.loc[mask, "target_pm25"].to_numpy(dtype=float),
                 np.asarray(predictions)[mask],
             )
+            baseline = regression_metrics(
+                rows.loc[mask, "target_pm25"].to_numpy(dtype=float),
+                rows.loc[mask, "pm25_mean"].to_numpy(dtype=float),
+            )
+            metrics["baseline_mae"] = baseline["mae"]
+            metrics["skill_vs_persistence"] = (
+                1.0 - metrics["mae"] / baseline["mae"]
+                if baseline["mae"] > 0
+                else 0.0
+            )
+            result[str(horizon)] = metrics
     return result
+
+
+def _multi_horizon_regression_gate(metrics: dict) -> list[str]:
+    """Reject a D+1 winner that materially degrades the remaining horizons."""
+    reasons: list[str] = []
+    all_horizons = metrics.get("all_horizons") or {}
+    if float(all_horizons.get("skill_vs_persistence", -1.0)) < 0.0:
+        reasons.append("all_horizon_skill_below_persistence")
+    by_horizon = metrics.get("by_horizon") or {}
+    missing = [str(horizon) for horizon in DIRECT_HORIZONS if str(horizon) not in by_horizon]
+    if missing:
+        reasons.append("missing_horizon_metrics:" + ",".join(missing))
+        return reasons
+    regressed = [
+        horizon
+        for horizon, evidence in by_horizon.items()
+        if float(evidence.get("skill_vs_persistence", -1.0)) < -0.02
+    ]
+    if regressed:
+        reasons.append("horizon_skill_regressed:" + ",".join(regressed))
+    return reasons
 
 
 def _aligned_rf_probabilities(model: RandomForestClassifier, X: np.ndarray) -> np.ndarray:
@@ -438,16 +670,14 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
             callbacks=[lgb.early_stopping(80, verbose=False)],
         )
         raw_validation = np.asarray(validation_model.predict(X_validation), dtype=float)
-        d1_validation = validation_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
-        candidate_weights = np.linspace(0.0, 1.5, 31)
-        d1_errors = np.abs(
-            y_validation_raw[d1_validation][None, :]
-            - baseline_validation[d1_validation][None, :]
-            - candidate_weights[:, None] * raw_validation[d1_validation][None, :]
+        selected_weights, correction_weights, local_validation_predictions = (
+            _select_horizon_correction_weights(
+                validation_rows,
+                y_validation_raw,
+                baseline_validation,
+                raw_validation,
+            )
         )
-        selected_weight = float(candidate_weights[np.argmin(d1_errors.mean(axis=1))])
-        correction_weight = float(selected_weight) * 0.90
-        local_validation_predictions = baseline_validation + correction_weight * raw_validation
 
         fit_rows = pd.concat([train_rows, validation_rows], ignore_index=True)
         X_fit, y_fit_raw = _xy(fit_rows, "target_pm25")
@@ -462,15 +692,21 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
             **fixed_parameters,
         ).fit(X_fit, y_fit)
         raw_test = np.asarray(model.predict(X_test), dtype=float)
-        local_test_predictions = baseline_test + correction_weight * raw_test
+        local_test_predictions = _apply_horizon_correction_weights(
+            test_rows,
+            baseline_test,
+            raw_test,
+            correction_weights,
+        )
         artifact = export_lightgbm_regressor(
             model,
             POOLED_FEATURE_COLUMNS,
             feature_version=POOLED_FEATURE_VERSION,
             prediction_transform={
-                "kind": "persistence_residual_blend",
+                "kind": "persistence_residual_blend_by_horizon",
                 "persistence_feature": "pm25_mean",
-                "correction_weight": correction_weight,
+                "horizon_feature": "forecast_horizon_days",
+                "correction_weights": correction_weights,
             },
         )
         portable = np.asarray(
@@ -491,10 +727,12 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
         parameters_by_province[province_id] = {
             **fixed_parameters,
             "n_estimators": n_estimators,
-            "validation_selected_correction_weight": float(selected_weight),
-            "correction_weight": correction_weight,
+            "validation_selected_correction_weights": selected_weights,
+            "correction_weights_by_horizon": correction_weights,
+            "correction_weight": correction_weights["1"],
             "selection_shrinkage": 0.90,
             "target": "target_pm25_minus_pm25_mean",
+            "selection": "validation_mae_by_direct_horizon",
         }
         local_residuals = y_validation_raw - local_validation_predictions
         local_validation_horizons = validation_rows[
@@ -516,6 +754,9 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
         }
 
         d1_test = test_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+        d1_validation = (
+            validation_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+        )
         local_test_metrics = regression_metrics(
             y_test[d1_test],
             local_test_predictions[d1_test],
@@ -539,7 +780,8 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
             "eligibility_reasons": local_reasons,
             "baseline": local_baseline,
             "validation": local_validation_metrics,
-            "correction_weight": correction_weight,
+            "correction_weight": correction_weights["1"],
+            "correction_weights_by_horizon": correction_weights,
         })
         province_metrics[province_id] = local_test_metrics
 
@@ -550,9 +792,17 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
     validation_metrics = regression_metrics(y_validation, validation_predictions)
     _, validation_baseline = _regression_baseline(split.validation)
     validation_metrics["skill_vs_persistence"] = 1.0 - validation_metrics["mae"] / validation_baseline["mae"]
-    validation_metrics["selection"] = "per-province validation grid with 0.90 shrinkage"
+    validation_metrics["selection"] = (
+        "per-province per-horizon validation grid with 0.90 shrinkage"
+    )
     y_test = split.test["target_pm25"].to_numpy(dtype=float)
     test_all = regression_metrics(y_test, test_predictions)
+    _, baseline_all = _regression_baseline(split.test)
+    test_all["skill_vs_persistence"] = (
+        1.0 - test_all["mae"] / baseline_all["mae"]
+        if baseline_all["mae"] > 0
+        else 0.0
+    )
     d1_mask = split.test["forecast_horizon_days"].to_numpy(dtype=int) == 1
     d1_rows = split.test.loc[d1_mask]
     d1_metrics = regression_metrics(y_test[d1_mask], test_predictions[d1_mask])
@@ -566,6 +816,10 @@ def _train_regression_batch(split: PooledSplit, config: PipelineConfig) -> Train
         validation_metrics,
         config,
     )
+    horizon_reasons = _multi_horizon_regression_gate(d1_metrics)
+    if horizon_reasons:
+        aggregate_eligible = False
+        reasons = [*reasons, *horizon_reasons]
     failed_provinces = [
         province_id
         for province_id, metrics in province_metrics.items()
@@ -614,7 +868,7 @@ def train_regression(
     province_results: Mapping[str, RegressionProvinceResult] | None = None,
     on_province_complete: Callable[[RegressionProvinceResult], None] | None = None,
 ) -> TrainedTask:
-    """Train or resume province-local regressors and assemble one global task.
+    """Train local regressors plus a validation-selected regional challenger.
 
     Each province is an independent serializable unit. A caller can load prior
     ``RegressionProvinceResult`` objects from durable storage and persist new
@@ -687,6 +941,103 @@ def train_regression(
         test_predictions[test_mask] = result.test_predictions
         results[province_id] = result
 
+    # A regional pooled challenger can share transport/seasonal patterns across
+    # provinces.  Selection remains province-specific and validation-only, so
+    # pooling is used only where it improves the complete D+1..D+7 objective.
+    if set(POOLED_FEATURE_COLUMNS).issubset(split.train.columns):
+        global_candidate = _train_global_regression_candidate(split, config)
+        global_validation = np.asarray(
+            global_candidate["validation_predictions"], dtype=float
+        )
+        global_test = np.asarray(global_candidate["test_predictions"], dtype=float)
+        for province_id in province_ids:
+            validation_mask = (
+                split.validation["province_id"].to_numpy() == province_id
+            )
+            test_mask = split.test["province_id"].to_numpy() == province_id
+            validation_rows = split.validation.loc[validation_mask]
+            test_rows = split.test.loc[test_mask]
+            current = results[province_id]
+            if not _global_candidate_beats_local(
+                validation_rows,
+                np.asarray(current.validation_predictions, dtype=float),
+                global_validation[validation_mask],
+            ):
+                current.parameters.setdefault("model_scope", "province_local")
+                current.parameters["regional_pool_selected"] = False
+                continue
+
+            local_validation_predictions = global_validation[validation_mask]
+            local_test_predictions = global_test[test_mask]
+            y_validation = validation_rows["target_pm25"].to_numpy(dtype=float)
+            y_test = test_rows["target_pm25"].to_numpy(dtype=float)
+            d1_validation = (
+                validation_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+            )
+            d1_test = test_rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
+            validation_metrics = regression_metrics(
+                y_validation[d1_validation],
+                local_validation_predictions[d1_validation],
+            )
+            test_metrics = regression_metrics(
+                y_test[d1_test],
+                local_test_predictions[d1_test],
+            )
+            _, baseline = _regression_baseline(test_rows.loc[d1_test])
+            test_metrics["skill_vs_persistence"] = (
+                1.0 - test_metrics["mae"] / baseline["mae"]
+                if baseline["mae"] > 0
+                else 0.0
+            )
+            eligible, eligibility_reasons = _regression_eligibility(
+                test_metrics,
+                baseline,
+                validation_metrics,
+                config,
+            )
+            local_horizons = validation_rows[
+                "forecast_horizon_days"
+            ].to_numpy(dtype=int)
+            local_residuals = y_validation - local_validation_predictions
+            parameters = dict(global_candidate["parameters"])
+            parameters["residual_quantiles_by_horizon"] = {
+                str(horizon): {
+                    name: float(value)
+                    for name, value in zip(
+                        ("p10", "p50", "p90"),
+                        np.quantile(
+                            local_residuals[local_horizons == horizon],
+                            (0.10, 0.50, 0.90),
+                        ),
+                        strict=True,
+                    )
+                }
+                for horizon in DIRECT_HORIZONS
+            }
+            parameters["regional_pool_selected"] = True
+            test_metrics.update({
+                "eligible": bool(eligible),
+                "eligibility_reasons": eligibility_reasons,
+                "baseline": baseline,
+                "validation": validation_metrics,
+                "correction_weight": parameters["correction_weight"],
+                "correction_weights_by_horizon": parameters[
+                    "correction_weights_by_horizon"
+                ],
+                "model_scope": "regional_pool",
+            })
+            results[province_id] = RegressionProvinceResult(
+                province_id=province_id,
+                model=global_candidate["model"],
+                runtime_artifact=global_candidate["artifact"],
+                parameters=parameters,
+                validation_predictions=local_validation_predictions,
+                test_predictions=local_test_predictions,
+                province_metrics=test_metrics,
+            )
+            validation_predictions[validation_mask] = local_validation_predictions
+            test_predictions[test_mask] = local_test_predictions
+
     if not np.all(np.isfinite(validation_predictions)) or not np.all(
         np.isfinite(test_predictions)
     ):
@@ -699,10 +1050,16 @@ def train_regression(
         1.0 - validation_metrics["mae"] / validation_baseline["mae"]
     )
     validation_metrics["selection"] = (
-        "per-province validation grid with 0.90 shrinkage"
+        "per-province per-horizon validation grid with 0.90 shrinkage"
     )
     y_test = split.test["target_pm25"].to_numpy(dtype=float)
     test_all = regression_metrics(y_test, test_predictions)
+    _, baseline_all = _regression_baseline(split.test)
+    test_all["skill_vs_persistence"] = (
+        1.0 - test_all["mae"] / baseline_all["mae"]
+        if baseline_all["mae"] > 0
+        else 0.0
+    )
     d1_mask = split.test["forecast_horizon_days"].to_numpy(dtype=int) == 1
     d1_rows = split.test.loc[d1_mask]
     d1_metrics = regression_metrics(y_test[d1_mask], test_predictions[d1_mask])
@@ -720,6 +1077,10 @@ def train_regression(
         validation_metrics,
         config,
     )
+    horizon_reasons = _multi_horizon_regression_gate(d1_metrics)
+    if horizon_reasons:
+        aggregate_eligible = False
+        reasons = [*reasons, *horizon_reasons]
     province_metrics = {
         province_id: result.province_metrics
         for province_id, result in results.items()
@@ -760,7 +1121,7 @@ def train_regression(
         d1_metrics,
         baseline_d1,
         {
-            "strategy": "per_province_residual_lightgbm",
+            "strategy": "validation_selected_local_or_regional_residual_lightgbm",
             "fixed_hyperparameters": {
                 key: value
                 for key, value in next(iter(results.values())).parameters.items()
@@ -768,8 +1129,11 @@ def train_regression(
                 not in {
                     "n_estimators",
                     "validation_selected_correction_weight",
+                    "validation_selected_correction_weights",
                     "correction_weight",
+                    "correction_weights_by_horizon",
                     "selection_shrinkage",
+                    "selection",
                     "target",
                     "residual_quantiles_by_horizon",
                 }
@@ -1014,11 +1378,14 @@ def build_registry_rows(
             local_eligible = bool(metrics.get("local_eligible", metrics["eligible"]))
             eligible = bool(task.global_eligible and local_eligible)
             name = REGRESSION_MODEL_NAME if task.task_type == "regression" else CLASSIFICATION_MODEL_NAME
-            is_pooled = task.task_type == "classification"
             task_parameters = (
                 task.parameters["by_province"][province_id]
                 if task.task_type == "regression"
                 else task.parameters
+            )
+            is_pooled = bool(
+                task.task_type == "classification"
+                or task_parameters.get("model_scope") == "regional_pool"
             )
             model_params = {
                 "task_type": task.task_type,
@@ -1036,7 +1403,11 @@ def build_registry_rows(
                     else "direct_observed_horizon"
                 ),
                 "trained_horizons": list(DIRECT_HORIZONS),
-                "validated_horizons": [1],
+                "validated_horizons": (
+                    list(DIRECT_HORIZONS)
+                    if task.task_type == "regression"
+                    else [1]
+                ),
                 "fallback": {
                     "model_name": FALLBACK_MODEL_NAME,
                     "strategy": FALLBACK_STRATEGY,
@@ -1055,6 +1426,10 @@ def build_registry_rows(
                 model_params["correction_weight"] = task_parameters[
                     "correction_weight"
                 ]
+                model_params["correction_weights_by_horizon"] = task_parameters.get(
+                    "correction_weights_by_horizon",
+                    {str(horizon): task_parameters["correction_weight"] for horizon in DIRECT_HORIZONS},
+                )
             else:
                 model_params["threshold_version"] = THRESHOLD_VERSION
                 model_params["class_mapping"] = class_mapping()

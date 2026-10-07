@@ -481,6 +481,92 @@ export type Database = {
           },
         ]
       }
+      forecast_covariates_daily: {
+        Row: {
+          air_quality_hours: number
+          cams_aod_mean: number | null
+          cams_dust_mean: number | null
+          cams_pm25_mean: number | null
+          created_at: string
+          forecast_horizon_days: number
+          forecast_humidity_mean: number | null
+          forecast_origin: string
+          forecast_pblh_mean: number | null
+          forecast_precip_total: number | null
+          forecast_temp_mean: number | null
+          forecast_wind_speed_mean: number | null
+          forecast_wind_u_mean: number | null
+          forecast_wind_v_mean: number | null
+          id: number
+          missingness: Json
+          origin_date: string
+          provenance: Json
+          province_id: string
+          source: string
+          target_date: string
+          updated_at: string
+          weather_hours: number
+        }
+        Insert: {
+          air_quality_hours?: number
+          cams_aod_mean?: number | null
+          cams_dust_mean?: number | null
+          cams_pm25_mean?: number | null
+          created_at?: string
+          forecast_horizon_days: number
+          forecast_humidity_mean?: number | null
+          forecast_origin: string
+          forecast_pblh_mean?: number | null
+          forecast_precip_total?: number | null
+          forecast_temp_mean?: number | null
+          forecast_wind_speed_mean?: number | null
+          forecast_wind_u_mean?: number | null
+          forecast_wind_v_mean?: number | null
+          id?: number
+          missingness?: Json
+          origin_date: string
+          provenance?: Json
+          province_id: string
+          source: string
+          target_date: string
+          updated_at?: string
+          weather_hours?: number
+        }
+        Update: {
+          air_quality_hours?: number
+          cams_aod_mean?: number | null
+          cams_dust_mean?: number | null
+          cams_pm25_mean?: number | null
+          created_at?: string
+          forecast_horizon_days?: number
+          forecast_humidity_mean?: number | null
+          forecast_origin?: string
+          forecast_pblh_mean?: number | null
+          forecast_precip_total?: number | null
+          forecast_temp_mean?: number | null
+          forecast_wind_speed_mean?: number | null
+          forecast_wind_u_mean?: number | null
+          forecast_wind_v_mean?: number | null
+          id?: number
+          missingness?: Json
+          origin_date?: string
+          provenance?: Json
+          province_id?: string
+          source?: string
+          target_date?: string
+          updated_at?: string
+          weather_hours?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "forecast_covariates_daily_province_id_fkey"
+            columns: ["province_id"]
+            isOneToOne: false
+            referencedRelation: "isan_provinces"
+            referencedColumns: ["province_id"]
+          },
+        ]
+      }
       forecast_evaluations: {
         Row: {
           absolute_error: number | null

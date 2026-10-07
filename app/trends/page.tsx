@@ -19,6 +19,9 @@ import { ProvinceRedirect } from "@/components/ui/province-redirect";
 
 export const metadata: Metadata = { title: "แนวโน้มย้อนหลัง" };
 export const revalidate = 300;
+// A cold-cache regional load aggregates 20 provinces from the hourly-backed
+// view; allow headroom so Vercel's default function timeout cannot cut it off.
+export const maxDuration = 60;
 
 const ALLOWED_RANGES = new Set([7, 30, 90, 180, 365]);
 

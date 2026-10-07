@@ -37,6 +37,7 @@ pnpm-debug.log*
 next-env.d.ts
 
 # Python
+.venv/
 __pycache__/
 *.py[cod]
 *$py.class

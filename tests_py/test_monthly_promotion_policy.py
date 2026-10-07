@@ -10,6 +10,15 @@ def regression(mae=3.7, rmse=5.5, r2=0.81, skill=0.065):
     }
 
 
+def regression_with_horizons(**kwargs):
+    metrics = regression(**kwargs)
+    metrics["by_horizon"] = {
+        str(horizon): {"mae": metrics["mae"] + horizon * 0.1}
+        for horizon in range(1, 8)
+    }
+    return metrics
+
+
 def classification(
     macro=0.58,
     bal=0.59,
@@ -106,3 +115,22 @@ def test_keeps_champion_when_one_province_regresses_over_two_percent():
     )
     assert result["approved"] is False
     assert any("TH-34" in reason for reason in result["reasons"])
+
+
+def test_keeps_champion_when_a_long_horizon_regresses():
+    candidate = regression_with_horizons(mae=3.65, skill=0.069)
+    champion = regression_with_horizons()
+    candidate["by_horizon"]["7"]["mae"] = (
+        champion["by_horizon"]["7"]["mae"] * 1.03
+    )
+    result = decide_promotion(
+        candidate_regression=candidate,
+        champion_regression=champion,
+        candidate_classification=classification(),
+        champion_classification=classification(),
+        candidate_regression_provinces=provinces(3.65),
+        champion_regression_provinces=provinces(),
+        candidate_ready=True,
+    )
+    assert result["approved"] is False
+    assert "regression_horizon_7_mae_regressed" in result["reasons"]

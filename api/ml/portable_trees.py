@@ -184,18 +184,51 @@ def export_lightgbm_regressor(
     if prediction_transform is not None:
         kind = prediction_transform.get("kind")
         persistence_feature = prediction_transform.get("persistence_feature")
-        correction_weight = float(prediction_transform.get("correction_weight", math.nan))
-        if kind != "persistence_residual_blend":
+        if kind not in {
+            "persistence_residual_blend",
+            "persistence_residual_blend_by_horizon",
+        }:
             raise ValueError("unsupported LightGBM prediction transform")
         if persistence_feature not in artifact["feature_cols"]:
             raise ValueError("LightGBM persistence feature is missing")
-        if not math.isfinite(correction_weight) or not 0.0 <= correction_weight <= 2.0:
-            raise ValueError("LightGBM correction weight must be within [0, 2]")
-        artifact["prediction_transform"] = {
-            "kind": kind,
-            "persistence_feature": persistence_feature,
-            "correction_weight": correction_weight,
-        }
+        if kind == "persistence_residual_blend":
+            correction_weight = float(
+                prediction_transform.get("correction_weight", math.nan)
+            )
+            if (
+                not math.isfinite(correction_weight)
+                or not 0.0 <= correction_weight <= 2.0
+            ):
+                raise ValueError("LightGBM correction weight must be within [0, 2]")
+            artifact["prediction_transform"] = {
+                "kind": kind,
+                "persistence_feature": persistence_feature,
+                "correction_weight": correction_weight,
+            }
+        else:
+            horizon_feature = prediction_transform.get(
+                "horizon_feature", "forecast_horizon_days"
+            )
+            if horizon_feature not in artifact["feature_cols"]:
+                raise ValueError("LightGBM horizon feature is missing")
+            raw_weights = prediction_transform.get("correction_weights") or {}
+            correction_weights = {
+                str(int(horizon)): float(weight)
+                for horizon, weight in raw_weights.items()
+            }
+            if set(correction_weights) != {str(value) for value in range(1, 8)}:
+                raise ValueError("LightGBM horizon correction weights must cover D+1 to D+7")
+            if any(
+                not math.isfinite(weight) or not 0.0 <= weight <= 2.0
+                for weight in correction_weights.values()
+            ):
+                raise ValueError("LightGBM horizon correction weights must be within [0, 2]")
+            artifact["prediction_transform"] = {
+                "kind": kind,
+                "persistence_feature": persistence_feature,
+                "horizon_feature": horizon_feature,
+                "correction_weights": correction_weights,
+            }
     return artifact
 
 
@@ -274,13 +307,30 @@ def evaluate_lightgbm_regressor(features: np.ndarray, artifact: dict) -> float:
     )
     transform = artifact.get("prediction_transform")
     if transform is not None:
-        if transform.get("kind") != "persistence_residual_blend":
+        kind = transform.get("kind")
+        if kind not in {
+            "persistence_residual_blend",
+            "persistence_residual_blend_by_horizon",
+        }:
             raise ValueError("unsupported LightGBM prediction transform")
         persistence_feature = transform.get("persistence_feature")
         feature_cols = artifact.get("feature_cols") or []
         if persistence_feature not in feature_cols:
             raise ValueError("LightGBM persistence feature is missing")
-        correction_weight = float(transform.get("correction_weight", math.nan))
+        if kind == "persistence_residual_blend_by_horizon":
+            horizon_feature = transform.get(
+                "horizon_feature", "forecast_horizon_days"
+            )
+            if horizon_feature not in feature_cols:
+                raise ValueError("LightGBM horizon feature is missing")
+            horizon = int(round(float(vector[feature_cols.index(horizon_feature)])))
+            correction_weight = float(
+                (transform.get("correction_weights") or {}).get(
+                    str(horizon), math.nan
+                )
+            )
+        else:
+            correction_weight = float(transform.get("correction_weight", math.nan))
         if not math.isfinite(correction_weight) or not 0.0 <= correction_weight <= 2.0:
             raise ValueError("invalid LightGBM correction weight")
         persistence = float(vector[feature_cols.index(persistence_feature)])
