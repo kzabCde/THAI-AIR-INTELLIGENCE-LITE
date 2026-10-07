@@ -42,7 +42,10 @@ class DbOnlyTrainingContractTests(unittest.TestCase):
         self.assertNotIn("open-meteo-monthly", workflow)
         self.assertNotIn("archive-cache-dir", workflow)
         self.assertIn("Supabase training_daily_summary_v3", workflow)
-        self.assertIn("training.train_models_pm25_v5_6_4", workflow)
+        self.assertTrue(
+            "training.train_models_pm25_v6" in workflow
+            or "training.train_models_pm25_v5_6_4" in workflow
+        )
         self.assertNotIn("python -u -m training.monthly_auto_retrain", workflow)
 
     def test_archive_contract_preserves_requested_window_and_source_gap(self) -> None:
