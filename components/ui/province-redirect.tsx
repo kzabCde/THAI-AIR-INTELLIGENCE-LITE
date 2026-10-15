@@ -20,16 +20,22 @@ export function ProvinceRedirect({
   const router = useRouter();
   const searchParams = useSearchParams();
   const rememberedId = useUiStore((s) => s.provinceByPage[page]);
+  const homeRememberedId = useUiStore((s) => s.provinceByPage.home);
 
   useEffect(() => {
     // Only redirect if:
     // 1. No province param in URL
-    // 2. We have a remembered province for this specific page
+    // 2. We have a remembered province for this page (or fallback to home for forecast)
     // 3. The remembered province is different from default "TH-40"
     const current = searchParams.get(paramName);
-    if (!current && rememberedId && rememberedId !== "TH-40") {
+    const targetId = rememberedId || (page === "forecast" ? homeRememberedId : null);
+
+    if (!current && targetId && targetId !== "TH-40") {
       const params = new URLSearchParams(searchParams.toString());
-      params.set(paramName, rememberedId);
+      params.set(paramName, targetId);
+      if (page === "forecast" && !params.get("tab")) {
+        params.set("tab", "province");
+      }
       router.replace(`?${params.toString()}`);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

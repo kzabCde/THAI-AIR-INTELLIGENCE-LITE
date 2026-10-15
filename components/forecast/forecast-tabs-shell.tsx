@@ -20,7 +20,7 @@ export function ForecastTabsShell({
   overview,
   regionalForecast,
   weatherForecast,
-  initialTab = "regional",
+  initialTab = "province",
 }: {
   province: IsanProvince;
   forecast: ProvinceForecast;
@@ -35,13 +35,23 @@ export function ForecastTabsShell({
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    setActiveTab(searchParams.get("tab") === "province" ? "province" : "regional");
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "regional") {
+      setActiveTab("regional");
+    } else if (tabParam === "province") {
+      setActiveTab("province");
+    } else if (searchParams.get("province")) {
+      setActiveTab("province");
+    }
   }, [searchParams]);
 
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", tab);
+    if (tab === "province" && !params.get("province")) {
+      params.set("province", province.id);
+    }
     router.replace(`/forecast?${params.toString()}`, { scroll: false });
   };
 
