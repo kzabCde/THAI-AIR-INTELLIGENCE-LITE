@@ -348,7 +348,7 @@ export function RedesignedForecastDashboard({
                   selectedId={province.id}
                   onSelect={(id) => {
                     setPageProvince("forecast", id);
-                    router.push(`/forecast?province=${id}`);
+                    router.push(`/forecast?province=${id}&tab=province`);
                   }}
                 />
               </div>

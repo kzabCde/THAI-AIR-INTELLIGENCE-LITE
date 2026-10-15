@@ -6,9 +6,11 @@ import Link from "next/link";
 export function AnnouncementBanner({
   maxAqi = 0,
   worstProvinceName = "",
+  worstProvinceId,
 }: {
   maxAqi?: number;
   worstProvinceName?: string;
+  worstProvinceId?: string;
 }) {
   const hasAlert = maxAqi > 100;
 
@@ -47,7 +49,7 @@ export function AnnouncementBanner({
       </div>
 
       <Link
-        href="/forecast"
+        href={worstProvinceId ? `/forecast?province=${worstProvinceId}&tab=province` : "/forecast?tab=province"}
         className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-[11px] font-bold text-zinc-700 shadow-sm transition hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
       >
         ดูรายละเอียด

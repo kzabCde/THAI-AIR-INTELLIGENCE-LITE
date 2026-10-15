@@ -199,7 +199,7 @@ export function AiForecastHighlights({
               24 ชั่วโมง · เลื่อนดูได้ →
             </span>
             <Link
-              href={`/forecast?province=${provinceId}`}
+              href={`/forecast?province=${provinceId}&tab=province`}
               className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
             >
               ดูรายละเอียด
@@ -307,7 +307,7 @@ export function AiForecastHighlights({
             พยากรณ์อากาศประจำวัน
           </h3>
           <Link
-            href={`/forecast?province=${provinceId}`}
+            href={`/forecast?province=${provinceId}&tab=province`}
             className="flex items-center gap-0.5 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400"
           >
             ดูรายละเอียด

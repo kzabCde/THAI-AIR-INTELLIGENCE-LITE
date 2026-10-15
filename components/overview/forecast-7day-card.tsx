@@ -31,7 +31,7 @@ export function Forecast7dayCard({ currentAqi = 68 }: { currentAqi?: number }) {
         </div>
 
         <Link
-          href="/forecast"
+          href="/forecast?tab=province"
           className="group inline-flex items-center gap-1 text-xs font-semibold text-purple-600 hover:underline dark:text-purple-400"
         >
           ดูทั้งหมด

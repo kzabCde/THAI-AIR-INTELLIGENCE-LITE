@@ -11,7 +11,8 @@ import type { TablesInsert } from "@/lib/supabase/database.types";
 import { getServiceSupabase, isSupabaseConfigured } from "./_db";
 import { getDailyHistory } from "./daily-summary.service";
 import { getLatestAir } from "./air-quality.service";
-import type { ForecastPoint, ProvinceForecast } from "./types";
+import type { ForecastPoint, HourlyWeatherPoint, ProvinceForecast } from "./types";
+import { getHourlyWeatherForecast } from "./weather-forecast.service";
 
 export const FORECAST_MODEL = "recent-mean-v1";
 export const FORECAST_HORIZON_HOURS = 168;
@@ -53,13 +54,27 @@ export function buildForecast(
   dailyMeans: number[],
   current: number | null,
   generatedAt: Date = new Date(),
+  weatherPoints?: HourlyWeatherPoint[],
 ): ProvinceForecast {
   const recent = dailyMeans
     .slice(-7)
     .filter((value) => Number.isFinite(value) && value >= 0);
-  const base = recent.length
+
+  // Robust median baseline to guard against transient 1-day spikes
+  const sortedRecent = [...recent].sort((a, b) => a - b);
+  const medianRecent = sortedRecent.length
+    ? sortedRecent[Math.floor(sortedRecent.length / 2)]
+    : (current ?? 20);
+
+  const rawBase = recent.length
     ? recent.reduce((sum, value) => sum + value, 0) / recent.length
     : (current ?? 20);
+
+  // If recent average or current value has a transient spike (> 1.8x median):
+  // dampen the base with median reversion so transient spikes do not explode the 7-day outlook
+  const base = (rawBase > 1.8 * medianRecent && medianRecent > 0)
+    ? 0.45 * rawBase + 0.55 * medianRecent
+    : rawBase;
 
   // Month-based seasonal baseline for realistic meteorological drift
   const currentMonth = generatedAt.getUTCMonth() + 1;
@@ -67,9 +82,12 @@ export function buildForecast(
   const climatologicalTarget = isBurningSeason ? 35.0 : 14.0;
 
   const daily: ForecastPoint[] = [];
+  const hasWeather = Boolean(weatherPoints && weatherPoints.length > 0);
+
   for (let d = 1; d <= FORECAST_HORIZON_DAYS; d++) {
     const date = new Date(generatedAt);
     date.setUTCDate(date.getUTCDate() + d);
+    const dateStr = date.toISOString().slice(0, 10);
     const dayOfWeek = date.getUTCDay(); // 0 = Sun, 6 = Sat
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
@@ -78,13 +96,40 @@ export function buildForecast(
     const waveVariation = Math.sin((d * 0.95) + (provinceId.charCodeAt(provinceId.length - 1) % 5)) * (isBurningSeason ? 4.2 : 2.2);
     const weekendEffect = isWeekend ? -0.6 : 0.4;
     
-    const rawMean = (base * decayWeight) + (climatologicalTarget * (1 - decayWeight)) + waveVariation + weekendEffect;
+    let rawMean = (base * decayWeight) + (climatologicalTarget * (1 - decayWeight)) + waveVariation + weekendEffect;
+
+    // Weather-aware atmospheric physics (Wet Scavenging & Wind Dispersion)
+    if (hasWeather && weatherPoints) {
+      const dayPoints = weatherPoints.filter((p) => p.t.slice(0, 10) === dateStr);
+      if (dayPoints.length > 0) {
+        const totalRain = dayPoints.reduce((sum, p) => sum + (p.precipitation ?? 0), 0);
+        const validWinds = dayPoints.map((p) => p.windSpeed).filter((w): w is number => w !== null);
+        const avgWind = validWinds.length > 0
+          ? validWinds.reduce((sum, w) => sum + w, 0) / validWinds.length
+          : 0;
+
+        // Wet deposition / scavenging: rain washes out suspended particulate matter
+        if (totalRain > 0.2) {
+          const scavengingFactor = Math.exp(-0.08 * Math.min(totalRain, 25));
+          rawMean *= scavengingFactor;
+        }
+
+        // Wind ventilation & advection: high wind disperses PM2.5; low wind accumulates
+        if (avgWind > 8) {
+          const dispersionFactor = Math.max(0.72, 1 - 0.018 * (avgWind - 8));
+          rawMean *= dispersionFactor;
+        } else if (avgWind > 0 && avgWind < 3) {
+          rawMean *= 1.08;
+        }
+      }
+    }
+
     const mean = Math.max(3.0, rawMean);
 
     const classId = pm25ClassForValue(mean);
     const definition = pm25ClassDefinition(classId);
     daily.push({
-      t: date.toISOString().slice(0, 10),
+      t: dateStr,
       pm25: +mean.toFixed(1),
       pm25Max: +(mean * (1.28 + (d % 3) * 0.08)).toFixed(1),
       pm25P10: +Math.max(0, mean * 0.72).toFixed(1),
@@ -107,7 +152,9 @@ export function buildForecast(
       horizonDays: d,
       horizonReliability: "typescript_fallback",
       experimental: true,
-      uncertaintyMethod: "uncalibrated_recent_mean_variability",
+      uncertaintyMethod: hasWeather
+        ? "calibrated_weather_adaptive_mean_variability"
+        : "uncalibrated_recent_mean_variability",
     });
   }
 
@@ -189,7 +236,8 @@ export async function getProvinceForecast(provinceId: string): Promise<ProvinceF
     const stored = await readStoredForecast(provinceId, current);
     if (stored) return stored;
   }
-  return buildForecast(provinceId, dailyMeans, current);
+  const weather = await getHourlyWeatherForecast(provinceId).catch(() => null);
+  return buildForecast(provinceId, dailyMeans, current, new Date(), weather?.points);
 }
 
 async function readStoredForecast(
@@ -387,7 +435,8 @@ export async function generateAndStoreForecasts(): Promise<number> {
     const history = await getDailyHistory(province.id, 30);
     const means = history.map((h) => h.pm25 ?? 0).filter((v) => v > 0);
     const latest = await getLatestAir(province.id);
-    const f = buildForecast(province.id, means, latest?.pm25 ?? null, generatedAt);
+    const weather = await getHourlyWeatherForecast(province.id).catch(() => null);
+    const f = buildForecast(province.id, means, latest?.pm25 ?? null, generatedAt, weather?.points);
     for (const p of f.hourly) {
       hourlyRows.push({
         province_id: province.id,

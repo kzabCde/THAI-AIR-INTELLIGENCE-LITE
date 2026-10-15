@@ -75,7 +75,7 @@ export default async function ForecastPage({
         overview={overview}
         regionalForecast={regionalForecast}
         weatherForecast={weatherForecast}
-        initialTab={tab === "province" ? "province" : "regional"}
+        initialTab={tab === "regional" ? "regional" : "province"}
       />
     </>
   );

@@ -89,7 +89,11 @@ export function OverviewDashboard({
       <WatchlistAndGoodAir snapshots={overview.snapshots} />
 
       {/* 5. Real Announcement / News Banner */}
-      <AnnouncementBanner maxAqi={maxAqi} worstProvinceName={worstProvinceName} />
+      <AnnouncementBanner
+        maxAqi={maxAqi}
+        worstProvinceName={worstProvinceName}
+        worstProvinceId={overview.worst?.province.id}
+      />
     </div>
   );
 }
