@@ -47,3 +47,13 @@ __pycache__/
 # generated ML artifacts (manifests and native teacher models)
 /training/artifacts/
 /supabase/.temp/
+
+# scratch and dump files
+/scratch/
+/charts/
+canva_*
+all_blocks.json
+all_thai_snippets.txt
+script_*.js
+*.csv
+!.claude/**/*.csv

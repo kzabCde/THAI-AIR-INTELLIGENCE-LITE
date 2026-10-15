@@ -405,12 +405,79 @@ def load_recent_features(sb: Client) -> dict[str, list[dict]]:
     return grouped
 
 
+def _fetch_open_meteo_covariates(
+    sb: Client,
+    start_date: date,
+    end_date: date,
+) -> dict[tuple[str, str], dict]:
+    """Fetch compact multi-location Open-Meteo forecast covariates as fallback."""
+    try:
+        import requests
+        meta = load_province_metadata(sb)
+        if not meta:
+            return {}
+        provinces = [pid for pid in PROVINCE_IDS if pid in meta]
+        if not provinces:
+            return {}
+        lats = ",".join(str(meta[pid]["lat"]) for pid in provinces)
+        lons = ",".join(str(meta[pid]["lon"]) for pid in provinces)
+
+        session = requests.Session()
+        session.trust_env = False  # Avoid invalid local proxy configurations
+        resp = session.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lats,
+                "longitude": lons,
+                "daily": "precipitation_sum,wind_speed_10m_max,temperature_2m_mean",
+                "timezone": "Asia/Bangkok",
+                "forecast_days": 8,
+            },
+            timeout=(3.0, 5.0),
+        )
+        if resp.status_code != 200:
+            return {}
+        payload = resp.json()
+        items = payload if isinstance(payload, list) else [payload]
+
+        result: dict[tuple[str, str], dict] = {}
+        for idx, item in enumerate(items):
+            if idx >= len(provinces):
+                break
+            pid = provinces[idx]
+            daily = item.get("daily") or {}
+            times = daily.get("time") or []
+            precips = daily.get("precipitation_sum") or []
+            winds = daily.get("wind_speed_10m_max") or []
+            temps = daily.get("temperature_2m_mean") or []
+
+            for t_idx, t_str in enumerate(times):
+                if not (start_date.isoformat() <= t_str <= end_date.isoformat()):
+                    continue
+                p_val = float(precips[t_idx]) if t_idx < len(precips) and precips[t_idx] is not None else 0.0
+                w_val = float(winds[t_idx]) if t_idx < len(winds) and winds[t_idx] is not None else 0.0
+                t_val = float(temps[t_idx]) if t_idx < len(temps) and temps[t_idx] is not None else 28.0
+                result[(pid, t_str)] = {
+                    "province_id": pid,
+                    "target_date": t_str,
+                    "forecast_precip_total": p_val,
+                    "forecast_wind_speed_mean": w_val,
+                    "forecast_temp_mean": t_val,
+                    "missingness": {"weather": False, "cams": True},
+                    "source": "open-meteo-live",
+                }
+        return result
+    except Exception:
+        return {}
+
+
 def load_forecast_covariates(
     sb: Client,
     start_date: date,
     end_date: date,
 ) -> dict[tuple[str, str], dict]:
     """Load the newest compact forecast vintage for each province/target day."""
+    result: dict[tuple[str, str], dict] = {}
     try:
         response = (
             sb.table("forecast_covariates_daily")
@@ -429,14 +496,13 @@ def load_forecast_covariates(
             .limit(len(PROVINCE_IDS) * 7 * 2)
             .execute()
         )
+        for row in response.data or []:
+            key = (str(row["province_id"]), str(row["target_date"]))
+            result.setdefault(key, row)
     except Exception:
-        # Backward-compatible deployment order: the current feature contract
-        # can continue serving while the new migration is applied.
-        return {}
-    result: dict[tuple[str, str], dict] = {}
-    for row in response.data or []:
-        key = (str(row["province_id"]), str(row["target_date"]))
-        result.setdefault(key, row)
+        pass
+    if not result:
+        result = _fetch_open_meteo_covariates(sb, start_date, end_date)
     return result
 
 
@@ -1035,6 +1101,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
         if direct_horizon:
             origin_date = as_of + timedelta(days=source_gap_days)
             for forecast_horizon in range(1, horizon + 1):
+                covariate = forecast_covariates.get((
+                    province_id,
+                    (origin_date + timedelta(days=forecast_horizon)).isoformat(),
+                ))
                 features = build_feature_vector(
                     last_row,
                     rolling,
@@ -1043,10 +1113,7 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     province_id=province_id,
                     province_metadata=province_metadata,
                     forecast_horizon_days=forecast_horizon,
-                    forecast_covariates=forecast_covariates.get((
-                        province_id,
-                        (origin_date + timedelta(days=forecast_horizon)).isoformat(),
-                    )),
+                    forecast_covariates=covariate,
                 )
                 prediction = float(np.clip(_predict_model(
                     model_name,
@@ -1059,6 +1126,25 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     legacy_base_models=legacy_base_models,
                     runtime_artifact=regression_tree,
                 ), 1.0, 500.0))
+
+                # Atmospheric Wet Scavenging & Wind Dispersion post-correction
+                if covariate:
+                    precip = _fval(covariate, "forecast_precip_total", 0.0)
+                    wind = _fval(covariate, "forecast_wind_speed_mean", 0.0)
+                    if precip > 0.2:
+                        prediction *= math.exp(-0.08 * min(precip, 25.0))
+                    if wind > 8.0:
+                        prediction *= max(0.72, 1.0 - 0.018 * (wind - 8.0))
+                    elif 0.0 < wind < 3.0:
+                        prediction = min(500.0, prediction * 1.08)
+                elif len(rolling) >= 7:
+                    roll7 = float(np.mean(rolling[-7:]))
+                    roll_med = float(np.median(rolling[-7:]))
+                    if roll7 > 0 and rolling[-1] > 1.8 * roll7 and prediction > 1.4 * roll7:
+                        damping_weight = max(0.4, 1.0 / (1.0 + 0.15 * forecast_horizon))
+                        prediction = damping_weight * prediction + (1.0 - damping_weight) * roll_med
+
+                prediction = float(np.clip(prediction, 1.0, 500.0))
                 predictions_to_emit.append((
                     forecast_horizon,
                     origin_date,
@@ -1071,6 +1157,10 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
             for recursive_step in range(1, total_recursive_steps + 1):
                 feature_date = as_of + timedelta(days=recursive_step - 1)
                 target_date = as_of + timedelta(days=recursive_step)
+                covariate = forecast_covariates.get((
+                    province_id,
+                    target_date.isoformat(),
+                ))
                 features = build_feature_vector(
                     last_row,
                     rolling,
@@ -1079,10 +1169,7 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     province_id=province_id,
                     province_metadata=province_metadata,
                     forecast_horizon_days=1,
-                    forecast_covariates=forecast_covariates.get((
-                        province_id,
-                        target_date.isoformat(),
-                    )),
+                    forecast_covariates=covariate,
                 )
                 prediction = float(np.clip(_predict_model(
                     model_name,
@@ -1095,6 +1182,24 @@ def make_forecasts(sb: Client, horizon: int = 7) -> list[dict]:
                     legacy_base_models=legacy_base_models,
                     runtime_artifact=regression_tree,
                 ), 1.0, 500.0))
+
+                # Atmospheric Wet Scavenging & Wind Dispersion post-correction
+                if covariate:
+                    precip = _fval(covariate, "forecast_precip_total", 0.0)
+                    wind = _fval(covariate, "forecast_wind_speed_mean", 0.0)
+                    if precip > 0.2:
+                        prediction *= math.exp(-0.08 * min(precip, 25.0))
+                    if wind > 8.0:
+                        prediction *= max(0.72, 1.0 - 0.018 * (wind - 8.0))
+                    elif 0.0 < wind < 3.0:
+                        prediction = min(500.0, prediction * 1.08)
+                elif len(rolling) >= 7:
+                    roll7 = float(np.mean(rolling[-7:]))
+                    roll_med = float(np.median(rolling[-7:]))
+                    if roll7 > 0 and rolling[-1] > 1.8 * roll7 and prediction > 1.4 * roll7:
+                        prediction = 0.5 * prediction + 0.5 * roll_med
+
+                prediction = float(np.clip(prediction, 1.0, 500.0))
                 rolling.append(prediction)
                 if target_date <= bangkok_today:
                     continue
