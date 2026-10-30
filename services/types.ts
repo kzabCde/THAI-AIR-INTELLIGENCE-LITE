@@ -177,6 +177,18 @@ export type CronLog = {
   recordsIn: number | null;
   recordsOut: number | null;
   errorMsg: string | null;
+  meta?: Record<string, unknown> | null;
+};
+
+export type ModelActivationSummary = {
+  activationId: string;
+  runId: string;
+  status: string;
+  appliedAt: string | null;
+  rolledBackAt: string | null;
+  activated: number;
+  held: number;
+  fallback: number;
 };
 
 export type DataFreshness = {
