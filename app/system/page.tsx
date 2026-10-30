@@ -3,7 +3,7 @@ import { CheckCircle2, Clock, Database, XCircle, Timer, ArrowDownToLine, ArrowUp
 import { fmtNumber, fmtDateTimeTh } from "@/lib/format";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
-import { getCronLogs, getDataFreshness, getModelStatuses, getSyncJobs } from "@/services/system.service";
+import { getCronLogs, getDataFreshness, getModelStatuses, getModelActivations, getSyncJobs } from "@/services/system.service";
 import { isNetworkRestrictedError } from "@/services/_db";
 import { Section, CardHeader } from "@/components/ui/card";
 import { NotConfiguredState, ErrorState, NetworkRestrictedState, EmptyState } from "@/components/ui/states";
@@ -21,6 +21,7 @@ const JOB_LABELS: Record<string, string> = {
   daily_pipeline: "ประมวลผลรายวัน (01:30 น.)",
   daily_cleanup: "ล้างข้อมูลเก่า (ในรอบ 01:30 น.)",
   model_retrain: "เทรนโมเดล (สั่งรันด้วยตนเอง)",
+  model_promotion: "คัดเลือกและเปิดใช้โมเดลรายจังหวัด",
   forecast_generate: "สร้างพยากรณ์สำรอง (ไม่รันอัตโนมัติ)",
   ml_forecast: "พยากรณ์ ML (หลังรอบ 01:30 น.)",
 };
@@ -59,13 +60,14 @@ function LifecycleBadge({ lifecycle }: { lifecycle: "validated" | "legacy" | "fa
 
 export default async function SystemPage() {
   if (!isSupabaseConfigured) return <NotConfiguredState />;
-  let jobs, cronLogs, freshness, modelStatuses;
+  let jobs, cronLogs, freshness, modelStatuses, activations;
   try {
-    [jobs, cronLogs, freshness, modelStatuses] = await Promise.all([
+    [jobs, cronLogs, freshness, modelStatuses, activations] = await Promise.all([
       getSyncJobs(),
       getCronLogs(20),
       getDataFreshness(),
       getModelStatuses(),
+      getModelActivations(),
     ]);
   } catch (err) {
     console.error("[system] load error:", err);
@@ -287,6 +289,49 @@ export default async function SystemPage() {
               {fmtNumber(latestDailyRows + latestMlRows)} แถว
             </p>
           </div>
+        </div>
+      </Section>
+
+      <Section
+        title="ประวัติการเปิดใช้โมเดล (Activation Audit)"
+        description="ข้อมูลจาก Supabase Activation Contract เดียวกับ Cron และระบบพยากรณ์"
+      >
+        <div className="card overflow-x-auto">
+          {activations.length === 0 ? (
+            <div className="card-pad"><EmptyState description="ยังไม่มีประวัติการเปิดใช้โมเดล" /></div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="muted border-b border-border text-left text-xs">
+                  <th className="px-4 py-2.5 font-medium">Run ID</th>
+                  <th className="px-4 py-2.5 font-medium">สถานะ</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Activate</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Hold</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Fallback</th>
+                  <th className="px-4 py-2.5 text-right font-medium">เวลา</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activations.map((entry) => (
+                  <tr key={entry.activationId} className="border-b border-border/60 last:border-0">
+                    <td className="px-4 py-2.5 font-mono text-xs" title={entry.runId}>{entry.runId.slice(0, 8)}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-1.5">
+                        <StatusDot status={entry.status === "applied" ? "success" : "error"} />
+                        {entry.status === "rolled_back" ? "ย้อนกลับแล้ว" : "เปิดใช้แล้ว"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{entry.activated}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{entry.held}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{entry.fallback}</td>
+                    <td className="muted px-4 py-2.5 text-right text-xs">
+                      {fmtDateTimeTh(entry.rolledBackAt ?? entry.appliedAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </Section>
 
