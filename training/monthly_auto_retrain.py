@@ -35,6 +35,11 @@ from training.dual_model_config import (
 )
 from training.pm25_classes import CLASS_IDS
 from training.promotion_policy import POLICY_VERSION, decide_promotion
+from training.selective_activation import build_selective_activation_plan
+from training.v5_7_5_activation_contract import (
+    apply_activation_plan, preflight_activation_plan, rollback_activation,
+)
+from api.ml.forecast import make_forecasts
 from training.supabase_large_artifact_upload import make_free_plan_upload_and_register
 from training.train_dual_models import _json_safe, classification_metrics, regression_metrics
 from training.train_pooled_models import (
@@ -151,137 +156,123 @@ def _regression_baseline(rows: pd.DataFrame) -> tuple[np.ndarray, dict]:
 
 
 def _evaluate_active_champion(sb, split) -> dict:
+    """Evaluate any existing active models on the SAME operational D+1 holdout.
+
+    Unlike the retired all-or-nothing policy, 18 regression / 0 classifier
+    champions is a valid production state. An unverifiable champion is held,
+    never silently replaced. No test labels are used to train a model here.
+    """
     active = load_active_task_models(sb)
     if set(active) != {"regression", "classification"}:
-        raise RuntimeError("active dual-model task set is incomplete")
-    if len(active["regression"]) != REQUIRED_PROVINCES or len(active["classification"]) != REQUIRED_PROVINCES:
-        raise RuntimeError("Production does not have exactly 20 active rows for each task")
-
-    active_run_ids = {
-        str(row.get("run_id"))
-        for task_rows in active.values()
-        for row in task_rows.values()
-    }
-    if len(active_run_ids) != 1:
-        raise RuntimeError(
-            "active Regression/Classification rows do not share one run: "
-            f"{active_run_ids}"
-        )
-    if any(
-        row.get("feature_version") != POOLED_FEATURE_VERSION
-        for task_rows in active.values()
-        for row in task_rows.values()
-    ):
-        raise RuntimeError("active model feature version differs from the monthly challenger")
-
-    test_rows = split.test.copy()
-    d1 = test_rows[test_rows["forecast_horizon_days"] == 1].copy()
-    runtime_cache: dict[str, dict] = {}
-    regression_predictions = np.full(len(test_rows), np.nan, dtype=float)
-    province_metrics: dict[str, dict] = {}
-    for province_id in POOLED_PROVINCE_IDS:
-        mask = test_rows["province_id"].to_numpy() == province_id
-        rows = test_rows.loc[mask]
-        row = active["regression"][province_id]
-        artifact = load_runtime_artifact(sb, row, runtime_cache)
-        if artifact is None:
-            raise RuntimeError(f"active regression runtime unavailable for {province_id}")
-        X = rows.loc[:, POOLED_FEATURE_COLUMNS].to_numpy(dtype=float)
-        predictions = np.asarray(
-            [evaluate_lightgbm_regressor(vector, artifact) for vector in X],
-            dtype=float,
-        )
-        regression_predictions[mask] = predictions
-        local_d1 = rows[rows["forecast_horizon_days"] == 1]
-        local_d1_predictions = predictions[
-            rows["forecast_horizon_days"].to_numpy(dtype=int) == 1
-        ]
-        local = regression_metrics(
-            local_d1["target_pm25"].to_numpy(dtype=float),
-            local_d1_predictions,
-        )
-        _, baseline = _regression_baseline(local_d1)
-        local["skill_vs_persistence"] = 1.0 - local["mae"] / baseline["mae"]
-        province_metrics[province_id] = local
-    if not np.all(np.isfinite(regression_predictions)):
-        raise RuntimeError("active regression evaluation produced incomplete predictions")
-
-    horizons = test_rows["forecast_horizon_days"].to_numpy(dtype=int)
-    d1_mask = horizons == 1
-    regression = regression_metrics(
-        d1["target_pm25"].to_numpy(dtype=float), regression_predictions[d1_mask]
-    )
-    _, baseline = _regression_baseline(d1)
-    regression["skill_vs_persistence"] = 1.0 - regression["mae"] / baseline["mae"]
-    regression_all = regression_metrics(
-        test_rows["target_pm25"].to_numpy(dtype=float),
-        regression_predictions,
-    )
-    _, baseline_all = _regression_baseline(test_rows)
-    regression_all["skill_vs_persistence"] = (
-        1.0 - regression_all["mae"] / baseline_all["mae"]
-        if baseline_all["mae"] > 0
-        else 0.0
-    )
-    regression["all_horizons"] = regression_all
-    regression["by_horizon"] = {}
-    for horizon in DIRECT_HORIZONS:
-        mask = horizons == horizon
-        metrics = regression_metrics(
-            test_rows.loc[mask, "target_pm25"].to_numpy(dtype=float),
-            regression_predictions[mask],
-        )
-        _, horizon_baseline = _regression_baseline(test_rows.loc[mask])
-        metrics["baseline_mae"] = horizon_baseline["mae"]
-        metrics["skill_vs_persistence"] = (
-            1.0 - metrics["mae"] / horizon_baseline["mae"]
-            if horizon_baseline["mae"] > 0
-            else 0.0
-        )
-        regression["by_horizon"][str(horizon)] = metrics
-
-    classifier_rows = list(active["classification"].values())
-    runtime_keys = {
-        (row.get("runtime_artifact_uri"), row.get("runtime_artifact_sha256"))
-        for row in classifier_rows
-    }
-    if len(runtime_keys) != 1:
-        raise RuntimeError("active pooled classifier rows do not reference one runtime")
-    classifier_artifact = load_runtime_artifact(sb, classifier_rows[0], runtime_cache)
-    if classifier_artifact is None:
-        raise RuntimeError("active classifier runtime unavailable")
-    X_classifier = d1.loc[:, POOLED_FEATURE_COLUMNS].to_numpy(dtype=float)
-    probability_rows = [
-        evaluate_random_forest_classifier(vector, classifier_artifact, class_ids=CLASS_IDS)
-        for vector in X_classifier
-    ]
-    probabilities = np.asarray(
-        [[row[str(class_id)] for class_id in CLASS_IDS] for row in probability_rows],
-        dtype=float,
-    )
-    predictions = np.asarray(CLASS_IDS)[np.argmax(probabilities, axis=1)]
-    classification = classification_metrics(
-        d1["target_air_quality_class"].to_numpy(dtype=int),
-        predictions,
-        probabilities,
-    )
+        raise RuntimeError("unexpected active task response shape")
+    d1 = split.test.loc[split.test["forecast_horizon_days"] == 1].copy()
+    scores: dict[str, dict[str, dict]] = {"regression": {}, "classification": {}}
+    cache: dict[str, dict] = {}
+    for task in ("regression", "classification"):
+        for province_id, row in active[task].items():
+            # Without a comparable feature contract the incumbent must be held.
+            if row.get("feature_version") != POOLED_FEATURE_VERSION:
+                continue
+            sample = d1.loc[d1["province_id"] == province_id]
+            if len(sample) != POOLED_TEST_DAYS:
+                continue
+            try:
+                artifact = load_runtime_artifact(sb, row, cache)
+                if artifact is None:
+                    continue
+                features = sample.loc[:, POOLED_FEATURE_COLUMNS].to_numpy(dtype=float)
+                if task == "regression":
+                    predicted = [
+                        evaluate_lightgbm_regressor(vector, artifact)
+                        for vector in features
+                    ]
+                    metric = regression_metrics(
+                        sample["target_pm25"].to_numpy(dtype=float),
+                        np.asarray(predicted, dtype=float),
+                    )
+                else:
+                    probability_rows = [
+                        evaluate_random_forest_classifier(
+                            vector, artifact, class_ids=CLASS_IDS
+                        )
+                        for vector in features
+                    ]
+                    probability = np.asarray(
+                        [[p[str(class_id)] for class_id in CLASS_IDS] for p in probability_rows],
+                        dtype=float,
+                    )
+                    predicted = np.asarray(CLASS_IDS)[np.argmax(probability, axis=1)]
+                    metric = classification_metrics(
+                        sample["target_air_quality_class"].to_numpy(dtype=int),
+                        predicted, probability,
+                    )
+                metric["same_holdout"] = True
+                metric["test_rows"] = len(sample)
+                scores[task][province_id] = metric
+            except (TypeError, ValueError, KeyError, RuntimeError) as error:
+                # Cannot prove superiority: keep the previous active model.
+                print({"champion_comparison_unavailable": province_id,
+                       "task": task, "reason": str(error)[:200]})
+    run_ids = sorted({
+        str(row.get("run_id")) for group in active.values()
+        for row in group.values() if row.get("run_id")
+    })
     return {
-        "run_id": next(iter(active_run_ids)),
-        "regression": regression,
-        "regression_by_province": province_metrics,
-        "classification": classification,
+        "run_id": run_ids[0] if len(run_ids) == 1 else "mixed_or_incomplete",
+        "run_ids": run_ids,
+        "active": active,
+        "scores": scores,
+        "comparison_window": {
+            "start": str(d1["date"].min().date()),
+            "end": str(d1["date"].max().date()),
+            "rows": len(d1),
+        },
     }
 
 
-def _candidate_ready(regression, classification) -> bool:
-    return bool(
-        regression.global_eligible
-        and len(regression.province_metrics) == REQUIRED_PROVINCES
-        and all(bool(metrics.get("eligible")) for metrics in regression.province_metrics.values())
-        and classification.global_eligible
-        and len(classification.province_metrics) == REQUIRED_PROVINCES
-        and all(bool(metrics.get("eligible")) for metrics in classification.province_metrics.values())
-    )
+def _localize_regression_eligibility(regression, registry_rows: list[dict]) -> None:
+    """Relax ONLY the obsolete 20/20 aggregate gate, never any numeric gate.
+
+    Any non-provincial global failure keeps all candidates ineligible.
+    Each province still needs its original local eligibility and strict Skill.
+    """
+    global_blockers = [
+        str(reason) for reason in regression.global_reasons
+        if not str(reason).startswith("province_gate_failed:")
+        and not str(reason).startswith("warning:")
+    ]
+    for row in registry_rows:
+        if row["task_type"] != "regression":
+            continue
+        local = regression.province_metrics[row["province_id"]]
+        skill = float(local.get("skill_vs_persistence") or 0.0)
+        good = (
+            not global_blockers
+            and bool(local.get("local_eligible", local.get("eligible")))
+            and np.isfinite(skill)
+            and skill >= 0.045
+            and int(row.get("test_rows") or 0) >= POOLED_TEST_DAYS
+        )
+        row["eligibility_status"] = bool(good)
+        row["evidence_status"] = "validated" if good else "ineligible"
+        row["eligibility_reason"] = (
+            "selective_local_strict_gate_pass"
+            if good else "selective_local_or_aggregate_gate_failed"
+        )
+
+
+def _record_promotion_log(sb, *, run_id: str, status: str, meta: dict) -> None:
+    """Use the SAME cron_log feed already exposed by /api/system-status."""
+    now = datetime.now(timezone.utc).isoformat()
+    sb.table("cron_log").insert({
+        "job_name": "model_promotion",
+        "started_at": now,
+        "finished_at": now,
+        "status": status,
+        "records_in": 40,
+        "records_out": int(meta.get("activation_count") or 0),
+        "meta": {**meta, "run_id": run_id, "pipeline": "monthly_auto_retrain"},
+    }).execute()
 
 
 def main() -> int:
@@ -319,22 +310,10 @@ def main() -> int:
     regression = train_regression(split, config)
     classification = train_classification(split, config)
     classification_policy = _classification_deployment_gate(classification, split)
-    candidate_ready = _candidate_ready(regression, classification)
     champion = _evaluate_active_champion(sb, split)
-    decision = decide_promotion(
-        candidate_regression=regression.test_metrics,
-        champion_regression=champion["regression"],
-        candidate_classification=classification.test_metrics,
-        champion_classification=champion["classification"],
-        candidate_regression_provinces=regression.province_metrics,
-        champion_regression_provinces=champion["regression_by_province"],
-        candidate_ready=candidate_ready,
-        required_provinces=REQUIRED_PROVINCES,
-    )
-
     run_id = str(uuid.uuid4())
     audit = {
-        "strategy": "monthly_fresh_champion_challenger_db_only",
+        "strategy": "existing_monthly_pipeline_selective_activation",
         "promotion_policy": POLICY_VERSION,
         "pool_provinces": list(POOLED_PROVINCE_IDS),
         "feature_version": POOLED_FEATURE_VERSION,
@@ -342,82 +321,104 @@ def main() -> int:
         "target_source": "Supabase training_daily_summary_v3 only",
         "database_source_of_truth": database_audit,
         "target_horizons": list(DIRECT_HORIZONS),
-        "validated_classification_horizons": [1],
         "same_date_same_partition": True,
         "embargo_days": POOLED_EMBARGO_DAYS,
         "dropped_embargo_dates": split.dropped_embargo_dates,
         "classification_deployment_policy": classification_policy,
-        "regression_auto_promotion_requires_strict_20_of_20": True,
-        "current_champion_run_id": champion["run_id"],
-        "same_holdout_champion_evaluation": True,
-        "monthly_challenger_window_used_for_production_selection": True,
+        "per_province_strict_skill_floor": 0.045,
+        "partial_bootstrap_supported": True,
+        "champion_run_ids": champion["run_ids"],
+        "operational_holdout": champion["comparison_window"],
         "research_reporting_note": (
-            "Monthly challenger windows are operational promotion evidence and do not "
-            "replace the frozen final-test result reported for the capstone model run."
+            "Operational selection on the latest D+1 holdout must not be presented "
+            "as a previously untouched academic final-test result."
         ),
     }
     registry_rows = build_registry_rows(
-        run_id,
-        tuple(POOLED_PROVINCE_IDS),
-        split,
-        regression,
-        classification,
-        audit,
+        run_id, tuple(POOLED_PROVINCE_IDS), split, regression, classification, audit
+    )
+    _localize_regression_eligibility(regression, registry_rows)
+    if not classification_policy["eligible"]:
+        for row in registry_rows:
+            if row["task_type"] == "classification":
+                row["eligibility_status"] = False
+                row["evidence_status"] = "ineligible"
+                row["eligibility_reason"] = "global_classification_deployment_gate_failed"
+    plan, decision = build_selective_activation_plan(
+        POOLED_PROVINCE_IDS, registry_rows, champion["active"], champion["scores"]
     )
     result = PooledResult(
-        run_id,
-        tuple(POOLED_PROVINCE_IDS),
-        split,
-        regression,
-        classification,
-        registry_rows,
-        audit,
+        run_id, tuple(POOLED_PROVINCE_IDS), split, regression, classification,
+        registry_rows, audit,
     )
-
     promoted = False
-    activation_status = "not_requested"
-    if decision["approved"] and not args.dry_run:
-        artifacts = save_artifacts(result, args.artifact_dir, config)
-        free_plan_upload = make_free_plan_upload_and_register(upload_and_register)
-        free_plan_upload(sb, result, artifacts, activate=True)
-        active_after = (
-            sb.table("model_registry")
-            .select("province_id,task_type,run_id,is_active")
-            .eq("run_id", run_id)
-            .eq("is_active", True)
-            .execute()
-            .data
-            or []
-        )
-        if len(active_after) != REQUIRED_PROVINCES * 2:
-            raise RuntimeError(
-                "atomic activation readback expected 40 rows, found "
-                f"{len(active_after)}"
+    activation_status = "dry_run" if args.dry_run else "no_eligible_improvement"
+    activation_id = None
+    preflight = None
+    if decision["activation_count"] and not args.dry_run:
+        try:
+            artifacts = save_artifacts(result, args.artifact_dir, config)
+            free_plan_upload = make_free_plan_upload_and_register(upload_and_register)
+            # Registration must NEVER use the old 40/40 activation RPC.
+            free_plan_upload(sb, result, artifacts, activate=False)
+            preflight = preflight_activation_plan(
+                sb, run_id=run_id, plan=plan, required_provinces=REQUIRED_PROVINCES
             )
-        promoted = True
-        activation_status = "activated"
-    elif decision["approved"]:
-        activation_status = "dry_run_would_activate"
-    else:
-        activation_status = "kept_current_champion"
-
+            applied = apply_activation_plan(
+                sb, run_id=run_id, plan=plan, required_provinces=REQUIRED_PROVINCES
+            )
+            activation_id = applied["activation_id"]
+            # Read-only smoke test BEFORE the existing GH forecast job writes.
+            preview = make_forecasts(sb, horizon=7)
+            if len(preview) != REQUIRED_PROVINCES * 7 or len({
+                row["province_id"] for row in preview
+            }) != REQUIRED_PROVINCES:
+                raise RuntimeError(
+                    f"forecast smoke test expected 140 rows/20 provinces, got {len(preview)}"
+                )
+            promoted = True
+            activation_status = "activated"
+        except Exception as error:
+            activation_status = "activation_failed"
+            if activation_id:
+                try:
+                    rollback_activation(sb, activation_id=str(activation_id))
+                    activation_status = "rolled_back_after_smoke_failure"
+                except Exception as rollback_error:
+                    activation_status = "rollback_failed"
+                    print({"rollback_error": str(rollback_error)[:300]})
+            try:
+                _record_promotion_log(
+                    sb, run_id=run_id, status="error",
+                    meta={**decision, "activation_status": activation_status,
+                          "activation_id": activation_id, "error": str(error)[:300]},
+                )
+            except Exception as log_error:
+                print({"promotion_log_error": str(log_error)[:300]})
+            raise
+    if not args.dry_run:
+        _record_promotion_log(
+            sb, run_id=run_id, status="success",
+            meta={**decision, "activation_status": activation_status,
+                  "activation_id": activation_id, "preflight": preflight},
+        )
     summary = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "dry_run": bool(args.dry_run),
         "promoted": promoted,
+        "activation_id": activation_id,
         "activation_status": activation_status,
-        "candidate_ready": candidate_ready,
+        "candidate_ready": decision["activation_count"] > 0,
         "champion_run_id": champion["run_id"],
         "candidate": {
             "regression": regression.test_metrics,
             "classification": classification.test_metrics,
         },
-        "champion_on_same_holdout": {
-            "regression": champion["regression"],
-            "classification": champion["classification"],
-        },
+        "champion_on_same_holdout": champion["scores"],
         "promotion": decision,
+        "activation_plan": plan,
+        "preflight": preflight,
         "audit": audit,
     }
     run_dir = args.artifact_dir / run_id
