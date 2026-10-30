@@ -29,6 +29,8 @@ jobs:
       run_id: ${{ steps.monthly.outputs.run_id }}
       champion_run_id: ${{ steps.monthly.outputs.champion_run_id }}
       activation_status: ${{ steps.monthly.outputs.activation_status }}
+      activation_id: ${{ steps.monthly.outputs.activation_id }}
+      promoted_slots: ${{ steps.monthly.outputs.promoted_slots }}
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -52,7 +54,7 @@ jobs:
             echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1;
           }
 
-      - name: Fresh DB-only v6 D+1-D+7 train, evaluate, safe promote
+      - name: Fresh DB-only v6 D+1-D+7 train, selective evaluate and safe promote
         id: monthly
         shell: bash
         run: |
@@ -70,6 +72,8 @@ jobs:
           print(f"run_id={payload['run_id']}")
           print(f"champion_run_id={payload['champion_run_id']}")
           print(f"activation_status={payload['activation_status']}")
+          print(f"activation_id={payload.get('activation_id') or ''}")
+          print(f"promoted_slots={payload['promotion']['activation_count']}")
           PY
 
       - name: Upload monthly audit evidence
@@ -99,10 +103,10 @@ jobs:
             echo "- LightGBM correction strength is selected independently for D+1 through D+7."
             echo "- Province-local and regional pooled regressors compete on Validation only."
             echo "- Random Forest tuning emphasizes Classes 2–3 while guarding Classes 4–5."
-            echo "- Regression auto-promotion requires strict 20/20 eligibility."
+            echo "- Regression and classifier eligibility is checked independently for each province."\n            echo "- Active champions remain unless a same-holdout challenger wins."\n            echo "- Missing active models continue to use the existing fallback."\n            echo "- Selected slots: \`${{ steps.monthly.outputs.promoted_slots }}\`."\n            echo "- Atomic activation ID: \`${{ steps.monthly.outputs.activation_id }}\`."
             echo "- Classification must pass the reviewed absolute deployment thresholds."
-            echo "- Champion and challenger are compared on the same latest 365-day D+1–D+7 holdout."
-            echo "- Activation is atomic; a rejected challenger makes no Registry/Storage write."
+            echo "- Champion and challenger are compared on matched D+1 operational holdout rows."
+            echo "- Selected candidates are registered inactive first, then preflighted and activated atomically."\n            echo "- No selected candidates means no Registry/Storage mutation; Cron Log records that decision."
           } >> "$GITHUB_STEP_SUMMARY"
 
   forecast-after-promotion:
