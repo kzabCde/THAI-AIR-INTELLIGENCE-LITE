@@ -1,4 +1,5 @@
 import type { AqiBand } from "@/lib/aqi";
+import type { Json } from "@/lib/supabase/database.types";
 import type { IsanProvince } from "@/lib/isan";
 import type { PM25ClassId } from "@/lib/pm25-classification";
 
@@ -177,7 +178,7 @@ export type CronLog = {
   recordsIn: number | null;
   recordsOut: number | null;
   errorMsg: string | null;
-  meta?: Record<string, unknown> | null;
+  meta?: Json | null;
 };
 
 export type ModelActivationSummary = {
