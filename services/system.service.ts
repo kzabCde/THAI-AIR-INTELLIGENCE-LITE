@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getServiceSupabase, isSupabaseConfigured } from "./_db";
-import type { CronLog, DataFreshness, ModelStatus, SyncJob } from "./types";
+import type { CronLog, DataFreshness, ModelActivationSummary, ModelStatus, SyncJob } from "./types";
 
 export async function getSyncJobs(): Promise<SyncJob[]> {
   if (!isSupabaseConfigured) return [];
@@ -40,7 +40,32 @@ export async function getCronLogs(limit = 20): Promise<CronLog[]> {
     recordsIn: r.records_in,
     recordsOut: r.records_out,
     errorMsg: r.error_msg,
+    meta: r.meta ?? null,
   }));
+}
+
+/** Latest atomic activation receipts, including restored rollbacks. */
+export async function getModelActivations(limit = 5): Promise<ModelActivationSummary[]> {
+  if (!isSupabaseConfigured) return [];
+  const { data, error } = await getServiceSupabase()
+    .from("model_activation_audit")
+    .select("activation_id,candidate_run_id,status,plan,applied_at,rolled_back_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map((row) => {
+    const actions = Array.isArray(row.plan) ? row.plan as Array<{ action?: string }> : [];
+    return {
+      activationId: row.activation_id,
+      runId: row.candidate_run_id,
+      status: row.status,
+      appliedAt: row.applied_at,
+      rolledBackAt: row.rolled_back_at,
+      activated: actions.filter((a) => a.action === "activate_candidate").length,
+      held: actions.filter((a) => a.action === "hold_previous").length,
+      fallback: actions.filter((a) => a.action?.startsWith("deactivate_to_")).length,
+    };
+  });
 }
 
 /** Active serving model plus the latest candidate for each province/task. */
