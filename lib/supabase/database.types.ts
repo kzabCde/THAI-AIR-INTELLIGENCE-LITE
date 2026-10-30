@@ -789,6 +789,51 @@ export type Database = {
         }
         Relationships: []
       }
+      model_activation_audit: {
+        Row: {
+          activation_id: string
+          candidate_run_id: string
+          contract_version: string
+          status: string
+          plan: Json
+          preflight: Json
+          before_state: Json
+          after_state: Json
+          rollback_state: Json | null
+          created_at: string
+          applied_at: string
+          rolled_back_at: string | null
+        }
+        Insert: {
+          activation_id?: string
+          candidate_run_id: string
+          contract_version: string
+          status?: string
+          plan: Json
+          preflight: Json
+          before_state: Json
+          after_state: Json
+          rollback_state?: Json | null
+          created_at?: string
+          applied_at?: string
+          rolled_back_at?: string | null
+        }
+        Update: {
+          activation_id?: string
+          candidate_run_id?: string
+          contract_version?: string
+          status?: string
+          plan?: Json
+          preflight?: Json
+          before_state?: Json
+          after_state?: Json
+          rollback_state?: Json | null
+          created_at?: string
+          applied_at?: string
+          rolled_back_at?: string | null
+        }
+        Relationships: []
+      }
       model_artifacts: {
         Row: {
           artifact_id: string
