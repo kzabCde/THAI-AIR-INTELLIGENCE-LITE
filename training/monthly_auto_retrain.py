@@ -238,7 +238,8 @@ def _localize_regression_eligibility(regression, registry_rows: list[dict]) -> N
     """
     global_blockers = [
         str(reason) for reason in regression.global_reasons
-        if not str(reason).startswith("province_gate_failed:")
+        if str(reason) != "eligible"
+        and not str(reason).startswith("province_gate_failed:")
         and not str(reason).startswith("warning:")
     ]
     for row in registry_rows:
@@ -338,7 +339,10 @@ def main() -> int:
         run_id, tuple(POOLED_PROVINCE_IDS), split, regression, classification, audit
     )
     _localize_regression_eligibility(regression, registry_rows)
-    if not classification_policy["eligible"]:
+    if not (
+        classification_policy["eligible"]
+        and classification_policy["training_gate_eligible"]
+    ):
         for row in registry_rows:
             if row["task_type"] == "classification":
                 row["eligibility_status"] = False
