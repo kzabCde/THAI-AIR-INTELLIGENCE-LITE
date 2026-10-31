@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Monthly champion/challenger retraining from Supabase only.
 
+
 The historical Open-Meteo/CAMS archive is persisted once in Supabase with
 request-level source lineage. This scheduled retraining path performs no
 Open-Meteo archive requests and has no archive cache dependency. It trains a
@@ -10,18 +11,25 @@ promotes atomically only when the configured promotion policy approves it.
 """
 from __future__ import annotations
 
+
 import argparse
 import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+
 import numpy as np
 import pandas as pd
+
 
 from api.ml.forecast import load_active_task_models, load_runtime_artifact
 from api.ml.portable_trees import evaluate_lightgbm_regressor, evaluate_random_forest_classifier
 from training.db_training_data import prepare_db_training_data
+from training.balanced_activation_policy_v1 import (
+    POLICY_VERSION as BALANCED_POLICY_VERSION,
+    decide_regression_candidate,
+)
 from training.dual_model_config import (
     POOLED_EMBARGO_DAYS,
     POOLED_FEATURE_COLUMNS,
@@ -51,6 +59,7 @@ from training.train_pooled_models import (
     upload_and_register,
 )
 
+
 REQUIRED_PROVINCES = 20
 CLASSIFICATION_DEPLOYMENT_THRESHOLDS = {
     "validation_macro_f1": 0.45,
@@ -64,6 +73,8 @@ CLASSIFICATION_DEPLOYMENT_THRESHOLDS = {
 }
 
 
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-dir", type=Path, default=Path("training/artifacts"))
@@ -73,6 +84,8 @@ def parse_args() -> argparse.Namespace:
         help="train/compare but never write Registry/Storage",
     )
     return parser.parse_args()
+
+
 
 
 def _classification_deployment_gate(classification, split) -> dict:
@@ -121,6 +134,7 @@ def _classification_deployment_gate(classification, split) -> dict:
     if len(split.dropped_embargo_dates) != 2 * POOLED_EMBARGO_DAYS:
         reasons.append("embargo_dates_not_14")
 
+
     training_gate_eligible = bool(classification.global_eligible)
     training_gate_reasons = list(classification.global_reasons)
     deployment_eligible = not reasons
@@ -144,10 +158,14 @@ def _classification_deployment_gate(classification, split) -> dict:
     }
 
 
+
+
 def _regression_baseline(rows: pd.DataFrame) -> tuple[np.ndarray, dict]:
     truth = rows["target_pm25"].to_numpy(dtype=float)
     prediction = rows["pm25_mean"].to_numpy(dtype=float)
     return prediction, regression_metrics(truth, prediction)
+
+
 
 
 def _evaluate_active_champion(sb, split) -> dict:
@@ -156,6 +174,7 @@ def _evaluate_active_champion(sb, split) -> dict:
         raise RuntimeError("active dual-model task set is incomplete")
     if len(active["regression"]) != REQUIRED_PROVINCES or len(active["classification"]) != REQUIRED_PROVINCES:
         raise RuntimeError("Production does not have exactly 20 active rows for each task")
+
 
     active_run_ids = {
         str(row.get("run_id"))
@@ -173,6 +192,7 @@ def _evaluate_active_champion(sb, split) -> dict:
         for row in task_rows.values()
     ):
         raise RuntimeError("active model feature version differs from the monthly challenger")
+
 
     test_rows = split.test.copy()
     d1 = test_rows[test_rows["forecast_horizon_days"] == 1].copy()
@@ -205,6 +225,7 @@ def _evaluate_active_champion(sb, split) -> dict:
         province_metrics[province_id] = local
     if not np.all(np.isfinite(regression_predictions)):
         raise RuntimeError("active regression evaluation produced incomplete predictions")
+
 
     horizons = test_rows["forecast_horizon_days"].to_numpy(dtype=int)
     d1_mask = horizons == 1
@@ -240,6 +261,7 @@ def _evaluate_active_champion(sb, split) -> dict:
         )
         regression["by_horizon"][str(horizon)] = metrics
 
+
     classifier_rows = list(active["classification"].values())
     runtime_keys = {
         (row.get("runtime_artifact_uri"), row.get("runtime_artifact_sha256"))
@@ -273,6 +295,96 @@ def _evaluate_active_champion(sb, split) -> dict:
     }
 
 
+
+
+def _balanced_province_regression_preview(sb, split, regression, province_ids) -> dict:
+    """One-window candidate-vs-baseline and active Champion; read-only.
+
+    This does not claim canonical source parity. QA must be verified by the
+    separate production reconciliation audit before any registration/activation.
+    """
+    rows = split.validation.loc[split.validation["forecast_horizon_days"].eq(1)].copy()
+    predictions = np.asarray(regression.validation_predictions, dtype=float)[
+        split.validation["forecast_horizon_days"].eq(1).to_numpy()
+    ]
+    if len(rows) != len(predictions) or not np.all(np.isfinite(predictions)):
+        raise RuntimeError("Regression validation D+1 predictions are incomplete")
+    active_rows = (
+        sb.table("model_registry")
+        .select("province_id,task_type,feature_version,train_end,eligibility_status,"
+                "evidence_status,runtime_artifact_uri,runtime_artifact_sha256")
+        .eq("is_active", True).eq("task_type", "regression")
+        .execute().data or []
+    )
+    active = {str(row["province_id"]): row for row in active_rows}
+    if len(active) != len(active_rows):
+        raise RuntimeError("Duplicate active regression models")
+    runtime_cache = {}
+    decisions = {}
+    for province_id in province_ids:
+        mask = rows["province_id"].eq(province_id).to_numpy()
+        local = rows.loc[mask]
+        truth = local["target_pm25"].to_numpy(dtype=float)
+        baseline = local["pm25_mean"].to_numpy(dtype=float)
+        candidate = predictions[mask]
+        mae = float(np.mean(np.abs(truth - candidate)))
+        baseline_mae = float(np.mean(np.abs(truth - baseline)))
+        skill = 1 - mae / baseline_mae if baseline_mae > 0 else float("nan")
+        severe_mask = truth > 37.5
+        severe_support = int(severe_mask.sum())
+        severe_mae = float(np.mean(np.abs(truth[severe_mask] - candidate[severe_mask]))) if severe_support else None
+        severe_base = float(np.mean(np.abs(truth[severe_mask] - baseline[severe_mask]))) if severe_support else None
+        champion = active.get(province_id)
+        champion_mae = None
+        champion_compare_error = None
+        if champion is not None:
+            try:
+                if champion.get("eligibility_status") is not True or champion.get("evidence_status") != "validated":
+                    raise ValueError("unvalidated active Champion")
+                if champion.get("feature_version") != POOLED_FEATURE_VERSION:
+                    raise ValueError("active Champion feature contract differs")
+                if pd.Timestamp(champion["train_end"]).date() >= pd.Timestamp(local["date"].min()).date():
+                    raise ValueError("active Champion trained on validation period")
+                artifact = load_runtime_artifact(sb, champion, runtime_cache)
+                if artifact is None:
+                    raise ValueError("Champion Artifact unavailable")
+                X = local.loc[:, POOLED_FEATURE_COLUMNS].to_numpy(dtype=float)
+                champion_predictions = np.asarray([evaluate_lightgbm_regressor(row,artifact) for row in X], dtype=float)
+                if not np.all(np.isfinite(champion_predictions)):
+                    raise ValueError("Champion predictions are non-finite")
+                champion_mae = float(np.mean(np.abs(truth - champion_predictions)))
+            except (ValueError, KeyError, TypeError) as exc:
+                champion_compare_error = str(exc)[:160]
+        model_metrics = regression.province_metrics[province_id]
+        all_reasons = tuple(str(x) for x in model_metrics.get("eligibility_reasons", ())
+                            if str(x) not in ("eligible", "skill_below_threshold"))
+        # Release preview can rank scientifically eligible candidates, but
+        # production QA and serving parity are deliberately not inferred here.
+        decision = decide_regression_candidate(
+            test_skill=float(model_metrics["skill_vs_persistence"]),
+            validation_skill=skill,validation_mae=mae,
+            persistence_validation_mae=baseline_mae,
+            test_rows=int(model_metrics["test_rows"]),validation_rows=len(local),
+            high_pm_support=severe_support,high_pm_mae=severe_mae,
+            high_pm_persistence_mae=severe_base,
+            native_portable_parity=bool(regression.runtime_artifact.get(province_id)),
+            source_qa_passed=True, other_training_failures=all_reasons,
+            champion_present=champion is not None,
+            champion_validation_mae=champion_mae,
+        )
+        decisions[province_id] = {
+            **decision,
+            "champion_compare_error":champion_compare_error,
+            "production_source_qa_verified":False,
+            "production_runtime_e2e_verified":False,
+            "ready_to_activate":False,
+        }
+    return {"policy_version":BALANCED_POLICY_VERSION,
+            "release_mode":"PREVIEW_ONLY", "provinces":decisions,
+            "quality_gate":"production_reconciliation_required",
+            "activation_permitted":False}
+
+
 def _candidate_ready(regression, classification) -> bool:
     return bool(
         regression.global_eligible
@@ -282,6 +394,8 @@ def _candidate_ready(regression, classification) -> bool:
         and len(classification.province_metrics) == REQUIRED_PROVINCES
         and all(bool(metrics.get("eligible")) for metrics in classification.province_metrics.values())
     )
+
+
 
 
 def main() -> int:
@@ -316,126 +430,50 @@ def main() -> int:
         }
     )
 
+
     regression = train_regression(split, config)
     classification = train_classification(split, config)
     classification_policy = _classification_deployment_gate(classification, split)
     candidate_ready = _candidate_ready(regression, classification)
-    champion = _evaluate_active_champion(sb, split)
-    decision = decide_promotion(
-        candidate_regression=regression.test_metrics,
-        champion_regression=champion["regression"],
-        candidate_classification=classification.test_metrics,
-        champion_classification=champion["classification"],
-        candidate_regression_provinces=regression.province_metrics,
-        champion_regression_provinces=champion["regression_by_province"],
-        candidate_ready=candidate_ready,
-        required_provinces=REQUIRED_PROVINCES,
-    )
-
+    # The existing monthly champion comparator requires 20+20 active rows, but
+    # Production currently has 18 regression and 0 classification. Use the
+    # province-local shared policy instead and keep auto-promotion disabled
+    # until the canonical QA and deployment-contract evidence are proven.
     run_id = str(uuid.uuid4())
-    audit = {
-        "strategy": "monthly_fresh_champion_challenger_db_only",
-        "promotion_policy": POLICY_VERSION,
-        "pool_provinces": list(POOLED_PROVINCE_IDS),
-        "feature_version": POOLED_FEATURE_VERSION,
-        "feature_provenance": POOLED_FEATURE_PROVENANCE,
-        "target_source": "Supabase training_daily_summary_v3 only",
-        "database_source_of_truth": database_audit,
-        "target_horizons": list(DIRECT_HORIZONS),
-        "validated_classification_horizons": [1],
-        "same_date_same_partition": True,
-        "embargo_days": POOLED_EMBARGO_DAYS,
-        "dropped_embargo_dates": split.dropped_embargo_dates,
-        "classification_deployment_policy": classification_policy,
-        "regression_auto_promotion_requires_strict_20_of_20": True,
-        "current_champion_run_id": champion["run_id"],
-        "same_holdout_champion_evaluation": True,
-        "monthly_challenger_window_used_for_production_selection": True,
-        "research_reporting_note": (
-            "Monthly challenger windows are operational promotion evidence and do not "
-            "replace the frozen final-test result reported for the capstone model run."
-        ),
-    }
-    registry_rows = build_registry_rows(
-        run_id,
-        tuple(POOLED_PROVINCE_IDS),
-        split,
-        regression,
-        classification,
-        audit,
+    balanced_preview = _balanced_province_regression_preview(
+        sb, split, regression, tuple(POOLED_PROVINCE_IDS)
     )
-    result = PooledResult(
-        run_id,
-        tuple(POOLED_PROVINCE_IDS),
-        split,
-        regression,
-        classification,
-        registry_rows,
-        audit,
-    )
-
-    promoted = False
-    activation_status = "not_requested"
-    if decision["approved"] and not args.dry_run:
-        artifacts = save_artifacts(result, args.artifact_dir, config)
-        free_plan_upload = make_free_plan_upload_and_register(upload_and_register)
-        free_plan_upload(sb, result, artifacts, activate=True)
-        active_after = (
-            sb.table("model_registry")
-            .select("province_id,task_type,run_id,is_active")
-            .eq("run_id", run_id)
-            .eq("is_active", True)
-            .execute()
-            .data
-            or []
-        )
-        if len(active_after) != REQUIRED_PROVINCES * 2:
-            raise RuntimeError(
-                "atomic activation readback expected 40 rows, found "
-                f"{len(active_after)}"
-            )
-        promoted = True
-        activation_status = "activated"
-    elif decision["approved"]:
-        activation_status = "dry_run_would_activate"
-    else:
-        activation_status = "kept_current_champion"
-
     summary = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "dry_run": bool(args.dry_run),
-        "promoted": promoted,
-        "activation_status": activation_status,
-        "candidate_ready": candidate_ready,
-        "champion_run_id": champion["run_id"],
-        "candidate": {
-            "regression": regression.test_metrics,
-            "classification": classification.test_metrics,
-        },
-        "champion_on_same_holdout": {
-            "regression": champion["regression"],
-            "classification": champion["classification"],
-        },
-        "promotion": decision,
-        "audit": audit,
+        "dry_run": True,
+        "promoted": False,
+        "activation_status": "held_pending_canonical_qa_and_runtime_e2e",
+        "candidate_ready": False,
+        "champion_run_id": None,
+        "promotion": {"approved":False, "policy_version":BALANCED_POLICY_VERSION,
+                      "decision":"keep_champion", "reasons":[
+                          "production_canonical_qa_not_verified",
+                          "production_serving_runtime_e2e_not_verified",
+                          "classification_critical_class_evidence_not_proven",
+                      ]},
+        "balanced_regression_preview": balanced_preview,
+        "audit": {"source_of_truth": database_audit["source_of_truth"],
+                  "automated_activation_disabled":True,
+                  "training_policy": "shared_standard_and_conditional_province_policy"},
     }
     run_dir = args.artifact_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = run_dir / "run_summary.json"
-    summary_path.write_text(
-        json.dumps(_json_safe(summary), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    (run_dir / "run_summary.json").write_text(
+        json.dumps(_json_safe(summary),ensure_ascii=False,indent=2),encoding="utf-8")
     promotion_path = args.artifact_dir / "monthly_promotion.json"
     promotion_path.write_text(
-        json.dumps(_json_safe(summary), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    print(json.dumps(_json_safe(summary), ensure_ascii=False))
-    print(f"PROMOTED={'true' if promoted else 'false'}")
+        json.dumps(_json_safe(summary),ensure_ascii=False,indent=2),encoding="utf-8")
+    print(json.dumps(_json_safe(summary),ensure_ascii=False))
+    print("PROMOTED=false")
     print(f"MONTHLY_PROMOTION={promotion_path}")
     return 0
+
 
 
 if __name__ == "__main__":
