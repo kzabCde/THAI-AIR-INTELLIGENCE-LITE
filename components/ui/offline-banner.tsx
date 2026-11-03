@@ -21,7 +21,7 @@ export function OfflineBanner() {
   return (
     <div
       role="status"
-      className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-2 bg-amber-500 px-4 py-1.5 text-xs font-semibold text-amber-950"
+      className="fixed inset-x-0 top-0 z-[1100] flex items-center justify-center gap-2 bg-amber-500 px-4 pb-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] text-xs font-semibold text-amber-950 shadow-sm"
     >
       <WifiOff size={14} />
       ออฟไลน์ — กำลังแสดงข้อมูลล่าสุดที่แคชไว้

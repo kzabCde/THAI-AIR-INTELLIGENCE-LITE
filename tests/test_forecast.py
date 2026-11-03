@@ -6,10 +6,18 @@ from types import SimpleNamespace
 import numpy as np
 
 # Unit tests exercise pure inference logic and do not open a Supabase connection.
-supabase_stub = types.ModuleType("supabase")
-supabase_stub.Client = object
-supabase_stub.create_client = lambda *_args, **_kwargs: None
-sys.modules["supabase"] = supabase_stub
+try:
+    import supabase as _supabase  # noqa: F401
+except ModuleNotFoundError:
+    supabase_stub = types.ModuleType("supabase")
+    supabase_stub.__path__ = []
+    supabase_stub.Client = object
+    supabase_stub.create_client = lambda *_args, **_kwargs: None
+    supabase_client_stub = types.ModuleType("supabase.client")
+    supabase_client_stub.ClientOptions = object
+    supabase_stub.client = supabase_client_stub
+    sys.modules["supabase"] = supabase_stub
+    sys.modules["supabase.client"] = supabase_client_stub
 
 from api.ml.forecast import (
     FEATURE_COLS,
