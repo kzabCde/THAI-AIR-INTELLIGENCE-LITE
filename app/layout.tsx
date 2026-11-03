@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import { Header } from "@/components/layout/header";
@@ -11,12 +11,35 @@ const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL ??
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#020617" },
+  ],
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
+  applicationName: "Isan Air Intelligence",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Isan Air",
+    statusBarStyle: "default",
+  },
+  formatDetection: {
+    telephone: false,
+  },
   icons: {
-    icon: "/images/cloud-logo.png",
-    shortcut: "/images/cloud-logo.png",
-    apple: "/images/cloud-logo.png",
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: ["/icons/icon-192.png"],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
     type: "website",
@@ -25,7 +48,14 @@ export const metadata: Metadata = {
     title: "Isan Air Intelligence — คุณภาพอากาศภาคอีสาน",
     description:
       "ติดตาม PM2.5 / AQI แบบเรียลไทม์ 20 จังหวัดภาคอีสาน พร้อมพยากรณ์ 7 วันและวิเคราะห์ย้อนหลัง",
-    images: [{ url: "/images/cloud-logo.png", width: 512, height: 512, alt: "Isan Air Intelligence Logo" }],
+    images: [
+      {
+        url: "/icons/icon-maskable-512.png",
+        width: 512,
+        height: 512,
+        alt: "Isan Air Intelligence Logo",
+      },
+    ],
   },
   title: {
     default: "Isan Air Intelligence — คุณภาพอากาศภาคอีสาน",
@@ -40,6 +70,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="th" suppressHydrationWarning>
       <head>
+        <meta name="mobile-web-app-capable" content="yes" />
         <link rel="preconnect" href="https://mt0.google.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://mt1.google.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://mt2.google.com" crossOrigin="anonymous" />

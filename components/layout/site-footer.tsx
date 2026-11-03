@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { PwaInstallButton } from "@/components/pwa/pwa-manager";
 
 export function SiteFooter() {
   return (
@@ -48,6 +49,7 @@ export function SiteFooter() {
               <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span>สถานะระบบ ↗</span>
             </Link>
+            <PwaInstallButton />
           </nav>
         </div>
 

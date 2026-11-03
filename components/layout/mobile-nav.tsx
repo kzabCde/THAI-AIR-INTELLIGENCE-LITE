@@ -8,7 +8,7 @@ import { NAV_ITEMS } from "./nav-items";
 export function MobileNav() {
   const pathname = usePathname();
   return (
-    <nav className="fixed inset-x-3 bottom-3 z-40 md:hidden">
+    <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 select-none md:hidden">
       <div className="mx-auto flex max-w-lg items-center justify-around rounded-2xl border border-border bg-[rgb(var(--surface))]/90 p-1.5 shadow-soft backdrop-blur-xl">
         {NAV_ITEMS.map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -18,7 +18,7 @@ export function MobileNav() {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-medium transition",
+                "flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-medium transition active:scale-95",
                 active ? "bg-brand text-white" : "muted",
               )}
             >
